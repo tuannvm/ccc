@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,19 +11,8 @@ import (
 	"time"
 )
 
-func handleHook() error {
-	// Legacy Stop hook - now handled by monitor polling
-	// Keep as no-op for backwards compatibility
-	return nil
-}
-
-func handlePermissionHook() error {
-	// Recover from any panic - hooks must never crash
-	defer func() {
-		recover()
-	}()
-
-	// Read stdin with timeout
+// readHookStdin reads stdin JSON with a timeout
+func readHookStdin() ([]byte, error) {
 	stdinData := make(chan []byte, 1)
 	go func() {
 		defer func() { recover() }()
@@ -30,13 +20,31 @@ func handlePermissionHook() error {
 		stdinData <- data
 	}()
 
-	var rawData []byte
 	select {
-	case rawData = <-stdinData:
+	case rawData := <-stdinData:
+		return rawData, nil
 	case <-time.After(2 * time.Second):
-		return nil
+		return nil, nil
 	}
+}
 
+// findSession matches a hook's cwd to a configured session
+func findSession(config *Config, cwd string) (string, int64) {
+	for name, info := range config.Sessions {
+		if name == "" || info == nil {
+			continue
+		}
+		if cwd == info.Path || strings.HasPrefix(cwd, info.Path+"/") || strings.HasSuffix(cwd, "/"+name) {
+			return name, info.TopicID
+		}
+	}
+	return "", 0
+}
+
+func handleStopHook() error {
+	defer func() { recover() }()
+
+	rawData, _ := readHookStdin()
 	if len(rawData) == 0 {
 		return nil
 	}
@@ -51,21 +59,195 @@ func handlePermissionHook() error {
 		return nil
 	}
 
-	// Find session
-	var sessionName string
-	var topicID int64
-	for name, info := range config.Sessions {
-		if name == "" || info == nil {
+	sessName, topicID := findSession(config, hookData.Cwd)
+	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+		return nil
+	}
+
+	hookLog("stop-hook: session=%s transcript=%s", sessName, hookData.TranscriptPath)
+
+	blocks := extractLastTurn(hookData.TranscriptPath)
+	if len(blocks) == 0 {
+		// No text blocks found, just send completion marker
+		sendMessage(config, config.GroupID, topicID, fmt.Sprintf("✅ %s", sessName))
+		return nil
+	}
+
+	for i, block := range blocks {
+		text := block
+		if i == len(blocks)-1 {
+			text = fmt.Sprintf("✅ %s\n\n%s", sessName, block)
+		}
+		sendMessageGetID(config, config.GroupID, topicID, text)
+	}
+
+	return nil
+}
+
+// extractLastTurn reads the JSONL transcript and extracts text blocks from
+// the last assistant turn (after the last real user message).
+func extractLastTurn(transcriptPath string) []string {
+	if transcriptPath == "" {
+		return nil
+	}
+
+	f, err := os.Open(transcriptPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	type contentBlock struct {
+		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Name    string `json:"name,omitempty"`
+		Content string `json:"content,omitempty"`
+	}
+
+	type message struct {
+		Role    string         `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+
+	type transcriptLine struct {
+		Type      string  `json:"type"`
+		RequestID string  `json:"requestId,omitempty"`
+		Message   message `json:"message"`
+	}
+
+	// Parse all lines
+	type parsedEntry struct {
+		ttype     string
+		requestID string
+		role      string
+		content   json.RawMessage
+	}
+
+	var entries []parsedEntry
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 10MB max line
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			continue
 		}
-		if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") || strings.HasSuffix(hookData.Cwd, "/"+name) {
-			sessionName = name
-			topicID = info.TopicID
-			break
+		var tl transcriptLine
+		if json.Unmarshal(line, &tl) != nil {
+			continue
+		}
+		entries = append(entries, parsedEntry{
+			ttype:     tl.Type,
+			requestID: tl.RequestID,
+			role:      tl.Message.Role,
+			content:   tl.Message.Content,
+		})
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Find the last real user message (not a tool_result)
+	lastUserIdx := -1
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.ttype != "user" && e.role != "user" {
+			continue
+		}
+		// Check if content is a tool_result
+		if isToolResult(e.content) {
+			continue
+		}
+		lastUserIdx = i
+		break
+	}
+
+	// Collect assistant text blocks after the last user message
+	// For lines with the same requestId, keep only the last one (streaming dedup)
+	startIdx := lastUserIdx + 1
+	if lastUserIdx < 0 {
+		startIdx = 0
+	}
+
+	// Dedup: for same requestId, last entry wins
+	requestMap := make(map[string]int) // requestId -> index in entries
+	var orderedIDs []string
+	for i := startIdx; i < len(entries); i++ {
+		e := entries[i]
+		if (e.ttype != "assistant" && e.role != "assistant") || e.requestID == "" {
+			continue
+		}
+		if _, seen := requestMap[e.requestID]; !seen {
+			orderedIDs = append(orderedIDs, e.requestID)
+		}
+		requestMap[e.requestID] = i
+	}
+
+	// Extract text blocks from deduplicated assistant messages
+	var texts []string
+	for _, reqID := range orderedIDs {
+		idx := requestMap[reqID]
+		e := entries[idx]
+
+		var blocks []contentBlock
+		if json.Unmarshal(e.content, &blocks) != nil {
+			continue
+		}
+
+		for _, b := range blocks {
+			if b.Type != "text" {
+				continue
+			}
+			text := strings.TrimSpace(b.Text)
+			if text == "" || text == "(no content)" {
+				continue
+			}
+			texts = append(texts, text)
 		}
 	}
 
-	if sessionName == "" || config.GroupID == 0 {
+	return texts
+}
+
+// isToolResult checks if content JSON contains tool_result entries
+func isToolResult(content json.RawMessage) bool {
+	if len(content) == 0 {
+		return false
+	}
+	// Try as array of objects
+	var blocks []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(content, &blocks) == nil {
+		for _, b := range blocks {
+			if b.Type == "tool_result" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func handlePermissionHook() error {
+	defer func() { recover() }()
+
+	rawData, _ := readHookStdin()
+	if len(rawData) == 0 {
+		return nil
+	}
+
+	var hookData HookData
+	if err := json.Unmarshal(rawData, &hookData); err != nil {
+		return nil
+	}
+
+	config, err := loadConfig()
+	if err != nil || config == nil {
+		return nil
+	}
+
+	sessName, topicID := findSession(config, hookData.Cwd)
+	if sessName == "" || config.GroupID == 0 {
 		return nil
 	}
 
@@ -85,7 +267,7 @@ func handlePermissionHook() error {
 						continue
 					}
 					totalQuestions := len(hookData.ToolInput.Questions)
-					callbackData := fmt.Sprintf("%s:%d:%d:%d", sessionName, qIdx, totalQuestions, i)
+					callbackData := fmt.Sprintf("%s:%d:%d:%d", sessName, qIdx, totalQuestions, i)
 					if len(callbackData) > 64 {
 						callbackData = callbackData[:64]
 					}
@@ -105,16 +287,6 @@ func handlePermissionHook() error {
 	return nil
 }
 
-func handlePromptHook() error {
-	// Legacy - now handled by monitor polling
-	return nil
-}
-
-func handleOutputHook() error {
-	// Legacy - now handled by monitor polling
-	return nil
-}
-
 func handleQuestionHook() error {
 	config, err := loadConfig()
 	if err != nil {
@@ -131,20 +303,8 @@ func handleQuestionHook() error {
 		return nil
 	}
 
-	var sessionName string
-	var topicID int64
-	for name, info := range config.Sessions {
-		if info == nil {
-			continue
-		}
-		if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") || strings.HasSuffix(hookData.Cwd, "/"+name) {
-			sessionName = name
-			topicID = info.TopicID
-			break
-		}
-	}
-
-	if sessionName == "" || config.GroupID == 0 || topicID == 0 {
+	sessName, topicID := findSession(config, hookData.Cwd)
+	if sessName == "" || config.GroupID == 0 || topicID == 0 {
 		return nil
 	}
 
@@ -160,7 +320,7 @@ func handleQuestionHook() error {
 				continue
 			}
 			totalQuestions := len(hookData.ToolInput.Questions)
-			callbackData := fmt.Sprintf("%s:%d:%d:%d", sessionName, qIdx, totalQuestions, i)
+			callbackData := fmt.Sprintf("%s:%d:%d:%d", sessName, qIdx, totalQuestions, i)
 			if len(callbackData) > 64 {
 				callbackData = callbackData[:64]
 			}
@@ -180,7 +340,37 @@ func handleQuestionHook() error {
 }
 
 func handleNotificationHook() error {
-	// Legacy - now handled by monitor polling
+	defer func() { recover() }()
+
+	rawData, _ := readHookStdin()
+	if len(rawData) == 0 {
+		return nil
+	}
+
+	var hookData HookData
+	if err := json.Unmarshal(rawData, &hookData); err != nil {
+		return nil
+	}
+
+	config, err := loadConfig()
+	if err != nil || config == nil {
+		return nil
+	}
+
+	sessName, topicID := findSession(config, hookData.Cwd)
+	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+		return nil
+	}
+
+	title := hookData.Title
+	message := hookData.Message
+	if title == "" && message == "" {
+		return nil
+	}
+
+	text := fmt.Sprintf("🔔 %s\n\n%s", title, message)
+	sendMessage(config, config.GroupID, topicID, strings.TrimSpace(text))
+
 	return nil
 }
 
@@ -234,8 +424,6 @@ func installHook() error {
 		hooks = make(map[string]interface{})
 	}
 
-	// Only install hooks for interactive features (AskUserQuestion)
-	// Output syncing is handled by the polling monitor
 	cccHooks := map[string][]interface{}{
 		"PreToolUse": {
 			map[string]interface{}{
@@ -246,6 +434,26 @@ func installHook() error {
 					},
 				},
 				"matcher": "AskUserQuestion",
+			},
+		},
+		"Stop": {
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"command": cccPath + " hook-stop",
+						"type":    "command",
+					},
+				},
+			},
+		},
+		"Notification": {
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"command": cccPath + " hook-notification",
+						"type":    "command",
+					},
+				},
 			},
 		},
 	}
@@ -404,12 +612,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-// getLastAssistantMessage reads the transcript and returns the last assistant text
-func getLastAssistantMessage(transcriptPath string) string {
-	// Legacy - kept for compatibility but no longer actively used
-	return ""
 }
 
 // hookLog writes debug log entries

@@ -188,8 +188,8 @@ func TestConfigSessionsInitialized(t *testing.T) {
 	}
 }
 
-// TestGetLastAssistantMessage tests parsing transcript files
-func TestGetLastAssistantMessage(t *testing.T) {
+// TestExtractLastTurn tests parsing transcript JSONL files
+func TestExtractLastTurn(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "ccc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -199,64 +199,113 @@ func TestGetLastAssistantMessage(t *testing.T) {
 	tests := []struct {
 		name     string
 		content  string
-		expected string
+		expected []string
 	}{
 		{
-			name: "single assistant message",
-			content: `{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"Hello! How can I help?"}]}}`,
-			expected: "Hello! How can I help?",
+			name: "simple response with one text block",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"Hello! How can I help?"}]}}`,
+			expected: []string{"Hello! How can I help?"},
 		},
 		{
-			name: "multiple assistant messages returns last",
-			content: `{"type":"assistant","message":{"content":[{"type":"text","text":"First response"}]}}
-{"type":"user","message":{"content":[{"type":"text","text":"more"}]}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"Second response"}]}}`,
-			expected: "Second response",
+			name: "multiple text blocks in one turn",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"First part"},{"type":"text","text":"Second part"}]}}`,
+			expected: []string{"First part", "Second part"},
 		},
 		{
-			name:     "no assistant messages",
-			content:  `{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}`,
-			expected: "",
+			name: "filters thinking and tool_use",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"thinking","thinking":"let me think..."},{"type":"text","text":"Here is my answer"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`,
+			expected: []string{"Here is my answer"},
 		},
 		{
-			name:     "empty file",
+			name: "streaming dedup same requestId keeps last",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"partial response..."}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"complete response with more detail"}]}}`,
+			expected: []string{"complete response with more detail"},
+		},
+		{
+			name: "only returns last turn ignoring previous",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"first question"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"first answer"}]}}
+{"type":"user","requestId":"req_3","message":{"role":"user","content":[{"type":"text","text":"second question"}]}}
+{"type":"assistant","requestId":"req_4","message":{"role":"assistant","content":[{"type":"text","text":"second answer"}]}}`,
+			expected: []string{"second answer"},
+		},
+		{
+			name:     "empty file returns nil",
 			content:  "",
-			expected: "",
+			expected: nil,
 		},
 		{
-			name:     "invalid json",
-			content:  "not json at all",
-			expected: "",
+			name: "no assistant messages returns nil",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
+			expected: nil,
 		},
 		{
-			name: "mixed content types",
-			content: `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"bash"},{"type":"text","text":"Done!"}]}}`,
-			expected: "Done!",
+			name: "filters no content",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"(no content)"},{"type":"text","text":"real content"}]}}`,
+			expected: []string{"real content"},
+		},
+		{
+			name: "skips tool_result user messages",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"do something"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"running tool"},{"type":"tool_use","name":"Bash","input":{}}]}}
+{"type":"user","requestId":"req_3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"123","content":"output"}]}}
+{"type":"assistant","requestId":"req_4","message":{"role":"assistant","content":[{"type":"text","text":"tool completed successfully"}]}}`,
+			expected: []string{"running tool", "tool completed successfully"},
+		},
+		{
+			name: "mixed content types keeps only text",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"tool_use","name":"bash"},{"type":"text","text":"Done!"}]}}`,
+			expected: []string{"Done!"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Write test file
 			filePath := filepath.Join(tmpDir, tt.name+".jsonl")
 			if err := os.WriteFile(filePath, []byte(tt.content), 0644); err != nil {
 				t.Fatalf("Failed to write test file: %v", err)
 			}
 
-			result := getLastAssistantMessage(filePath)
-			if result != tt.expected {
-				t.Errorf("getLastAssistantMessage() = %q, want %q", result, tt.expected)
+			result := extractLastTurn(filePath)
+			if tt.expected == nil {
+				if result != nil {
+					t.Errorf("extractLastTurn() = %v, want nil", result)
+				}
+				return
+			}
+			if len(result) != len(tt.expected) {
+				t.Errorf("extractLastTurn() returned %d blocks, want %d: %v", len(result), len(tt.expected), result)
+				return
+			}
+			for i, exp := range tt.expected {
+				if result[i] != exp {
+					t.Errorf("block %d = %q, want %q", i, result[i], exp)
+				}
 			}
 		})
 	}
 }
 
-// TestGetLastAssistantMessageNonExistent tests with non-existent file
-func TestGetLastAssistantMessageNonExistent(t *testing.T) {
-	result := getLastAssistantMessage("/nonexistent/path/file.jsonl")
-	if result != "" {
-		t.Errorf("getLastAssistantMessage for non-existent file = %q, want empty", result)
+// TestExtractLastTurnNonExistent tests with non-existent file
+func TestExtractLastTurnNonExistent(t *testing.T) {
+	result := extractLastTurn("/nonexistent/path/file.jsonl")
+	if result != nil {
+		t.Errorf("extractLastTurn for non-existent file = %v, want nil", result)
+	}
+}
+
+// TestExtractLastTurnEmptyPath tests with empty path
+func TestExtractLastTurnEmptyPath(t *testing.T) {
+	result := extractLastTurn("")
+	if result != nil {
+		t.Errorf("extractLastTurn for empty path = %v, want nil", result)
 	}
 }
 

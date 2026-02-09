@@ -447,20 +447,32 @@ func doctor() {
 		}
 	}
 
-	// Check Claude hook (only AskUserQuestion hook is needed now, polling handles the rest)
-	fmt.Print("claude hook....... ")
+	// Check Claude hooks (Stop, Notification, PreToolUse)
+	fmt.Print("claude hooks...... ")
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		var settings map[string]interface{}
 		if json.Unmarshal(data, &settings) == nil {
 			if hooks, ok := settings["hooks"].(map[string]interface{}); ok {
-				if preToolUse, hasPre := hooks["PreToolUse"].([]interface{}); hasPre && len(preToolUse) > 0 {
-					fmt.Println("✅ installed (AskUserQuestion)")
+				var installed []string
+				if stop, has := hooks["Stop"].([]interface{}); has && len(stop) > 0 {
+					installed = append(installed, "Stop")
+				}
+				if notif, has := hooks["Notification"].([]interface{}); has && len(notif) > 0 {
+					installed = append(installed, "Notification")
+				}
+				if pre, has := hooks["PreToolUse"].([]interface{}); has && len(pre) > 0 {
+					installed = append(installed, "PreToolUse")
+				}
+				if len(installed) == 3 {
+					fmt.Printf("✅ installed (%s)\n", strings.Join(installed, ", "))
+				} else if len(installed) > 0 {
+					fmt.Printf("⚠️  partial (%s) - run: ccc install\n", strings.Join(installed, ", "))
 				} else {
-					fmt.Println("⚠️  optional (run: ccc install for AskUserQuestion hook)")
+					fmt.Println("❌ not installed (run: ccc install)")
 				}
 			} else {
-				fmt.Println("⚠️  optional (run: ccc install for AskUserQuestion hook)")
+				fmt.Println("❌ not installed (run: ccc install)")
 			}
 		} else {
 			fmt.Println("⚠️  settings.json parse error")
@@ -601,9 +613,6 @@ func listen() error {
 
 	setBotCommands(config.BotToken)
 
-	// Start session monitor (polls tmux sessions and syncs output to Telegram)
-	go startSessionMonitor(config)
-
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -728,7 +737,6 @@ func listen() error {
 							} else if transcription != "" {
 								fmt.Printf("[voice] @%s: %s\n", msg.From.Username, transcription)
 								sendMessage(config, chatID, threadID, fmt.Sprintf("📝 %s", transcription))
-								ResetSessionMonitor(sessionName)
 								sendToTmux(tmuxName, "[Audio transcription, may contain errors]: "+transcription)
 							}
 						}
@@ -756,7 +764,6 @@ func listen() error {
 							}
 							prompt := fmt.Sprintf("%s %s", caption, imgPath)
 							sendMessage(config, chatID, threadID, fmt.Sprintf("📷 Image saved, sending to Claude..."))
-							ResetSessionMonitor(sessionName)
 							sendToTmuxWithDelay(tmuxName, prompt, 2*time.Second)
 						}
 					}
@@ -787,7 +794,6 @@ func listen() error {
 								caption = fmt.Sprintf("%s\n\nFile: %s", caption, destPath)
 							}
 							sendMessage(config, chatID, threadID, fmt.Sprintf("📎 File saved: %s", destPath))
-							ResetSessionMonitor(sessionName)
 							sendToTmux(tmuxName, caption)
 						}
 					}
@@ -879,8 +885,6 @@ func listen() error {
 					killTmuxSession(tmuxName)
 					time.Sleep(300 * time.Millisecond)
 				}
-				// Clear monitor state and block cache for fresh start
-				ClearSessionMonitor(sessName)
 				// Use the stored path from config, fallback to resolveProjectPath
 				sessionInfo := config.Sessions[sessName]
 				workDir := sessionInfo.Path
@@ -920,8 +924,6 @@ func listen() error {
 				topicID := config.Sessions[sessName].TopicID
 				delete(config.Sessions, sessName)
 				saveConfig(config)
-				// Clear monitor and cache
-				ClearSessionMonitor(sessName)
 				// Delete telegram thread
 				if err := deleteForumTopic(config, topicID); err != nil {
 					sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session deleted but failed to delete thread: %v", err))
@@ -950,9 +952,6 @@ func listen() error {
 
 					// NOTE: No longer deleting project folders - only tmux sessions and threads
 					_ = info // Keep info reference for TopicID below
-
-					// Clear monitor and cache
-					ClearSessionMonitor(sessName)
 
 					// Delete telegram thread
 					if info.TopicID > 0 && config.GroupID > 0 {
@@ -1069,7 +1068,6 @@ func listen() error {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' auto-started", sessName))
 						time.Sleep(3 * time.Second) // Wait for Claude to fully start
 					}
-					ResetSessionMonitor(sessName)
 					if err := sendToTmux(tmuxName, text); err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 					}
@@ -1149,7 +1147,7 @@ TELEGRAM COMMANDS:
     /continue               Restart session keeping conversation history
     /c <cmd>                Execute shell command
     /update                 Update ccc binary from GitHub
-    /restart                Restart ccc service (fixes stuck monitor)
+    /restart                Restart ccc service
 
 FLAGS:
     -h, --help              Show this help

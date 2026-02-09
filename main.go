@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const version = "1.5.6"
+const version = "1.6.0"
 
 // SessionInfo stores information about a session
 type SessionInfo struct {
@@ -103,14 +103,17 @@ type TopicResult struct {
 
 // HookData represents data received from Claude hook
 type HookData struct {
-	Cwd            string `json:"cwd"`
-	TranscriptPath string `json:"transcript_path"`
-	SessionID      string `json:"session_id"`
-	HookEventName  string `json:"hook_event_name"`
-	ToolName       string `json:"tool_name"`
-	Prompt         string `json:"prompt"`       // For UserPromptSubmit hook
-	Notification   string `json:"notification"` // For Notification hook
-	ToolInput      struct {
+	Cwd              string `json:"cwd"`
+	TranscriptPath   string `json:"transcript_path"`
+	SessionID        string `json:"session_id"`
+	HookEventName    string `json:"hook_event_name"`
+	ToolName         string `json:"tool_name"`
+	Prompt           string `json:"prompt"`            // For UserPromptSubmit hook
+	Message          string `json:"message"`           // For Notification hook
+	Title            string `json:"title"`             // For Notification hook
+	NotificationType string `json:"notification_type"` // For Notification hook
+	StopHookActive   bool   `json:"stop_hook_active"`  // For Stop hook
+	ToolInput        struct {
 		Questions []struct {
 			Question    string `json:"question"`
 			Header      string `json:"header"`
@@ -290,20 +293,8 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "hook":
-		if err := handleHook(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
 	case "hook-permission":
 		if err := handlePermissionHook(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "hook-prompt":
-		if err := handlePromptHook(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -314,8 +305,8 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "hook-output":
-		if err := handleOutputHook(); err != nil {
+	case "hook-stop":
+		if err := handleStopHook(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
