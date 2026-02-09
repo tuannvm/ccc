@@ -264,6 +264,15 @@ func TestExtractLastTurn(t *testing.T) {
 {"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"tool_use","name":"bash"},{"type":"text","text":"Done!"}]}}`,
 			expected: []string{"Done!"},
 		},
+		{
+			name: "text entry followed by tool_use entry same requestId",
+			content: `{"type":"user","requestId":"req_1","message":{"role":"user","content":[{"type":"text","text":"do something"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"Let me check that"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash"}]}}
+{"type":"user","requestId":"","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"1","content":"ok"}]}}
+{"type":"assistant","requestId":"req_3","message":{"role":"assistant","content":[{"type":"text","text":"All done!"}]}}`,
+			expected: []string{"Let me check that", "All done!"},
+		},
 	}
 
 	for _, tt := range tests {

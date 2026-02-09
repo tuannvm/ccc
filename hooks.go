@@ -162,49 +162,59 @@ func extractLastTurn(transcriptPath string) []string {
 		break
 	}
 
-	// Collect assistant text blocks after the last user message
-	// For lines with the same requestId, keep only the last one (streaming dedup)
+	// Collect text from assistant messages after the last user message.
+	// Streaming dedup: same requestId may have multiple entries with progressively
+	// updated text; for each requestId, the last entry's text blocks win.
 	startIdx := lastUserIdx + 1
 	if lastUserIdx < 0 {
 		startIdx = 0
 	}
 
-	// Dedup: for same requestId, last entry wins
-	requestMap := make(map[string]int) // requestId -> index in entries
-	var orderedIDs []string
+	reqTexts := make(map[string][]string) // requestId -> text blocks from last entry
+	var orderedKeys []string              // preserve order of first appearance
+	var noIDTexts []string                // texts from entries without requestId
+
 	for i := startIdx; i < len(entries); i++ {
 		e := entries[i]
-		if (e.ttype != "assistant" && e.role != "assistant") || e.requestID == "" {
+		if e.ttype != "assistant" && e.role != "assistant" {
 			continue
 		}
-		if _, seen := requestMap[e.requestID]; !seen {
-			orderedIDs = append(orderedIDs, e.requestID)
-		}
-		requestMap[e.requestID] = i
-	}
-
-	// Extract text blocks from deduplicated assistant messages
-	var texts []string
-	for _, reqID := range orderedIDs {
-		idx := requestMap[reqID]
-		e := entries[idx]
 
 		var blocks []contentBlock
 		if json.Unmarshal(e.content, &blocks) != nil {
 			continue
 		}
 
+		var entryTexts []string
 		for _, b := range blocks {
 			if b.Type != "text" {
 				continue
 			}
 			text := strings.TrimSpace(b.Text)
-			if text == "" || text == "(no content)" {
-				continue
+			if text != "" && text != "(no content)" {
+				entryTexts = append(entryTexts, text)
 			}
-			texts = append(texts, text)
+		}
+
+		if len(entryTexts) == 0 {
+			continue
+		}
+
+		if e.requestID == "" {
+			noIDTexts = append(noIDTexts, entryTexts...)
+		} else {
+			if _, seen := reqTexts[e.requestID]; !seen {
+				orderedKeys = append(orderedKeys, e.requestID)
+			}
+			reqTexts[e.requestID] = entryTexts // last entry with text wins
 		}
 	}
+
+	var texts []string
+	for _, key := range orderedKeys {
+		texts = append(texts, reqTexts[key]...)
+	}
+	texts = append(texts, noIDTexts...)
 
 	return texts
 }
