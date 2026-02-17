@@ -77,7 +77,7 @@ jobs:
           CGO_LDFLAGS_ALLOW="-(W|D|L).*" \
           CGO_LDFLAGS="$FFMPEG_LDFLAGS" \
           CGO_ENABLED=1 \
-            go build -o ${{ matrix.name }}
+            go build -tags voice -o ${{ matrix.name }}
 
       - name: Verify static linking (Linux)
         if: matrix.goos == 'linux'

@@ -611,15 +611,8 @@ func doctor() {
 		}
 	}
 
-	// Check transcription model
-	fmt.Print("whisper model..... ")
-	modelPath := filepath.Join(getModelsDir(), whisperModelName)
-	if _, err := os.Stat(modelPath); err == nil {
-		fmt.Printf("✅ %s\n", modelPath)
-	} else {
-		fmt.Println("⚠️  not downloaded (will auto-download on first voice message)")
-		fmt.Println("   Model: " + whisperModelName)
-	}
+	// Check transcription support
+	doctorCheckWhisper()
 
 	// Check OAuth token
 	fmt.Print("oauth token....... ")
