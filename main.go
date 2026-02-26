@@ -130,8 +130,13 @@ type HookToolInput struct {
 		} `json:"options"`
 	} `json:"questions"`
 	Command     string `json:"command,omitempty"`     // For Bash
-	Description string `json:"description,omitempty"` // For Bash
+	Description string `json:"description,omitempty"` // For Bash/Task
 	FilePath    string `json:"file_path,omitempty"`   // For Read/Write/Edit
+	Query       string `json:"query,omitempty"`       // For WebSearch
+	Pattern     string `json:"pattern,omitempty"`     // For Grep/Glob
+	URL         string `json:"url,omitempty"`         // For WebFetch
+	Prompt      string `json:"prompt,omitempty"`      // For Task/WebFetch
+	OldString   string `json:"old_string,omitempty"`  // For Edit
 }
 
 // parseHookData unmarshals raw JSON and populates ToolInput

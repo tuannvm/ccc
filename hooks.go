@@ -45,7 +45,6 @@ type ToolState struct {
 type ToolCall struct {
 	Name  string `json:"name"`
 	Input string `json:"input"`
-	Done  bool   `json:"done"`
 }
 
 func loadToolState(sessionName string) *ToolState {
@@ -73,14 +72,10 @@ func clearToolState(sessionName string) {
 func formatToolMessage(state *ToolState) string {
 	var lines []string
 	for _, t := range state.Tools {
-		icon := "⚙️"
-		if t.Done {
-			icon = "✅"
-		}
 		if t.Input != "" {
-			lines = append(lines, fmt.Sprintf("%s %s: %s", icon, t.Name, t.Input))
+			lines = append(lines, fmt.Sprintf("⚙️ %s: %s", t.Name, t.Input))
 		} else {
-			lines = append(lines, fmt.Sprintf("%s %s", icon, t.Name))
+			lines = append(lines, fmt.Sprintf("⚙️ %s", t.Name))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -88,24 +83,48 @@ func formatToolMessage(state *ToolState) string {
 
 // toolInputSummary extracts a short description from tool input
 func toolInputSummary(hookData HookData) string {
+	truncAt := 80
+	trunc := func(s string) string {
+		if len(s) > truncAt {
+			return s[:truncAt] + "..."
+		}
+		return s
+	}
+
 	switch hookData.ToolName {
 	case "Bash":
-		cmd := hookData.ToolInput.Command
-		if len(cmd) > 80 {
-			cmd = cmd[:80] + "..."
-		}
-		return cmd
-	case "Read", "Write", "Edit":
+		return trunc(hookData.ToolInput.Command)
+	case "Read", "Write":
 		return hookData.ToolInput.FilePath
+	case "Edit":
+		s := hookData.ToolInput.FilePath
+		if hookData.ToolInput.OldString != "" {
+			preview := hookData.ToolInput.OldString
+			if len(preview) > 40 {
+				preview = preview[:40] + "..."
+			}
+			s += " `" + strings.ReplaceAll(preview, "\n", "↵") + "`"
+		}
+		return s
 	case "Grep":
+		if hookData.ToolInput.Pattern != "" {
+			return trunc(hookData.ToolInput.Pattern)
+		}
 		return hookData.ToolInput.Description
 	case "Glob":
+		if hookData.ToolInput.Pattern != "" {
+			return trunc(hookData.ToolInput.Pattern)
+		}
 		return hookData.ToolInput.Description
+	case "WebSearch":
+		return trunc(hookData.ToolInput.Query)
+	case "WebFetch":
+		return trunc(hookData.ToolInput.URL)
 	case "Task":
-		return hookData.ToolInput.Description
+		return trunc(hookData.ToolInput.Description)
 	default:
 		if hookData.ToolInput.Description != "" {
-			return hookData.ToolInput.Description
+			return trunc(hookData.ToolInput.Description)
 		}
 		return ""
 	}
@@ -434,27 +453,24 @@ func handlePermissionHook() error {
 	// Persist claude session ID to config for future lookups
 	persistClaudeSessionID(config, sessName, hookData.SessionID)
 
-	// Update tool call display (fire-and-forget, don't block permission decision)
+	// Update tool call display
+	// Must run synchronously - if we use a goroutine the process exits before it completes
 	if hookData.ToolName != "" && hookData.ToolName != "AskUserQuestion" && topicID != 0 {
-		go func() {
-			defer func() { recover() }()
-			state := loadToolState(sessName)
-			state.Tools = append(state.Tools, ToolCall{
-				Name:  hookData.ToolName,
-				Input: toolInputSummary(hookData),
-				Done:  false,
-			})
-			text := formatToolMessage(state)
-			if state.MsgID == 0 {
-				msgID, err := sendMessageGetID(config, config.GroupID, topicID, text)
-				if err == nil && msgID > 0 {
-					state.MsgID = msgID
-				}
-			} else {
-				editMessage(config, config.GroupID, state.MsgID, topicID, text)
+		state := loadToolState(sessName)
+		state.Tools = append(state.Tools, ToolCall{
+			Name:  hookData.ToolName,
+			Input: toolInputSummary(hookData),
+		})
+		text := formatToolMessage(state)
+		if state.MsgID == 0 {
+			msgID, err := sendMessageGetID(config, config.GroupID, topicID, text)
+			if err == nil && msgID > 0 {
+				state.MsgID = msgID
 			}
-			saveToolState(sessName, state)
-		}()
+		} else {
+			editMessage(config, config.GroupID, state.MsgID, topicID, text)
+		}
+		saveToolState(sessName, state)
 	}
 
 	// Handle AskUserQuestion - forward to Telegram with buttons
@@ -638,6 +654,11 @@ func handleUserPromptHook() error {
 }
 
 func handlePostToolHook() error {
+	// No-op: tool completion is implied by the next tool starting
+	return nil
+}
+
+func handleNotificationHook() error {
 	defer func() { recover() }()
 
 	rawData, _ := readHookStdin()
@@ -660,23 +681,28 @@ func handlePostToolHook() error {
 		return nil
 	}
 
-	state := loadToolState(sessName)
-	// Mark the last matching tool as done
-	for i := len(state.Tools) - 1; i >= 0; i-- {
-		if state.Tools[i].Name == hookData.ToolName && !state.Tools[i].Done {
-			state.Tools[i].Done = true
-			break
-		}
+	persistClaudeSessionID(config, sessName, hookData.SessionID)
+
+	// Skip noisy/useless notification types
+	switch hookData.NotificationType {
+	case "idle_prompt":
+		return nil
 	}
 
-	if state.MsgID > 0 {
-		editMessage(config, config.GroupID, state.MsgID, topicID, formatToolMessage(state))
+	// Build notification message
+	var msg string
+	if hookData.Message != "" {
+		msg = fmt.Sprintf("🔔 %s", hookData.Message)
+	} else if hookData.Title != "" {
+		msg = fmt.Sprintf("🔔 %s", hookData.Title)
+	} else if hookData.NotificationType != "" {
+		msg = fmt.Sprintf("🔔 %s", hookData.NotificationType)
 	}
-	saveToolState(sessName, state)
-	return nil
-}
 
-func handleNotificationHook() error {
+	if msg != "" {
+		sendMessage(config, config.GroupID, topicID, msg)
+	}
+
 	return nil
 }
 
@@ -768,6 +794,16 @@ func installHook() error {
 				"hooks": []interface{}{
 					map[string]interface{}{
 						"command": cccPath + " hook-user-prompt",
+						"type":    "command",
+					},
+				},
+			},
+		},
+		"Notification": {
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"command": cccPath + " hook-notification",
 						"type":    "command",
 					},
 				},
