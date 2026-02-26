@@ -902,7 +902,7 @@ func listen() error {
 									Text: voiceText, Origin: "telegram",
 									TerminalDelivered: false, TelegramDelivered: true,
 								})
-								if err := sendToTmuxFromTelegram(tmuxTargetByID(windowID, tmuxName), voiceText); err == nil {
+								if err := sendToTmuxFromTelegram(tmuxTargetByID(windowID, tmuxName), tmuxName, voiceText); err == nil {
 									updateDelivery(sessionName, voiceLedgerID, "terminal_delivered", true)
 								}
 							}
@@ -938,7 +938,7 @@ func listen() error {
 								Text: caption, Origin: "telegram",
 								TerminalDelivered: false, TelegramDelivered: true,
 							})
-							if err := sendToTmuxFromTelegramWithDelay(tmuxTargetByID(windowID, tmuxName), prompt, 2*time.Second); err == nil {
+							if err := sendToTmuxFromTelegramWithDelay(tmuxTargetByID(windowID, tmuxName), tmuxName, prompt, 2*time.Second); err == nil {
 								updateDelivery(sessionName, photoLedgerID, "terminal_delivered", true)
 							}
 						}
@@ -977,7 +977,7 @@ func listen() error {
 								Text: caption, Origin: "telegram",
 								TerminalDelivered: false, TelegramDelivered: true,
 							})
-							if err := sendToTmuxFromTelegram(tmuxTargetByID(windowID, tmuxName), caption); err == nil {
+							if err := sendToTmuxFromTelegram(tmuxTargetByID(windowID, tmuxName), tmuxName, caption); err == nil {
 								updateDelivery(sessionName, docLedgerID, "terminal_delivered", true)
 							}
 						}
@@ -1311,7 +1311,7 @@ func listen() error {
 							recTarget := tmuxTargetByID(windowID, tmuxName)
 							for _, ur := range undelivered {
 								if ur.Type == "user_prompt" && ur.Origin == "telegram" {
-									if err := sendToTmuxFromTelegram(recTarget, ur.Text); err == nil {
+									if err := sendToTmuxFromTelegram(recTarget, tmuxName, ur.Text); err == nil {
 										updateDelivery(sessName, ur.ID, "terminal_delivered", true)
 									}
 									time.Sleep(500 * time.Millisecond)
@@ -1334,7 +1334,7 @@ func listen() error {
 						TelegramDelivered: true,
 					})
 
-					if err := sendToTmuxFromTelegram(target, text); err != nil {
+					if err := sendToTmuxFromTelegram(target, tmuxName, text); err != nil {
 						listenLog("sendToTmux FAILED: target=%s err=%v", target, err)
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 					} else {

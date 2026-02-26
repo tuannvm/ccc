@@ -232,13 +232,13 @@ func windowNameFromTarget(target string) string {
 	return target
 }
 
-func sendToTmuxFromTelegram(target string, text string) error {
-	os.WriteFile(telegramActiveFlag(windowNameFromTarget(target)), []byte("1"), 0600)
+func sendToTmuxFromTelegram(target string, windowName string, text string) error {
+	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
 	return sendToTmux(target, text)
 }
 
-func sendToTmuxFromTelegramWithDelay(target string, text string, delay time.Duration) error {
-	os.WriteFile(telegramActiveFlag(windowNameFromTarget(target)), []byte("1"), 0600)
+func sendToTmuxFromTelegramWithDelay(target string, windowName string, text string, delay time.Duration) error {
+	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
 	return sendToTmuxWithDelay(target, text, delay)
 }
 
