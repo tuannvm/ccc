@@ -501,10 +501,12 @@ func handleUserPromptHook() error {
 
 	persistClaudeSessionID(config, sessName, hookData.SessionID)
 
-	// Skip if this prompt came from Telegram (already visible in the chat)
+	// Skip if this prompt came from Telegram (already visible in the chat).
+	// The flag is consumed (deleted) so subsequent TUI prompts are not skipped.
 	tmuxName := "claude-" + strings.ReplaceAll(sessName, ".", "_")
 	if flagInfo, err := os.Stat(telegramActiveFlag(tmuxName)); err == nil {
-		if time.Since(flagInfo.ModTime()) < 5*time.Minute {
+		if time.Since(flagInfo.ModTime()) < 30*time.Second {
+			os.Remove(telegramActiveFlag(tmuxName))
 			return nil
 		}
 	}
