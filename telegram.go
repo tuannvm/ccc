@@ -157,6 +157,15 @@ func sendMessage(config *Config, chatID int64, threadID int64, text string) erro
 
 // sendMessageGetID sends a message and returns the message ID for later editing
 func sendMessageGetID(config *Config, chatID int64, threadID int64, text string) (int64, error) {
+	return sendMessageWithMode(config, chatID, threadID, text, "Markdown")
+}
+
+// sendMessageHTMLGetID sends a message with HTML parse mode and returns the message ID
+func sendMessageHTMLGetID(config *Config, chatID int64, threadID int64, text string) (int64, error) {
+	return sendMessageWithMode(config, chatID, threadID, text, "HTML")
+}
+
+func sendMessageWithMode(config *Config, chatID int64, threadID int64, text string, parseMode string) (int64, error) {
 	const maxLen = 4000
 
 	// Split long messages
@@ -167,7 +176,7 @@ func sendMessageGetID(config *Config, chatID int64, threadID int64, text string)
 		params := url.Values{
 			"chat_id":    {fmt.Sprintf("%d", chatID)},
 			"text":       {msg},
-			"parse_mode": {"Markdown"},
+			"parse_mode": {parseMode},
 		}
 		if threadID > 0 {
 			params.Set("message_thread_id", fmt.Sprintf("%d", threadID))
@@ -201,6 +210,15 @@ func sendMessageGetID(config *Config, chatID int64, threadID int64, text string)
 
 // editMessage edits an existing message, sending overflow as new messages
 func editMessage(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
+	return editMessageWithMode(config, chatID, messageID, threadID, text, "Markdown")
+}
+
+// editMessageHTML edits a message using HTML parse mode
+func editMessageHTML(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
+	return editMessageWithMode(config, chatID, messageID, threadID, text, "HTML")
+}
+
+func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID int64, text string, parseMode string) error {
 	const maxLen = 4000
 
 	// Split message - first part goes to edit, rest as new messages
@@ -211,6 +229,7 @@ func editMessage(config *Config, chatID int64, messageID int64, threadID int64, 
 		"chat_id":    {fmt.Sprintf("%d", chatID)},
 		"message_id": {fmt.Sprintf("%d", messageID)},
 		"text":       {messages[0]},
+		"parse_mode": {parseMode},
 	}
 
 	result, err := telegramAPI(config, "editMessageText", params)

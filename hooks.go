@@ -68,17 +68,45 @@ func clearToolState(sessionName string) {
 	os.Remove(toolStatePath(sessionName))
 }
 
-// formatToolMessage builds the display text from tool state
-func formatToolMessage(state *ToolState) string {
+// collapseToolMessage edits the tool message to use expandable blockquote (if >1 tool)
+func collapseToolMessage(config *Config, sessName string, topicID int64) {
+	state := loadToolState(sessName)
+	if state.MsgID == 0 || len(state.Tools) <= 1 {
+		return
+	}
+	text := formatToolMessageCollapsed(state)
+	editMessageHTML(config, config.GroupID, state.MsgID, topicID, text)
+}
+
+// htmlEscape escapes special HTML characters
+func htmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
+
+// formatToolLines builds tool lines without blockquote wrapper
+func formatToolLines(state *ToolState) string {
 	var lines []string
 	for _, t := range state.Tools {
 		if t.Input != "" {
-			lines = append(lines, fmt.Sprintf("⚙️ %s: %s", t.Name, t.Input))
+			lines = append(lines, fmt.Sprintf("⚙️ %s: %s", htmlEscape(t.Name), htmlEscape(t.Input)))
 		} else {
-			lines = append(lines, fmt.Sprintf("⚙️ %s", t.Name))
+			lines = append(lines, fmt.Sprintf("⚙️ %s", htmlEscape(t.Name)))
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// formatToolMessage builds expanded blockquote (during tool calls)
+func formatToolMessage(state *ToolState) string {
+	return "<blockquote>" + formatToolLines(state) + "</blockquote>"
+}
+
+// formatToolMessageCollapsed builds expandable blockquote (after tools complete)
+func formatToolMessageCollapsed(state *ToolState) string {
+	return "<blockquote expandable>" + formatToolLines(state) + "</blockquote>"
 }
 
 // toolInputSummary extracts a short description from tool input
@@ -232,6 +260,9 @@ func handleStopHook() error {
 	tmuxName := "claude-" + strings.ReplaceAll(sessName, ".", "_")
 	os.Remove(telegramActiveFlag(tmuxName))
 	clearThinking(sessName)
+
+	// Collapse tool message if more than 1 tool was called
+	collapseToolMessage(config, sessName, topicID)
 	clearToolState(sessName)
 
 	// Retry extractLastTurn a few times - transcript may not be fully flushed yet
@@ -463,12 +494,12 @@ func handlePermissionHook() error {
 		})
 		text := formatToolMessage(state)
 		if state.MsgID == 0 {
-			msgID, err := sendMessageGetID(config, config.GroupID, topicID, text)
+			msgID, err := sendMessageHTMLGetID(config, config.GroupID, topicID, text)
 			if err == nil && msgID > 0 {
 				state.MsgID = msgID
 			}
 		} else {
-			editMessage(config, config.GroupID, state.MsgID, topicID, text)
+			editMessageHTML(config, config.GroupID, state.MsgID, topicID, text)
 		}
 		saveToolState(sessName, state)
 	}
@@ -635,6 +666,9 @@ func handleUserPromptHook() error {
 	}
 
 	persistClaudeSessionID(config, sessName, hookData.SessionID)
+
+	// Collapse tool message from previous turn
+	collapseToolMessage(config, sessName, topicID)
 	clearToolState(sessName)
 
 	// Skip if this prompt came from Telegram (already visible in the chat).
