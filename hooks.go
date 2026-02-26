@@ -476,6 +476,35 @@ func outputPermissionDecision(decision, reason string) {
 	fmt.Println(string(data))
 }
 
+func handleUserPromptHook() error {
+	defer func() { recover() }()
+
+	rawData, _ := readHookStdin()
+	if len(rawData) == 0 {
+		return nil
+	}
+
+	hookData, err := parseHookData(rawData)
+	if err != nil || hookData.Prompt == "" {
+		return nil
+	}
+
+	config, err := loadConfig()
+	if err != nil || config == nil {
+		return nil
+	}
+
+	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
+	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+		return nil
+	}
+
+	persistClaudeSessionID(config, sessName, hookData.SessionID)
+
+	sendMessage(config, config.GroupID, topicID, fmt.Sprintf("💬 %s", hookData.Prompt))
+	return nil
+}
+
 func handleNotificationHook() error {
 	return nil
 }
@@ -548,6 +577,16 @@ func installHook() error {
 				"hooks": []interface{}{
 					map[string]interface{}{
 						"command": cccPath + " hook-stop",
+						"type":    "command",
+					},
+				},
+			},
+		},
+		"UserPromptSubmit": {
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"command": cccPath + " hook-user-prompt",
 						"type":    "command",
 					},
 				},

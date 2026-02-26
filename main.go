@@ -346,6 +346,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "hook-user-prompt":
+		if err := handleUserPromptHook(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "hook-notification":
 		if err := handleNotificationHook(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
