@@ -379,27 +379,33 @@ func extractLastTurn(transcriptPath string) []string {
 		return nil
 	}
 
-	// Find the last real user message (not a tool_result)
-	lastUserIdx := -1
+	// Find the last assistant entry, then search backwards from there
+	// for the real user message that started the turn. This avoids the
+	// race where the user types a new message before the stop hook fires,
+	// which would cause us to miss the previous turn's assistant reply.
+	lastAssistantIdx := -1
 	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.ttype == "assistant" || e.role == "assistant" {
+			lastAssistantIdx = i
+			break
+		}
+	}
+	if lastAssistantIdx < 0 {
+		return nil
+	}
+
+	startIdx := 0
+	for i := lastAssistantIdx; i >= 0; i-- {
 		e := entries[i]
 		if e.ttype != "user" && e.role != "user" {
 			continue
 		}
-		// Check if content is a tool_result
 		if isToolResult(e.content) {
 			continue
 		}
-		lastUserIdx = i
+		startIdx = i + 1
 		break
-	}
-
-	// Collect text from assistant messages after the last user message.
-	// Streaming dedup: same requestId may have multiple entries with progressively
-	// updated text; for each requestId, the last entry's text blocks win.
-	startIdx := lastUserIdx + 1
-	if lastUserIdx < 0 {
-		startIdx = 0
 	}
 
 	reqTexts := make(map[string][]string) // requestId -> text blocks from last entry
