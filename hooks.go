@@ -359,9 +359,16 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 			msg := fmt.Sprintf("*%s:*\n%s", sessName, block.text)
 			tgMsgID, err := sendMessageGetID(config, config.GroupID, topicID, msg)
 			if err != nil {
-				hookLog("deliver-text: send failed, retrying: %v", err)
-				time.Sleep(500 * time.Millisecond)
-				tgMsgID, _ = sendMessageGetID(config, config.GroupID, topicID, msg)
+				// If thread not found, retry without thread_id
+				if strings.Contains(err.Error(), "message thread not found") && topicID != 0 {
+					hookLog("deliver-text: thread not found, retrying without thread_id")
+					time.Sleep(500 * time.Millisecond)
+					tgMsgID, _ = sendMessageGetID(config, config.GroupID, 0, msg)
+				} else {
+					hookLog("deliver-text: send failed, retrying: %v", err)
+					time.Sleep(500 * time.Millisecond)
+					tgMsgID, _ = sendMessageGetID(config, config.GroupID, topicID, msg)
+				}
 			}
 			appendMessage(&MessageRecord{
 				ID: blockID, Session: sessName, Type: "assistant_text",
@@ -398,9 +405,11 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 
 	type transcriptLine struct {
 		Type             string `json:"type"`
+		UUID             string `json:"uuid,omitempty"`
 		RequestID        string `json:"requestId,omitempty"`
 		IsApiErrorMessage bool  `json:"isApiErrorMessage,omitempty"`
 		Message          struct {
+			ID      string          `json:"id,omitempty"`
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
@@ -450,11 +459,22 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 		if tl.Type != "assistant" || tl.Message.Role != "assistant" {
 			continue
 		}
-		if tl.IsApiErrorMessage || tl.RequestID == "" {
+		if tl.IsApiErrorMessage {
+			continue
+		}
+		// Fall back to uuid or message.id for ZAI format
+		rid := tl.RequestID
+		if rid == "" {
+			rid = tl.UUID
+		}
+		if rid == "" {
+			rid = tl.Message.ID
+		}
+		if rid == "" {
 			continue
 		}
 		entries = append(entries, entry{
-			requestID: tl.RequestID,
+			requestID: rid,
 			content:   tl.Message.Content,
 		})
 	}
