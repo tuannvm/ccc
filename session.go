@@ -42,7 +42,7 @@ func createSession(config *Config, name string) error {
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name)
+	topicID, err := createForumTopic(config, name, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -54,7 +54,7 @@ func createSession(config *Config, name string) error {
 		os.MkdirAll(workDir, 0755)
 	}
 
-	windowID, err := createTmuxWindow(tmuxSafeName(name), workDir, false, providerName)
+	windowID, err := createTmuxWindow(tmuxSafeName(name), workDir, false, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create tmux window: %w", err)
 	}
@@ -111,7 +111,7 @@ func startSession(continueSession bool) error {
 	config, err := loadConfig()
 	if err != nil {
 		// No config, just run claude directly with default provider
-		return runClaudeRaw(continueSession, "")
+		return runClaudeRaw(continueSession, "", "")
 	}
 
 	// Get the provider to use for this session
@@ -127,7 +127,7 @@ func startSession(continueSession bool) error {
 	// Create topic if it doesn't exist and we have a group configured
 	if config.GroupID != 0 {
 		if _, exists := config.Sessions[name]; !exists {
-			topicID, err := createForumTopic(config, name)
+			topicID, err := createForumTopic(config, name, providerName)
 			if err == nil {
 				config.Sessions[name] = &SessionInfo{
 					TopicID:      topicID,
@@ -162,7 +162,7 @@ func startSession(continueSession bool) error {
 	}
 
 	// Create new window
-	windowID, err = createTmuxWindow(winName, cwd, continueSession, providerName)
+	windowID, err = createTmuxWindow(winName, cwd, continueSession, providerName, "")
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name)
+	topicID, err := createForumTopic(config, name, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -223,7 +223,7 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Create tmux window (detached)
-	windowID, err := createTmuxWindow(winName, workDir, false, providerName)
+	windowID, err := createTmuxWindow(winName, workDir, false, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create tmux window: %w", err)
 	}

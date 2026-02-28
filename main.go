@@ -216,19 +216,23 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		// Run claude directly (used inside tmux sessions)
-		// Flags: -c (continue), --provider <name>
+		// Flags: -c (continue), --resume <session-id>, --provider <name>
 		continueSession := false
+		var resumeSessionID string
 		var providerOverride string
 		args := os.Args[2:]
 		for i := 0; i < len(args); i++ {
 			if args[i] == "-c" {
 				continueSession = true
+			} else if args[i] == "--resume" && i+1 < len(args) {
+				resumeSessionID = args[i+1]
+				i++
 			} else if args[i] == "--provider" && i+1 < len(args) {
 				providerOverride = args[i+1]
 				i++
 			}
 		}
-		if err := runClaudeRaw(continueSession, providerOverride); err != nil {
+		if err := runClaudeRaw(continueSession, resumeSessionID, providerOverride); err != nil {
 			os.Exit(1)
 		}
 		return

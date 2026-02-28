@@ -450,14 +450,21 @@ func downloadTelegramFile(config *Config, fileID string, destPath string) error 
 	return err
 }
 
-func createForumTopic(config *Config, name string) (int64, error) {
+func createForumTopic(config *Config, name string, providerName string) (int64, error) {
 	if config.GroupID == 0 {
 		return 0, fmt.Errorf("no group configured. Add bot to a group with topics enabled and run: ccc setgroup")
 	}
 
+	// Add first letter of provider as prefix (Telegram uses first char as icon)
+	topicName := name
+	if providerName != "" && len(providerName) > 0 {
+		prefix := strings.ToUpper(string(providerName[0]))
+		topicName = fmt.Sprintf("%s %s", prefix, name)
+	}
+
 	params := url.Values{
 		"chat_id": {fmt.Sprintf("%d", config.GroupID)},
-		"name":    {name},
+		"name":    {topicName},
 	}
 
 	result, err := telegramAPI(config, "createForumTopic", params)
@@ -501,12 +508,12 @@ func deleteForumTopic(config *Config, topicID int64) error {
 func setBotCommands(botToken string) {
 	commands := []map[string]string{
 		{"command": "new", "description": "Create/restart session: /new <name>"},
+		{"command": "continue", "description": "Restart session with history"},
 		{"command": "delete", "description": "Delete current session and thread"},
+		{"command": "resume", "description": "List/switch Claude sessions: /resume [id]"},
+		{"command": "providers", "description": "List available AI providers"},
 		{"command": "cleanup", "description": "Delete ALL sessions, folders and threads"},
 		{"command": "c", "description": "Execute shell command: /c <cmd>"},
-		{"command": "continue", "description": "Restart session with history"},
-		{"command": "providers", "description": "List available AI providers"},
-		{"command": "provider", "description": "Show/change provider for session"},
 		{"command": "update", "description": "Update ccc binary from GitHub"},
 		{"command": "version", "description": "Show ccc version"},
 		{"command": "stats", "description": "Show system stats (RAM, disk, etc)"},

@@ -845,6 +845,15 @@ func listen() error {
 					}
 					continue
 
+				case "provider":
+					// Provider selection for /provider command: provider:session_name:provider_name
+					if len(parts) == 3 {
+						sessionName := parts[1]
+						providerName := parts[2]
+						handleProviderChange(config, cb, sessionName, providerName)
+					}
+					continue
+
 				default:
 					// Legacy: AskUserQuestion callback - session:questionIndex:totalQuestions:optionIndex
 					if len(parts) >= 3 {
@@ -1132,7 +1141,7 @@ func listen() error {
 				if _, err := os.Stat(workDir); os.IsNotExist(err) {
 					os.MkdirAll(workDir, 0755)
 				}
-				newWindowID, err := createTmuxWindow(tmuxName, workDir, true, sessionInfo.ProviderName)
+				newWindowID, err := createTmuxWindow(tmuxName, workDir, true, sessionInfo.ProviderName, "")
 				if err != nil {
 					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start: %v", err))
 				} else {
@@ -1174,29 +1183,87 @@ func listen() error {
 				continue
 			}
 
-			// /providers command - list available providers
-			if text == "/providers" {
+			// /providers command - list available providers or change session provider
+			if text == "/providers" || strings.HasPrefix(text, "/provider") {
 				config, _ := loadConfig()
-				if config.Providers == nil || len(config.Providers) == 0 {
-					sendMessage(config, chatID, threadID, "No providers configured.\n\nConfigure providers in ~/.config/ccc/config.json:\n{\n  \"active_provider\": \"my-provider\",\n  \"providers\": {\n    \"my-provider\": {\"auth_env_var\": \"MY_API_KEY\", \"base_url\": \"...\"}\n  }\n}")
-					continue
+
+				// If in a topic (session), show current provider + change keyboard
+				if isGroup && threadID > 0 {
+					sessName := getSessionByTopic(config, threadID)
+					if sessName != "" {
+						sessionInfo := config.Sessions[sessName]
+
+						// Show current provider and selection keyboard
+						current := sessionInfo.ProviderName
+						if current == "" {
+							current = config.ActiveProvider
+							if current == "" {
+								current = "default"
+							}
+						}
+
+						// Show keyboard with providers (always include anthropic)
+						var buttons [][]InlineKeyboardButton
+
+						// Add anthropic first (built-in default)
+						label := "anthropic"
+						if current == "anthropic" || (sessionInfo.ProviderName == "" && (config.ActiveProvider == "" || config.ActiveProvider == "anthropic")) {
+							label += " ✓"
+						}
+						buttons = append(buttons, []InlineKeyboardButton{
+							{Text: label, CallbackData: fmt.Sprintf("provider:%s:anthropic", sessName)},
+						})
+
+						// Add configured providers
+						for name := range config.Providers {
+							label := name
+							if current == name || (sessionInfo.ProviderName == "" && config.ActiveProvider == name) {
+								label += " ✓"
+							}
+							callbackData := fmt.Sprintf("provider:%s:%s", sessName, name)
+							buttons = append(buttons, []InlineKeyboardButton{
+								{Text: label, CallbackData: callbackData},
+							})
+						}
+
+						msg := fmt.Sprintf("🤖 **%s**\n\nCurrent provider: %s\n\nSelect a new provider:", sessName, current)
+						sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
+						continue
+					}
 				}
+
+				// Not in a topic - show all available providers
 				var msg []string
 				msg = append(msg, "📋 Available providers:")
-				for name := range config.Providers {
-					active := ""
-					if config.ActiveProvider == name {
-						active = " (active)"
+
+				// Always show anthropic as built-in default
+				active := ""
+				if config.ActiveProvider == "" || config.ActiveProvider == "anthropic" {
+					active = " (active)"
+				}
+				msg = append(msg, fmt.Sprintf("  • anthropic%s (built-in, uses default env vars)", active))
+
+				// Show configured providers
+				if config.Providers != nil {
+					for name := range config.Providers {
+						active := ""
+						if config.ActiveProvider == name {
+							active = " (active)"
+						}
+						msg = append(msg, fmt.Sprintf("  • %s%s", name, active))
 					}
-					msg = append(msg, fmt.Sprintf("  • %s%s", name, active))
+				}
+
+				if len(msg) == 1 {
+					msg = append(msg, "\nNo additional providers configured.\n\nConfigure providers in ~/.config/ccc/config.json.")
 				}
 				sendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
 				continue
 			}
 
-			// /provider command - show or set provider for current session
-			if strings.HasPrefix(text, "/provider") && isGroup && threadID > 0 {
-				config, _ := loadConfig()
+			// /resume command - manage Claude session IDs
+			if strings.HasPrefix(text, "/resume") && isGroup && threadID > 0 {
+				config, _ = loadConfig()
 				sessName := getSessionByTopic(config, threadID)
 				if sessName == "" {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
@@ -1204,34 +1271,176 @@ func listen() error {
 				}
 				sessionInfo := config.Sessions[sessName]
 
-				arg := strings.TrimSpace(strings.TrimPrefix(text, "/provider"))
+				// Get work dir once for both listing and validation
+				workDir := sessionInfo.Path
+				arg := strings.TrimSpace(strings.TrimPrefix(text, "/resume"))
 				if arg == "" {
-					// Show current provider
-					current := sessionInfo.ProviderName
-					if current == "" {
-						current = config.ActiveProvider
-						if current == "" {
-							current = "default"
+					// List available Claude session IDs for this project
+					home, _ := os.UserHomeDir()
+
+					// For absolute paths, extract relative path component for transcript lookup
+					// This handles filepath.Join behavior where absolute paths drop earlier components
+					var pathComponent string
+					if filepath.IsAbs(workDir) {
+						// Use the full path with leading - replaced (ZAI-style format)
+						pathComponent = strings.ReplaceAll(workDir, "/", "-")
+						if strings.HasPrefix(pathComponent, "/") {
+							pathComponent = "-" + pathComponent[1:]
+						}
+					} else {
+						pathComponent = workDir
+					}
+
+					// Get transcript directory from provider config
+					// Priority: session provider > active provider > default
+					providerName := sessionInfo.ProviderName
+					if providerName == "" {
+						providerName = config.ActiveProvider
+					}
+					var transcriptDir string
+					if providerName != "" && config.Providers != nil {
+						if p := config.Providers[providerName]; p != nil && p.ConfigDir != "" {
+							// Expand ~ in config_dir
+							configDir := p.ConfigDir
+							if strings.HasPrefix(configDir, "~/") {
+								configDir = filepath.Join(home, configDir[2:])
+							} else if configDir == "~" {
+								configDir = home
+							}
+							transcriptDir = filepath.Join(configDir, "projects", pathComponent)
 						}
 					}
-					sendMessage(config, chatID, threadID, fmt.Sprintf("🤖 Current provider: %s\n\nUsage: /provider <name> to change for this session.", current))
+					// Fallback to default Claude Code transcripts location (for anthropic)
+					if transcriptDir == "" {
+						transcriptDir = filepath.Join(home, ".claude", "projects", pathComponent)
+					}
+
+					// Read all .jsonl files (these are the Claude sessions)
+					var sessions []string
+					entries, _ := os.ReadDir(transcriptDir)
+					for _, e := range entries {
+						if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+							// Remove .jsonl extension to get session ID
+							sessionID := strings.TrimSuffix(e.Name(), ".jsonl")
+							sessions = append(sessions, sessionID)
+						}
+					}
+
+					if len(sessions) == 0 {
+						sendMessage(config, chatID, threadID, "📋 No previous Claude sessions found for this project.")
+						continue
+					}
+
+					// Build list of available session IDs
+					var msg []string
+					msg = append(msg, "📋 Available Claude sessions for this project:")
+
+					// Show current first
+					currentID := sessionInfo.ClaudeSessionID
+					if currentID != "" {
+						msg = append(msg, fmt.Sprintf("  • %s (current)", currentID))
+					}
+
+					// Show others (sorted by most recent first)
+					// Reverse to show newest first
+					for i := len(sessions) - 1; i >= 0; i-- {
+						sessionID := sessions[i]
+						if sessionID != currentID {
+							msg = append(msg, fmt.Sprintf("  • %s", sessionID))
+						}
+					}
+
+					msg = append(msg, "", fmt.Sprintf("Usage: /resume <session_id> to switch sessions"))
+					sendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
 					continue
 				}
 
-				// Validate provider
-				if config.Providers == nil {
-					sendMessage(config, chatID, threadID, "❌ No providers configured. Use /providers to see available providers.")
-					continue
+				// Validate session ID (check if transcript exists)
+				home, _ := os.UserHomeDir()
+
+				// For absolute paths, extract relative path component for transcript lookup
+				var pathComponent string
+				if filepath.IsAbs(workDir) {
+					// Use the full path with leading - replaced (ZAI-style format)
+					pathComponent = strings.ReplaceAll(workDir, "/", "-")
+					if strings.HasPrefix(pathComponent, "/") {
+						pathComponent = "-" + pathComponent[1:]
+					}
+				} else {
+					pathComponent = workDir
 				}
-				if _, exists := config.Providers[arg]; !exists {
-					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Unknown provider '%s'\n\nUse /providers to list available providers.", arg))
+
+				// Get transcript directory from provider config
+				// Priority: session provider > active provider > default
+				providerName := sessionInfo.ProviderName
+				if providerName == "" {
+					providerName = config.ActiveProvider
+				}
+				var transcriptDir string
+				if providerName != "" && config.Providers != nil {
+					if p := config.Providers[providerName]; p != nil && p.ConfigDir != "" {
+						// Expand ~ in config_dir
+						configDir := p.ConfigDir
+						if strings.HasPrefix(configDir, "~/") {
+							configDir = filepath.Join(home, configDir[2:])
+						} else if configDir == "~" {
+							configDir = home
+						}
+						transcriptDir = filepath.Join(configDir, "projects", pathComponent)
+					}
+				}
+				// Fallback to default Claude Code transcripts location
+				if transcriptDir == "" {
+					transcriptDir = filepath.Join(home, ".claude", "projects", pathComponent)
+				}
+
+				transcriptPath := filepath.Join(transcriptDir, arg+".jsonl")
+
+				if _, err := os.Stat(transcriptPath); os.IsNotExist(err) {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Session not found: %s\n\nUse /resume to list available sessions.", arg))
 					continue
 				}
 
-				// Update session provider
-				sessionInfo.ProviderName = arg
+				// Update session's Claude session ID
+				oldID := sessionInfo.ClaudeSessionID
+				sessionInfo.ClaudeSessionID = arg
 				saveConfig(config)
-				sendMessage(config, chatID, threadID, fmt.Sprintf("✅ Provider changed to %s\n\nRestart session with /new to apply the new provider.", arg))
+
+				msg := fmt.Sprintf("✅ Switched to session: %s", arg)
+				if oldID != "" && oldID != arg {
+					shortOld := oldID
+					if len(oldID) > 8 {
+						shortOld = oldID[:8] + "..."
+					}
+					msg += fmt.Sprintf("\n\nPrevious: %s", shortOld)
+				}
+				msg += "\n\nRestarting session..."
+
+				sendMessage(config, chatID, threadID, msg)
+
+				// Restart the session
+				tmuxName := tmuxSafeName(sessName)
+				windowID := getWindowID(config, sessName)
+				if tmuxWindowExistsByID(windowID, tmuxName) {
+					killTmuxWindow(windowID, tmuxName)
+					time.Sleep(300 * time.Millisecond)
+				}
+				if _, err := os.Stat(workDir); os.IsNotExist(err) {
+					os.MkdirAll(workDir, 0755)
+				}
+				newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName, arg)
+				if err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to restart: %v", err))
+				} else {
+					config.Sessions[sessName].WindowID = newWindowID
+					saveConfig(config)
+					time.Sleep(500 * time.Millisecond)
+					if tmuxWindowExistsByID(newWindowID, tmuxName) {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' resumed with Claude session %s", sessName, arg))
+					} else {
+						sendMessage(config, chatID, threadID, "⚠️ Session died immediately")
+					}
+				}
 				continue
 			}
 
@@ -1301,11 +1510,12 @@ func listen() error {
 						providerName = strings.TrimSpace(parts[1])
 					}
 
-					// Validate provider if specified
-					if providerName != "" && config.Providers != nil {
+					// Validate provider if specified (anthropic is always valid)
+					if providerName != "" && providerName != "anthropic" && config.Providers != nil {
 						if _, exists := config.Providers[providerName]; !exists {
-							// List available providers
+							// List available providers (including anthropic)
 							var available []string
+							available = append(available, "anthropic")
 							for name := range config.Providers {
 								available = append(available, name)
 							}
@@ -1316,8 +1526,8 @@ func listen() error {
 						}
 					}
 
-					// Always show keyboard if multiple providers and no explicit provider selected
-					if providerName == "" && config.Providers != nil && len(config.Providers) > 1 {
+					// Always show keyboard if no explicit provider selected
+					if providerName == "" {
 						// Check if session already exists
 						existing, exists := config.Sessions[sessionName]
 						if exists && existing != nil && existing.TopicID != 0 {
@@ -1325,8 +1535,19 @@ func listen() error {
 							continue
 						}
 
-						// Build provider selection keyboard
+						// Build provider selection keyboard (always include anthropic)
 						var buttons [][]InlineKeyboardButton
+
+						// Add anthropic first (built-in default)
+						label := "anthropic"
+						if config.ActiveProvider == "" || config.ActiveProvider == "anthropic" {
+							label += " ⭐"
+						}
+						buttons = append(buttons, []InlineKeyboardButton{
+							{Text: label, CallbackData: fmt.Sprintf("new:%s:anthropic", sessionName)},
+						})
+
+						// Add configured providers
 						for name := range config.Providers {
 							label := name
 							if config.ActiveProvider == name {
@@ -1349,7 +1570,11 @@ func listen() error {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
 						continue
 					}
-					topicID, err := createForumTopic(config, sessionName)
+					// Use provider from arg or default to active provider
+					if providerName == "" {
+						providerName = config.ActiveProvider
+					}
+					topicID, err := createForumTopic(config, sessionName, providerName)
 					if err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 						continue
@@ -1373,7 +1598,7 @@ func listen() error {
 					if providerName != "" {
 						providerMsg = fmt.Sprintf("\n🤖 Provider: %s", providerName)
 					}
-					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName)
+					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName, "")
 					if err != nil {
 						sendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start tmux: %v", err))
 					} else {
@@ -1410,7 +1635,7 @@ func listen() error {
 					if _, err := os.Stat(workDir); os.IsNotExist(err) {
 						os.MkdirAll(workDir, 0755)
 					}
-					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName)
+					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName, "")
 					if err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start: %v", err))
 					} else {
@@ -1445,7 +1670,7 @@ func listen() error {
 						if _, err := os.Stat(workDir); os.IsNotExist(err) {
 							os.MkdirAll(workDir, 0755)
 						}
-						newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName)
+						newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName, "")
 						if err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start session: %v", err))
 							continue
@@ -1550,7 +1775,7 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 	}
 
 	// Create topic
-	topicID, err := createForumTopic(config, sessionName)
+	topicID, err := createForumTopic(config, sessionName, providerName)
 	if err != nil {
 		if cb.Message != nil {
 			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
@@ -1578,7 +1803,7 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 	}
 
 	tmuxName := tmuxSafeName(sessionName)
-	newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName)
+	newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName, "")
 
 	// Update message to show result
 	resultMsg := fmt.Sprintf("🚀 Session '%s' started!\n🤖 Provider: %s\n\nSend messages here to interact with Claude.", sessionName, providerName)
@@ -1593,6 +1818,46 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 		}
 	}
 
+	if cb.Message != nil {
+		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
+	}
+}
+
+// handleProviderChange changes provider for an existing session via inline keyboard
+func handleProviderChange(config *Config, cb *CallbackQuery, sessionName, providerName string) {
+	// Check if session exists
+	session, exists := config.Sessions[sessionName]
+	if !exists || session == nil {
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("❌ Session '%s' not found.", sessionName))
+		}
+		return
+	}
+
+	// Validate provider (anthropic is always valid)
+	if providerName != "anthropic" {
+		if config.Providers == nil {
+			if cb.Message != nil {
+				editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+					"❌ No providers configured.")
+			}
+			return
+		}
+		if _, exists := config.Providers[providerName]; !exists {
+			if cb.Message != nil {
+				editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+					fmt.Sprintf("❌ Provider '%s' not found.", providerName))
+			}
+			return
+		}
+	}
+
+	// Update session provider
+	session.ProviderName = providerName
+	saveConfig(config)
+
+	resultMsg := fmt.Sprintf("✅ Provider changed to %s for session '%s'\n\nRestart with /new to apply the new provider.", providerName, sessionName)
 	if cb.Message != nil {
 		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
 	}

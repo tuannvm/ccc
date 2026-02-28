@@ -140,10 +140,13 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	return false
 }
 
-func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string) (string, error) {
+func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string, sessionID string) (string, error) {
 	// Build the command to run inside the window
 	cccCmd := cccPath + " run"
-	if continueSession {
+	if sessionID != "" {
+		// Resume specific session by ID
+		cccCmd += " --resume " + sessionID
+	} else if continueSession {
 		cccCmd += " -c"
 	}
 	if providerName != "" {
@@ -285,7 +288,8 @@ func unsetEnvVars(env []string, keys []string) []string {
 
 // runClaudeRaw runs claude directly (used inside tmux sessions)
 // providerOverride, if non-empty, specifies which provider to use instead of active_provider
-func runClaudeRaw(continueSession bool, providerOverride string) error {
+// resumeSessionID, if non-empty, resumes a specific session by ID
+func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string) error {
 	if claudePath == "" {
 		return fmt.Errorf("claude binary not found")
 	}
@@ -300,7 +304,9 @@ func runClaudeRaw(continueSession bool, providerOverride string) error {
 	}
 
 	var args []string
-	if continueSession {
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	} else if continueSession {
 		args = append(args, "-c")
 	}
 
@@ -317,13 +323,25 @@ func runClaudeRaw(continueSession bool, providerOverride string) error {
 	if err == nil {
 		// Determine which provider to use
 		var provider *ProviderConfig
-		if providerOverride != "" && config.Providers != nil {
-			// Use explicitly specified provider
-			provider = config.Providers[providerOverride]
+		if providerOverride != "" {
+			// Check for anthropic (built-in default, no config needed)
+			if providerOverride != "anthropic" {
+				// Look up provider in config
+				if config.Providers != nil {
+					provider = config.Providers[providerOverride]
+				}
+				// If provider not found, fall back to active provider
+				if provider == nil {
+					provider = getActiveProvider(config)
+				}
+			}
+			// For "anthropic", provider remains nil (uses default env)
 		}
 		if provider == nil {
-			// Fall back to active provider
-			provider = getActiveProvider(config)
+			// Fall back to active provider (only if no override)
+			if providerOverride == "" {
+				provider = getActiveProvider(config)
+			}
 		}
 		cmd.Env = applyProviderEnv(cmd.Env, provider)
 
