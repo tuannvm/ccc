@@ -99,4 +99,3 @@ WantedBy=default.target
 	fmt.Println("✅ Service installed and started (systemd)")
 	return nil
 }
-

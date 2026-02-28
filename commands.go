@@ -875,23 +875,51 @@ func listen() error {
 							editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, newText)
 						}
 
-						tmuxName := tmuxSafeName(sessionName)
-						windowID := getWindowID(config, sessionName)
-						if tmuxWindowExistsByID(windowID, tmuxName) {
-							target := tmuxTargetByID(windowID, tmuxName)
-							// Send arrow down keys to select option, then Enter
-							for i := 0; i < optionIndex; i++ {
-								exec.Command(tmuxPath, "send-keys", "-t", target, "Down").Run()
-								time.Sleep(50 * time.Millisecond)
+						// Switch to the session and send arrow keys
+						sessionInfo, exists := config.Sessions[sessionName]
+						if exists && sessionInfo != nil {
+							// Check if this callback is for the currently active session
+							currentSession := getCurrentSessionName()
+							if currentSession != sessionName {
+								// Stale callback - user has switched to a different session
+								// Reject the callback to avoid sending keys to the wrong context
+								listenLog("[callback] Rejecting stale callback for %s (current session: %s)", sessionName, currentSession)
+								if cb.Message != nil {
+									editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+										fmt.Sprintf("⚠️ This poll is no longer valid.\n\nYou have switched to a different session. Please send a new message to this topic to create a new poll."))
+								}
+								continue
 							}
-							exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
-							listenLog("[callback] Selected option %d for %s (question %d/%d)", optionIndex, sessionName, questionIndex+1, totalQuestions)
 
-							// After the last question, send Enter to confirm "Submit answers"
-							if totalQuestions > 0 && questionIndex == totalQuestions-1 {
-								time.Sleep(300 * time.Millisecond)
+							workDir := getSessionWorkDir(config, sessionName, sessionInfo)
+
+							// Get worktree name if this is a worktree session
+							worktreeName := ""
+							if sessionInfo.IsWorktree {
+								worktreeName = sessionInfo.WorktreeName
+							}
+
+							// Use stored Claude session ID to resume existing conversation
+							resumeSessionID := sessionInfo.ClaudeSessionID
+
+							// Switch to the session (preserve session context for callbacks)
+							// Since currentSession == sessionName, this will skip restart
+							if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+								target, _ := getCccWindowTarget()
+								// Send arrow down keys to select option, then Enter
+								for i := 0; i < optionIndex; i++ {
+									exec.Command(tmuxPath, "send-keys", "-t", target, "Down").Run()
+									time.Sleep(50 * time.Millisecond)
+								}
 								exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
-								listenLog("[callback] Auto-submitted answers for %s", sessionName)
+								listenLog("[callback] Selected option %d for %s (question %d/%d)", optionIndex, sessionName, questionIndex+1, totalQuestions)
+
+								// After the last question, send Enter to confirm "Submit answers"
+								if totalQuestions > 0 && questionIndex == totalQuestions-1 {
+									time.Sleep(300 * time.Millisecond)
+									exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
+									listenLog("[callback] Auto-submitted answers for %s", sessionName)
+								}
 							}
 						}
 					}
@@ -916,9 +944,8 @@ func listen() error {
 				config, _ = loadConfig()
 				sessionName := getSessionByTopic(config, threadID)
 				if sessionName != "" {
-					tmuxName := tmuxSafeName(sessionName)
-					windowID := getWindowID(config, sessionName)
-					if tmuxWindowExistsByID(windowID, tmuxName) {
+					sessionInfo := config.Sessions[sessionName]
+					if sessionInfo != nil {
 						sendMessage(config, chatID, threadID, "🎤 Transcribing...")
 						// Download and transcribe
 						audioPath := filepath.Join(os.TempDir(), fmt.Sprintf("voice_%d.ogg", time.Now().UnixNano()))
@@ -939,8 +966,19 @@ func listen() error {
 									Text: voiceText, Origin: "telegram",
 									TerminalDelivered: false, TelegramDelivered: true,
 								})
-								if err := sendToTmuxFromTelegram(tmuxTargetByID(windowID, tmuxName), tmuxName, voiceText); err == nil {
-									updateDelivery(sessionName, voiceLedgerID, "terminal_delivered", true)
+								// Switch to session and send
+								workDir := getSessionWorkDir(config, sessionName, sessionInfo)
+								worktreeName := ""
+								if sessionInfo.IsWorktree {
+									worktreeName = sessionInfo.WorktreeName
+								}
+								// Use stored Claude session ID to resume existing conversation
+								resumeSessionID := sessionInfo.ClaudeSessionID
+								if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+									target, _ := getCccWindowTarget()
+									if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessionName), voiceText); err == nil {
+										updateDelivery(sessionName, voiceLedgerID, "terminal_delivered", true)
+									}
 								}
 							}
 						}
@@ -954,9 +992,8 @@ func listen() error {
 				config, _ = loadConfig()
 				sessionName := getSessionByTopic(config, threadID)
 				if sessionName != "" {
-					tmuxName := tmuxSafeName(sessionName)
-					windowID := getWindowID(config, sessionName)
-					if tmuxWindowExistsByID(windowID, tmuxName) {
+					sessionInfo := config.Sessions[sessionName]
+					if sessionInfo != nil {
 						// Get largest photo (last in array)
 						photo := msg.Photo[len(msg.Photo)-1]
 						imgPath := filepath.Join(os.TempDir(), fmt.Sprintf("telegram_%d.jpg", time.Now().UnixNano()))
@@ -975,8 +1012,19 @@ func listen() error {
 								Text: caption, Origin: "telegram",
 								TerminalDelivered: false, TelegramDelivered: true,
 							})
-							if err := sendToTmuxFromTelegramWithDelay(tmuxTargetByID(windowID, tmuxName), tmuxName, prompt, 2*time.Second); err == nil {
-								updateDelivery(sessionName, photoLedgerID, "terminal_delivered", true)
+							// Switch to session and send
+							workDir := getSessionWorkDir(config, sessionName, sessionInfo)
+							worktreeName := ""
+							if sessionInfo.IsWorktree {
+								worktreeName = sessionInfo.WorktreeName
+							}
+							// Use stored Claude session ID to resume existing conversation
+							resumeSessionID := sessionInfo.ClaudeSessionID
+							if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+								target, _ := getCccWindowTarget()
+								if err := sendToTmuxFromTelegramWithDelay(target, tmuxSafeName(sessionName), prompt, 2*time.Second); err == nil {
+									updateDelivery(sessionName, photoLedgerID, "terminal_delivered", true)
+								}
 							}
 						}
 					}
@@ -989,10 +1037,8 @@ func listen() error {
 				config, _ = loadConfig()
 				sessionName := getSessionByTopic(config, threadID)
 				if sessionName != "" {
-					tmuxName := tmuxSafeName(sessionName)
-					windowID := getWindowID(config, sessionName)
-					if tmuxWindowExistsByID(windowID, tmuxName) {
-						sessionInfo := config.Sessions[sessionName]
+					sessionInfo := config.Sessions[sessionName]
+					if sessionInfo != nil {
 						destDir := sessionInfo.Path
 						if destDir == "" {
 							destDir = resolveProjectPath(config, sessionName)
@@ -1014,8 +1060,19 @@ func listen() error {
 								Text: caption, Origin: "telegram",
 								TerminalDelivered: false, TelegramDelivered: true,
 							})
-							if err := sendToTmuxFromTelegram(tmuxTargetByID(windowID, tmuxName), tmuxName, caption); err == nil {
-								updateDelivery(sessionName, docLedgerID, "terminal_delivered", true)
+							// Switch to session and send
+							workDir := getSessionWorkDir(config, sessionName, sessionInfo)
+							worktreeName := ""
+							if sessionInfo.IsWorktree {
+								worktreeName = sessionInfo.WorktreeName
+							}
+							// Use stored Claude session ID to resume existing conversation
+							resumeSessionID := sessionInfo.ClaudeSessionID
+							if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+								target, _ := getCccWindowTarget()
+								if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessionName), caption); err == nil {
+									updateDelivery(sessionName, docLedgerID, "terminal_delivered", true)
+								}
 							}
 						}
 					}
@@ -1126,33 +1183,24 @@ func listen() error {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
 					continue
 				}
-				tmuxName := tmuxSafeName(sessName)
-				windowID := getWindowID(config, sessName)
-				if tmuxWindowExistsByID(windowID, tmuxName) {
-					killTmuxWindow(windowID, tmuxName)
-					time.Sleep(300 * time.Millisecond)
-				}
 				// Use the stored path from config, fallback to resolveProjectPath
 				sessionInfo := config.Sessions[sessName]
-				workDir := sessionInfo.Path
-				if workDir == "" {
-					workDir = resolveProjectPath(config, sessName)
-				}
+				workDir := getSessionWorkDir(config, sessName, sessionInfo)
 				if _, err := os.Stat(workDir); os.IsNotExist(err) {
 					os.MkdirAll(workDir, 0755)
 				}
-				newWindowID, err := createTmuxWindow(tmuxName, workDir, true, sessionInfo.ProviderName, "")
-				if err != nil {
-					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start: %v", err))
+				// Preserve worktree name if this is a worktree session
+				worktreeName := ""
+				if sessionInfo.IsWorktree {
+					worktreeName = sessionInfo.WorktreeName
+				}
+				// Use stored Claude session ID to resume existing conversation
+				resumeSessionID := sessionInfo.ClaudeSessionID
+
+				if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 				} else {
-					config.Sessions[sessName].WindowID = newWindowID
-					saveConfig(config)
-					time.Sleep(500 * time.Millisecond)
-					if tmuxWindowExistsByID(newWindowID, tmuxName) {
-						sendMessage(config, chatID, threadID, fmt.Sprintf("🔄 Session '%s' restarted with conversation history", sessName))
-					} else {
-						sendMessage(config, chatID, threadID, "⚠️ Session died immediately")
-					}
+					sendMessage(config, chatID, threadID, fmt.Sprintf("🔄 Session '%s' restarted with conversation history", sessName))
 				}
 				continue
 			}
@@ -1165,12 +1213,30 @@ func listen() error {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
 					continue
 				}
-				// Kill tmux window
-				tmuxName := tmuxSafeName(sessName)
-				windowID := getWindowID(config, sessName)
-				if tmuxWindowExistsByID(windowID, tmuxName) {
-					killTmuxWindow(windowID, tmuxName)
+
+				// Check if this is the currently active session and stop Claude if so
+				target, err := getCccWindowTarget()
+				if err == nil {
+					// Get current window name to check if it matches the session being deleted
+					cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{window_name}")
+					out, err := cmd.Output()
+					if err == nil {
+						currentWindowName := strings.TrimSpace(string(out))
+						// Check if current window matches the session (accounting for provider prefix)
+						sessionInfo := config.Sessions[sessName]
+						expectedPrefix := ""
+						if sessionInfo != nil && sessionInfo.ProviderName != "" && len(sessionInfo.ProviderName) > 0 {
+							expectedPrefix = strings.ToUpper(string(sessionInfo.ProviderName[0])) + " "
+						}
+						expectedName := expectedPrefix + sessName
+						if currentWindowName == expectedName {
+							// This is the active session, send C-c to stop Claude
+							exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
+							time.Sleep(50 * time.Millisecond)
+						}
+					}
 				}
+
 				// Remove from config
 				topicID := config.Sessions[sessName].TopicID
 				delete(config.Sessions, sessName)
@@ -1272,7 +1338,7 @@ func listen() error {
 				sessionInfo := config.Sessions[sessName]
 
 				// Get work dir once for both listing and validation
-				workDir := sessionInfo.Path
+				workDir := getSessionWorkDir(config, sessName, sessionInfo)
 				arg := strings.TrimSpace(strings.TrimPrefix(text, "/resume"))
 				if arg == "" {
 					// List available Claude session IDs for this project
@@ -1419,27 +1485,23 @@ func listen() error {
 				sendMessage(config, chatID, threadID, msg)
 
 				// Restart the session
-				tmuxName := tmuxSafeName(sessName)
-				windowID := getWindowID(config, sessName)
-				if tmuxWindowExistsByID(windowID, tmuxName) {
-					killTmuxWindow(windowID, tmuxName)
-					time.Sleep(300 * time.Millisecond)
-				}
 				if _, err := os.Stat(workDir); os.IsNotExist(err) {
 					os.MkdirAll(workDir, 0755)
 				}
-				newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName, arg)
-				if err != nil {
-					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to restart: %v", err))
+
+				// Get worktree name if this is a worktree session
+				worktreeName := ""
+				if sessionInfo.IsWorktree {
+					worktreeName = sessionInfo.WorktreeName
+				}
+
+				if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, arg, worktreeName, false, false); err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 				} else {
-					config.Sessions[sessName].WindowID = newWindowID
+					// Update the stored session ID
+					sessionInfo.ClaudeSessionID = arg
 					saveConfig(config)
-					time.Sleep(500 * time.Millisecond)
-					if tmuxWindowExistsByID(newWindowID, tmuxName) {
-						sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' resumed with Claude session %s", sessName, arg))
-					} else {
-						sendMessage(config, chatID, threadID, "⚠️ Session died immediately")
-					}
+					sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' resumed with Claude session %s", sessName, arg))
 				}
 				continue
 			}
@@ -1452,18 +1514,17 @@ func listen() error {
 					continue
 				}
 
+				// Stop the active Claude process in the ccc window first
+				if target, err := getCccWindowTarget(); err == nil {
+					exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
+					time.Sleep(50 * time.Millisecond)
+				}
+
 				var cleaned []string
 				var errors []string
 
 				for sessName, info := range config.Sessions {
-					// Kill tmux window
-					tmuxName := tmuxSafeName(sessName)
-					windowID := getWindowID(config, sessName)
-					if tmuxWindowExistsByID(windowID, tmuxName) {
-						killTmuxWindow(windowID, tmuxName)
-					}
-
-					// NOTE: No longer deleting project folders - only tmux sessions and threads
+					// NOTE: No longer killing tmux windows - single window approach
 					_ = info // Keep info reference for TopicID below
 
 					// Delete telegram thread
@@ -1593,23 +1654,15 @@ func listen() error {
 					if _, err := os.Stat(workDir); os.IsNotExist(err) {
 						os.MkdirAll(workDir, 0755)
 					}
-					tmuxName := tmuxSafeName(sessionName)
 					providerMsg := ""
 					if providerName != "" {
 						providerMsg = fmt.Sprintf("\n🤖 Provider: %s", providerName)
 					}
-					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName, "")
-					if err != nil {
-						sendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start tmux: %v", err))
+					// Switch to the new session in the single ccc window
+					if err := switchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+						sendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 					} else {
-						config.Sessions[sessionName].WindowID = newWindowID
-						saveConfig(config)
-						time.Sleep(500 * time.Millisecond)
-						if tmuxWindowExistsByID(newWindowID, tmuxName) {
-							sendMessage(config, config.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
-						} else {
-							sendMessage(config, config.GroupID, topicID, fmt.Sprintf("⚠️ Session '%s' created but died immediately. Check if ~/bin/ccc works.", sessionName))
-						}
+						sendMessage(config, config.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
 					}
 					continue
 				}
@@ -1621,36 +1674,109 @@ func listen() error {
 						sendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
 						continue
 					}
-					tmuxName := tmuxSafeName(sessionName)
-					windowID := getWindowID(config, sessionName)
-					if tmuxWindowExistsByID(windowID, tmuxName) {
-						killTmuxWindow(windowID, tmuxName)
-						time.Sleep(300 * time.Millisecond)
-					}
 					sessionInfo := config.Sessions[sessionName]
-					workDir := sessionInfo.Path
-					if workDir == "" {
-						workDir = resolveProjectPath(config, sessionName)
-					}
+					workDir := getSessionWorkDir(config, sessionName, sessionInfo)
 					if _, err := os.Stat(workDir); os.IsNotExist(err) {
 						os.MkdirAll(workDir, 0755)
 					}
-					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName, "")
-					if err != nil {
-						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start: %v", err))
+					// Preserve worktree name if this is a worktree session
+					worktreeName := ""
+					if sessionInfo.IsWorktree {
+						worktreeName = sessionInfo.WorktreeName
+					}
+					// Use stored Claude session ID to resume existing conversation
+					resumeSessionID := sessionInfo.ClaudeSessionID
+
+					if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 					} else {
-						config.Sessions[sessionName].WindowID = newWindowID
-						saveConfig(config)
-						time.Sleep(500 * time.Millisecond)
-						if tmuxWindowExistsByID(newWindowID, tmuxName) {
-							sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' restarted", sessionName))
-						} else {
-							sendMessage(config, chatID, threadID, "⚠️ Session died immediately")
-						}
+						sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' restarted", sessionName))
 					}
 				} else {
 					sendMessage(config, chatID, threadID, "Usage: /new <name> to create a new session")
 				}
+				continue
+			}
+
+			// /worktree command - create worktree session from existing session
+			if strings.HasPrefix(text, "/worktree") && isGroup {
+				args := strings.TrimSpace(strings.TrimPrefix(text, "/worktree"))
+				parts := strings.Fields(args)
+
+				if len(parts) < 2 {
+					sendMessage(config, chatID, threadID, "Usage: /worktree <session_name> <worktree_name>\n\nCreates a new worktree session from an existing session's repository.")
+					continue
+				}
+
+				baseSessionName := parts[0]
+				worktreeName := parts[1]
+
+				// Check if base session exists
+				baseSession, exists := config.Sessions[baseSessionName]
+				if !exists || baseSession == nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Base session '%s' not found. Use /new to create it first.", baseSessionName))
+					continue
+				}
+
+				// Check if base session path is a git repository
+				basePath := baseSession.Path
+				if basePath == "" {
+					basePath = resolveProjectPath(config, baseSessionName)
+				}
+				// Use git to check if path is inside a work tree (handles worktrees and nested dirs)
+				gitCmd := exec.Command("git", "-C", basePath, "rev-parse", "--is-inside-work-tree")
+				if out, err := gitCmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Base session path is not a git repository: %s", basePath))
+					continue
+				}
+
+				// Create unique session name for worktree: base_worktree
+				worktreeSessionName := baseSessionName + "_" + worktreeName
+
+				// Check if worktree session already exists
+				if _, exists := config.Sessions[worktreeSessionName]; exists {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Worktree session '%s' already exists. Use /new in that topic to restart.", worktreeSessionName))
+					continue
+				}
+
+				// Get provider from base session or active provider
+				providerName := baseSession.ProviderName
+				if providerName == "" {
+					providerName = config.ActiveProvider
+				}
+
+				// Create Telegram topic
+				topicID, err := createForumTopic(config, worktreeSessionName, providerName)
+				if err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
+					continue
+				}
+
+				// Create session info with worktree metadata
+				// Store the actual worktree path for unique identification
+				worktreePath := filepath.Join(basePath, ".claude", "worktrees", worktreeName)
+				config.Sessions[worktreeSessionName] = &SessionInfo{
+					TopicID:      topicID,
+					Path:         worktreePath, // Use actual worktree path for unique session resolution
+					ProviderName: providerName,
+					IsWorktree:   true,
+					WorktreeName: worktreeName,
+					BaseSession:  baseSessionName,
+				}
+				saveConfig(config)
+
+				// Switch to the worktree session in the single ccc window
+				// Use basePath for cd (worktree dir is created by Claude Code with --worktree flag)
+				if err := switchSessionInWindow(worktreeSessionName, basePath, providerName, "", worktreeName, false, false); err != nil {
+					sendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
+					continue
+				}
+
+				providerMsg := ""
+				if providerName != "" {
+					providerMsg = fmt.Sprintf("\n🤖 Provider: %s", providerName)
+				}
+				sendMessage(config, config.GroupID, topicID, fmt.Sprintf("🌳 Worktree session '%s' started!\nBase: %s\nWorktree: %s%s\n\nSend messages here to interact with Claude.", worktreeSessionName, baseSessionName, worktreeName, providerMsg))
 				continue
 			}
 
@@ -1660,44 +1786,67 @@ func listen() error {
 				config, _ = loadConfig()
 				sessName := getSessionByTopic(config, threadID)
 				if sessName != "" {
-					// Send to tmux session
-					tmuxName := tmuxSafeName(sessName)
-					windowID := getWindowID(config, sessName)
-					if !tmuxWindowExistsByID(windowID, tmuxName) {
-						// Auto-start session if not running
+					var target string
+					var err error
+
+					// Only switch if the requested session is different from current
+					currentSession := getCurrentSessionName()
+					needsSwitch := currentSession != sessName
+
+					if needsSwitch {
+						// Switch to the correct session in the single ccc window
 						sessionInfo := config.Sessions[sessName]
-						workDir := sessionInfo.Path
+						workDir := getSessionWorkDir(config, sessName, sessionInfo)
 						if _, err := os.Stat(workDir); os.IsNotExist(err) {
 							os.MkdirAll(workDir, 0755)
 						}
-						newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName, "")
-						if err != nil {
-							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start session: %v", err))
+
+						// Preserve worktree name if this is a worktree session
+						worktreeName := ""
+						if sessionInfo.IsWorktree {
+							worktreeName = sessionInfo.WorktreeName
+						}
+
+						// Use stored Claude session ID to resume existing conversation
+						resumeSessionID := sessionInfo.ClaudeSessionID
+
+						// Switch to the session in the single ccc window (always restart when switching sessions)
+						if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 							continue
 						}
-						windowID = newWindowID
-						config.Sessions[sessName].WindowID = newWindowID
-						saveConfig(config)
-						sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' auto-started", sessName))
-						time.Sleep(3 * time.Second) // Wait for Claude to fully start
 
-						// Recover undelivered messages from ledger
+						// Get the target for the single ccc window
+						target, err = getCccWindowTarget()
+						if err != nil {
+							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
+							continue
+						}
+
+						// Wait for Claude to be ready after switching
+						time.Sleep(1 * time.Second)
+
+						// Replay any undelivered terminal messages for this session
 						undelivered := findUndelivered(sessName, "terminal")
-						if len(undelivered) > 0 {
-							listenLog("recovering %d undelivered messages for %s", len(undelivered), sessName)
-							recTarget := tmuxTargetByID(windowID, tmuxName)
-							for _, ur := range undelivered {
-								if ur.Type == "user_prompt" && ur.Origin == "telegram" {
-									if err := sendToTmuxFromTelegram(recTarget, tmuxName, ur.Text); err == nil {
-										updateDelivery(sessName, ur.ID, "terminal_delivered", true)
-									}
-									time.Sleep(500 * time.Millisecond)
+						for _, ur := range undelivered {
+							if ur.Type == "user_prompt" && ur.Origin == "telegram" {
+								if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessName), ur.Text); err == nil {
+									updateDelivery(sessName, ur.ID, "terminal_delivered", true)
 								}
+								time.Sleep(500 * time.Millisecond)
 							}
 						}
+
+						listenLog("sendToTmux: target=%s session=%s (switched from %s)", target, sessName, currentSession)
+					} else {
+						// Already in the correct session, just get the target
+						target, err = getCccWindowTarget()
+						if err != nil {
+							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
+							continue
+						}
+						listenLog("sendToTmux: target=%s session=%s (already active)", target, sessName)
 					}
-					target := tmuxTargetByID(windowID, tmuxName)
-					listenLog("sendToTmux: target=%s window=%s", target, tmuxName)
 
 					// Record in ledger before sending
 					ledgerID := fmt.Sprintf("tg:%d", update.UpdateID)
@@ -1711,7 +1860,7 @@ func listen() error {
 						TelegramDelivered: true,
 					})
 
-					if err := sendToTmuxFromTelegram(target, tmuxName, text); err != nil {
+					if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessName), text); err != nil {
 						listenLog("sendToTmux FAILED: target=%s err=%v", target, err)
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 					} else {
@@ -1802,20 +1951,10 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 		os.MkdirAll(workDir, 0755)
 	}
 
-	tmuxName := tmuxSafeName(sessionName)
-	newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName, "")
-
-	// Update message to show result
+	// Switch to the new session in the single ccc window
 	resultMsg := fmt.Sprintf("🚀 Session '%s' started!\n🤖 Provider: %s\n\nSend messages here to interact with Claude.", sessionName, providerName)
-	if err != nil {
-		resultMsg = fmt.Sprintf("❌ Failed to start tmux: %v", err)
-	} else {
-		config.Sessions[sessionName].WindowID = newWindowID
-		saveConfig(config)
-		time.Sleep(500 * time.Millisecond)
-		if !tmuxWindowExistsByID(newWindowID, tmuxName) {
-			resultMsg = fmt.Sprintf("⚠️ Session '%s' created but died immediately. Check if ~/bin/ccc works.", sessionName)
-		}
+	if err := switchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+		resultMsg = fmt.Sprintf("❌ Failed to start session: %v", err)
 	}
 
 	if cb.Message != nil {
@@ -1891,6 +2030,7 @@ TELEGRAM COMMANDS:
     /new <name>@provider    Create session with specific provider
     /new ~/path/name        Create session with custom path
     /new                    Restart session in current topic
+    /worktree <base> <name> Create worktree session from existing session
     /continue               Restart session keeping conversation history
     /providers              List available AI providers
     /provider [name]        Show or change provider for current session

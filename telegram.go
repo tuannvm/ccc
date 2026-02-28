@@ -511,6 +511,7 @@ func setBotCommands(botToken string) {
 		{"command": "continue", "description": "Restart session with history"},
 		{"command": "delete", "description": "Delete current session and thread"},
 		{"command": "resume", "description": "List/switch Claude sessions: /resume [id]"},
+		{"command": "worktree", "description": "Create worktree session: /worktree <base> <name>"},
 		{"command": "providers", "description": "List available AI providers"},
 		{"command": "cleanup", "description": "Delete ALL sessions, folders and threads"},
 		{"command": "c", "description": "Execute shell command: /c <cmd>"},

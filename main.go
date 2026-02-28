@@ -14,8 +14,11 @@ type SessionInfo struct {
 	TopicID         int64  `json:"topic_id"`
 	Path            string `json:"path"`
 	ClaudeSessionID string `json:"claude_session_id,omitempty"`
-	WindowID        string `json:"window_id,omitempty"` // tmux window ID (@N)
+	WindowID        string `json:"window_id,omitempty"`     // tmux window ID (@N)
 	ProviderName    string `json:"provider_name,omitempty"` // Provider to use for this session
+	IsWorktree      bool   `json:"is_worktree,omitempty"`   // Whether this is a worktree session
+	WorktreeName    string `json:"worktree_name,omitempty"` // Name of the worktree
+	BaseSession     string `json:"base_session,omitempty"`  // Base session name for worktree
 }
 
 // ProviderConfig configures Claude provider (API keys, models, etc.)
@@ -38,25 +41,25 @@ type ProviderConfig struct {
 
 // Config stores bot configuration and session mappings
 type Config struct {
-	BotToken         string                  `json:"bot_token"`
-	ChatID           int64                   `json:"chat_id"`                     // Private chat for simple commands
-	GroupID          int64                   `json:"group_id,omitempty"`          // Group with topics for sessions
-	Sessions         map[string]*SessionInfo `json:"sessions,omitempty"`          // session name -> session info
-	ProjectsDir      string                  `json:"projects_dir,omitempty"`      // Base directory for new projects (default: ~)
-	TranscriptionLang string                  `json:"transcription_lang,omitempty"` // Language code for whisper (e.g. "es", "en")
-	RelayURL         string                  `json:"relay_url,omitempty"`         // Relay server URL for large file transfers
-	Away             bool                    `json:"away"`
-	OAuthToken       string                  `json:"oauth_token,omitempty"`
-	OTPSecret        string                  `json:"otp_secret,omitempty"`        // TOTP secret for safe mode
-	ActiveProvider   string                  `json:"active_provider,omitempty"`  // Which provider to use from providers map
-	Providers        map[string]*ProviderConfig `json:"providers,omitempty"`    // Named provider configurations
-	Provider         *ProviderConfig         `json:"provider,omitempty"`          // Deprecated: Use providers + active_provider
+	BotToken          string                     `json:"bot_token"`
+	ChatID            int64                      `json:"chat_id"`                      // Private chat for simple commands
+	GroupID           int64                      `json:"group_id,omitempty"`           // Group with topics for sessions
+	Sessions          map[string]*SessionInfo    `json:"sessions,omitempty"`           // session name -> session info
+	ProjectsDir       string                     `json:"projects_dir,omitempty"`       // Base directory for new projects (default: ~)
+	TranscriptionLang string                     `json:"transcription_lang,omitempty"` // Language code for whisper (e.g. "es", "en")
+	RelayURL          string                     `json:"relay_url,omitempty"`          // Relay server URL for large file transfers
+	Away              bool                       `json:"away"`
+	OAuthToken        string                     `json:"oauth_token,omitempty"`
+	OTPSecret         string                     `json:"otp_secret,omitempty"`      // TOTP secret for safe mode
+	ActiveProvider    string                     `json:"active_provider,omitempty"` // Which provider to use from providers map
+	Providers         map[string]*ProviderConfig `json:"providers,omitempty"`       // Named provider configurations
+	Provider          *ProviderConfig            `json:"provider,omitempty"`        // Deprecated: Use providers + active_provider
 }
 
 // TelegramMessage represents a Telegram message
 type TelegramMessage struct {
-	MessageID       int    `json:"message_id"`
-	MessageThreadID int64  `json:"message_thread_id,omitempty"` // Topic ID
+	MessageID       int   `json:"message_id"`
+	MessageThreadID int64 `json:"message_thread_id,omitempty"` // Topic ID
 	Chat            struct {
 		ID   int64  `json:"id"`
 		Type string `json:"type"` // "private", "group", "supergroup"
@@ -65,12 +68,12 @@ type TelegramMessage struct {
 		ID       int64  `json:"id"`
 		Username string `json:"username"`
 	} `json:"from"`
-	Text           string           `json:"text"`
-	ReplyToMessage *TelegramMessage `json:"reply_to_message,omitempty"`
-	Voice          *TelegramVoice   `json:"voice,omitempty"`
-	Photo          []TelegramPhoto  `json:"photo,omitempty"`
+	Text           string            `json:"text"`
+	ReplyToMessage *TelegramMessage  `json:"reply_to_message,omitempty"`
+	Voice          *TelegramVoice    `json:"voice,omitempty"`
+	Photo          []TelegramPhoto   `json:"photo,omitempty"`
 	Document       *TelegramDocument `json:"document,omitempty"`
-	Caption        string           `json:"caption,omitempty"`
+	Caption        string            `json:"caption,omitempty"`
 }
 
 type TelegramVoice struct {
@@ -216,10 +219,11 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		// Run claude directly (used inside tmux sessions)
-		// Flags: -c (continue), --resume <session-id>, --provider <name>
+		// Flags: -c (continue), --resume <session-id>, --provider <name>, --worktree <name>
 		continueSession := false
 		var resumeSessionID string
 		var providerOverride string
+		var worktreeName string
 		args := os.Args[2:]
 		for i := 0; i < len(args); i++ {
 			if args[i] == "-c" {
@@ -230,9 +234,12 @@ func main() {
 			} else if args[i] == "--provider" && i+1 < len(args) {
 				providerOverride = args[i+1]
 				i++
+			} else if args[i] == "--worktree" && i+1 < len(args) {
+				worktreeName = args[i+1]
+				i++
 			}
 		}
-		if err := runClaudeRaw(continueSession, resumeSessionID, providerOverride); err != nil {
+		if err := runClaudeRaw(continueSession, resumeSessionID, providerOverride, worktreeName); err != nil {
 			os.Exit(1)
 		}
 		return

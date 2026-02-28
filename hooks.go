@@ -404,11 +404,11 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 	defer f.Close()
 
 	type transcriptLine struct {
-		Type             string `json:"type"`
-		UUID             string `json:"uuid,omitempty"`
-		RequestID        string `json:"requestId,omitempty"`
-		IsApiErrorMessage bool  `json:"isApiErrorMessage,omitempty"`
-		Message          struct {
+		Type              string `json:"type"`
+		UUID              string `json:"uuid,omitempty"`
+		RequestID         string `json:"requestId,omitempty"`
+		IsApiErrorMessage bool   `json:"isApiErrorMessage,omitempty"`
+		Message           struct {
 			ID      string          `json:"id,omitempty"`
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
@@ -528,7 +528,6 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 	return result
 }
 
-
 // handleStopRetry is a background process spawned by stop hook.
 // It retries transcript reading 3 times at 2-second intervals to catch
 // messages that weren't flushed when the stop hook first fired.
@@ -582,9 +581,9 @@ func handlePermissionHook() error {
 	if hookData.ToolName != "" && hookData.ToolName != "AskUserQuestion" && topicID != 0 {
 		state := loadToolState(sessName)
 		state.Tools = append(state.Tools, ToolCall{
-			Name: hookData.ToolName,
+			Name:  hookData.ToolName,
 			Input: toolInputSummary(hookData),
-			Time: time.Now().UnixMilli(),
+			Time:  time.Now().UnixMilli(),
 		})
 		text := formatToolMessage(state)
 		if state.MsgID == 0 {

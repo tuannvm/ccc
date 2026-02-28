@@ -17,6 +17,7 @@ import (
 var otpRequestPrefix = filepath.Join(cacheDir(), "otp-request-")
 var otpResponsePrefix = filepath.Join(cacheDir(), "otp-response-")
 var otpGrantPrefix = filepath.Join(cacheDir(), "otp-grant-")
+
 const otpGrantDuration = 5 * time.Minute
 const otpPermissionTimeout = 5 * time.Minute
 
@@ -30,7 +31,7 @@ type OTPPermissionRequest struct {
 
 // OTPPermissionResponse is written by the listener after OTP validation
 type OTPPermissionResponse struct {
-	Approved bool  `json:"approved"`
+	Approved  bool  `json:"approved"`
 	Timestamp int64 `json:"timestamp"`
 }
 

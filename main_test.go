@@ -202,18 +202,18 @@ func TestExtractRecentAssistantTexts(t *testing.T) {
 		expected []string // expected texts in order
 	}{
 		{
-			name: "simple response with one text block",
-			content: `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"Hello! How can I help?"}]}}`,
+			name:     "simple response with one text block",
+			content:  `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"Hello! How can I help?"}]}}`,
 			expected: []string{"Hello! How can I help?"},
 		},
 		{
-			name: "multiple text blocks in one entry",
-			content: `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"First part"},{"type":"text","text":"Second part"}]}}`,
+			name:     "multiple text blocks in one entry",
+			content:  `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"First part"},{"type":"text","text":"Second part"}]}}`,
 			expected: []string{"First part", "Second part"},
 		},
 		{
-			name: "filters thinking and tool_use",
-			content: `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"thinking","thinking":"let me think..."},{"type":"text","text":"Here is my answer"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`,
+			name:     "filters thinking and tool_use",
+			content:  `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"thinking","thinking":"let me think..."},{"type":"text","text":"Here is my answer"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`,
 			expected: []string{"Here is my answer"},
 		},
 		{
@@ -236,13 +236,13 @@ func TestExtractRecentAssistantTexts(t *testing.T) {
 			expected: nil,
 		},
 		{
-			name:    "no assistant messages returns nil",
-			content: `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
+			name:     "no assistant messages returns nil",
+			content:  `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
 			expected: nil,
 		},
 		{
-			name: "filters no content",
-			content: `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"(no content)"},{"type":"text","text":"real content"}]}}`,
+			name:     "filters no content",
+			content:  `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"(no content)"},{"type":"text","text":"real content"}]}}`,
 			expected: []string{"real content"},
 		},
 		{

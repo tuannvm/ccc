@@ -109,6 +109,41 @@ func tmuxTargetByName(windowName string) string {
 	return defaultTmuxSession + ":" + windowName
 }
 
+// tmuxWindowHasClaudeRunning checks if the tmux window has a functional Claude/ccc process running
+// Returns false if window doesn't exist or only has a shell (zsh/bash) without Claude
+func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
+	// First find the window
+	target := tmuxTargetByID(windowID, windowName)
+	if target == "" {
+		listenLog("tmuxWindowHasClaudeRunning: no target found for windowID=%s name=%s", windowID, windowName)
+		return false
+	}
+
+	// Get the pane's current command
+	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_current_command}")
+	out, err := cmd.Output()
+	if err != nil {
+		listenLog("tmuxWindowHasClaudeRunning: list-panes failed for target=%s: %v", target, err)
+		return false
+	}
+
+	// Check each pane's command (multi-pane windows have newline-separated output)
+	panesOutput := strings.TrimSpace(string(out))
+	lines := strings.Split(panesOutput, "\n")
+	for _, paneCmd := range lines {
+		paneCmd = strings.TrimSpace(paneCmd)
+		// Check if this pane has ccc or claude running
+		if paneCmd == "ccc" || strings.HasPrefix(paneCmd, "claude") {
+			listenLog("tmuxWindowHasClaudeRunning: Claude IS running (cmd=%s) in target=%s", paneCmd, target)
+			return true
+		}
+	}
+
+	// If we reach here, no pane has Claude running (only shells or empty)
+	listenLog("tmuxWindowHasClaudeRunning: Claude NOT running (cmds=%s) in target=%s - will auto-restart", panesOutput, target)
+	return false
+}
+
 func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	if windowID != "" {
 		// Check by ID directly
@@ -140,17 +175,211 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	return false
 }
 
-func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string, sessionID string) (string, error) {
+// ensureCccSession ensures the ccc tmux session and window exist
+// Returns the target string for the ccc window (e.g., "ccc:0" for first window)
+func ensureCccSession() (string, error) {
+	// Always use the dedicated ccc session - never hijack other sessions
+	sess := defaultTmuxSession
+
+	// Check if the ccc session exists
+	cmd := exec.Command(tmuxPath, "list-sessions", "-F", "#{session_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		// No sessions at all, create ccc session
+		c := exec.Command(tmuxPath, "new-session", "-d", "-s", sess)
+		if err := c.Run(); err != nil {
+			return "", err
+		}
+		exec.Command(tmuxPath, "set-option", "-t", sess, "mouse", "on").Run()
+	} else {
+		// Check if ccc session exists
+		hasCccSession := false
+		scanner := bufio.NewScanner(bytes.NewReader(out))
+		for scanner.Scan() {
+			if scanner.Text() == sess {
+				hasCccSession = true
+				break
+			}
+		}
+		// Create ccc session if it doesn't exist
+		if !hasCccSession {
+			c := exec.Command(tmuxPath, "new-session", "-d", "-s", sess)
+			if err := c.Run(); err != nil {
+				return "", err
+			}
+			exec.Command(tmuxPath, "set-option", "-t", sess, "mouse", "on").Run()
+		}
+	}
+
+	// Check if the session has any windows at all
+	cmd = exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_index}")
+	out, err = cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to list windows: %w", err)
+	}
+
+	firstWindowIndex := ""
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		firstWindowIndex = scanner.Text()
+		break
+	}
+
+	// Create first window if session is empty
+	if firstWindowIndex == "" {
+		exec.Command(tmuxPath, "new-window", "-t", sess+":", "-n", defaultTmuxSession).Run()
+		// Get the newly created window's index
+		cmd = exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_index}")
+		out, err = cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("failed to list windows after creation: %w", err)
+		}
+		scanner = bufio.NewScanner(bytes.NewReader(out))
+		for scanner.Scan() {
+			firstWindowIndex = scanner.Text()
+			break
+		}
+	}
+
+	// Return the actual first window by its real index
+	return sess + ":" + firstWindowIndex, nil
+}
+
+// getCccWindowTarget returns the target for the ccc window
+func getCccWindowTarget() (string, error) {
+	return ensureCccSession()
+}
+
+// getCurrentSessionName returns the session name currently displayed in the ccc window
+// Returns empty string if unable to determine
+func getCurrentSessionName() string {
+	target, err := getCccWindowTarget()
+	if err != nil {
+		return ""
+	}
+
+	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{window_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	windowName := strings.TrimSpace(string(out))
+	// Window name format is "[PROVIDER_PREFIX] session_name" or just "session_name"
+	// Extract the session name part
+	if strings.Contains(windowName, " ") {
+		parts := strings.SplitN(windowName, " ", 2)
+		if len(parts) == 2 {
+			return parts[1]
+		}
+	}
+	return windowName
+}
+
+// switchSessionInWindow switches the context in the single ccc window
+// Sends commands to change directory and start/continue Claude with the specified provider
+// If skipRestart is true and the requested session is already active, it will skip restarting
+func switchSessionInWindow(sessionName string, workDir string, providerName string, sessionID string, worktreeName string, continueSession bool, skipRestart bool) error {
+	target, err := ensureCccSession()
+	if err != nil {
+		return err
+	}
+
+	// Check if we should skip restarting
+	// Only skip if: 1) skipRestart is true, AND 2) the requested session is already the active one
+	shouldRestart := true
+	if skipRestart {
+		currentSession := getCurrentSessionName()
+		if currentSession == sessionName && tmuxWindowHasClaudeRunning(target, "") {
+			// Already in the correct session with Claude running - skip restart
+			shouldRestart = false
+		}
+	}
+
+	// Build the ccc run command with all flags
+	// Use ccc run instead of claude directly to ensure provider env setup
+	runCmd := cccPath + " run"
+	if sessionID != "" {
+		runCmd += " --resume " + shellQuote(sessionID)
+	} else if continueSession {
+		runCmd += " -c"
+	}
+	// If no sessionID and not continueSession, start fresh (no flags)
+	if providerName != "" && providerName != "anthropic" {
+		runCmd += " --provider " + shellQuote(providerName)
+	}
+	if worktreeName != "" {
+		runCmd += " --worktree " + shellQuote(worktreeName)
+	}
+
+	// Send commands to switch session context
+	if shouldRestart {
+		// 1. Clear any running claude process
+		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run(); err != nil {
+			return fmt.Errorf("failed to send C-c: %w", err)
+		}
+
+		// 2. Wait for Claude to exit and shell to be ready
+		// Poll until the pane is running a shell (zsh/bash) instead of ccc/claude
+		deadline := time.Now().Add(5 * time.Second)
+		claudeExited := false
+		for time.Now().Before(deadline) {
+			// Check if Claude is still running
+			if !tmuxWindowHasClaudeRunning(target, "") {
+				// Claude has exited, shell should be ready
+				claudeExited = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		// Safety check: if Claude is still running after timeout, don't send command
+		if !claudeExited && tmuxWindowHasClaudeRunning(target, "") {
+			return fmt.Errorf("Claude did not exit after 5 seconds - cannot restart session")
+		}
+
+		// 3. Change to work directory and start claude via ccc run (as one command)
+		fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+		if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+			return fmt.Errorf("failed to send command: %w", err)
+		}
+	}
+	// Note: When not restarting (skipRestart=true and Claude is running), we just rename the window
+	// The running Claude process continues uninterrupted, now associated with the new session context
+
+	// Rename window to show current session (safe since we target by index)
+	displayName := sessionName
+	if providerName != "" && len(providerName) > 0 {
+		prefix := strings.ToUpper(string(providerName[0]))
+		displayName = fmt.Sprintf("%s %s", prefix, sessionName)
+	}
+	if err := exec.Command(tmuxPath, "rename-window", "-t", target, displayName).Run(); err != nil {
+		return fmt.Errorf("failed to rename window: %w", err)
+	}
+
+	return nil
+}
+
+// shellQuote safely quotes a string for shell command arguments
+func shellQuote(s string) string {
+	// Replace single quotes with '\'' and wrap in single quotes
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string, sessionID string, worktreeName string) (string, error) {
 	// Build the command to run inside the window
 	cccCmd := cccPath + " run"
 	if sessionID != "" {
 		// Resume specific session by ID
-		cccCmd += " --resume " + sessionID
+		cccCmd += " --resume " + shellQuote(sessionID)
 	} else if continueSession {
 		cccCmd += " -c"
 	}
 	if providerName != "" {
-		cccCmd += " --provider " + providerName
+		cccCmd += " --provider " + shellQuote(providerName)
+	}
+	if worktreeName != "" {
+		cccCmd += " --worktree " + shellQuote(worktreeName)
 	}
 
 	// Get an existing session or create one
@@ -289,7 +518,8 @@ func unsetEnvVars(env []string, keys []string) []string {
 // runClaudeRaw runs claude directly (used inside tmux sessions)
 // providerOverride, if non-empty, specifies which provider to use instead of active_provider
 // resumeSessionID, if non-empty, resumes a specific session by ID
-func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string) error {
+// worktreeName, if non-empty, creates/uses a git worktree session
+func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string, worktreeName string) error {
 	if claudePath == "" {
 		return fmt.Errorf("claude binary not found")
 	}
@@ -309,7 +539,12 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	} else if continueSession {
 		args = append(args, "-c")
 	}
+	if worktreeName != "" {
+		args = append(args, "--worktree", worktreeName)
+	}
 
+	// Build the claude command with all args
+	// Execute claude directly to ensure provider env vars are not overridden by shell rc files
 	cmd := exec.Command(claudePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -318,32 +553,46 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	// Start with current environment
 	cmd.Env = os.Environ()
 
+	// Log the command for debugging
+	cwd, _ := os.Getwd()
+	configDirCode := os.Getenv("CLAUDE_CODE_CONFIG_DIR")
+	configDirZai := os.Getenv("CLAUDE_CONFIG_DIR")
+	homeDir := os.Getenv("HOME")
+	listenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", claudePath, args, cwd, configDirCode, configDirZai, homeDir)
+
 	// Load config and apply provider settings
 	config, err := loadConfig()
 	if err == nil {
-		// Determine which provider to use
-		var provider *ProviderConfig
-		if providerOverride != "" {
-			// Check for anthropic (built-in default, no config needed)
-			if providerOverride != "anthropic" {
-				// Look up provider in config
-				if config.Providers != nil {
-					provider = config.Providers[providerOverride]
+		// When resuming a session, preserve existing environment to avoid overriding
+		// the provider config dir where the session was originally created
+		if resumeSessionID == "" {
+			// Only apply provider settings when NOT resuming
+			// Determine which provider to use
+			var provider *ProviderConfig
+			if providerOverride != "" {
+				// Check for anthropic (built-in default, no config needed)
+				if providerOverride != "anthropic" {
+					// Look up provider in config
+					if config.Providers != nil {
+						provider = config.Providers[providerOverride]
+					}
+					// If provider not found, fall back to active provider
+					if provider == nil {
+						provider = getActiveProvider(config)
+					}
 				}
-				// If provider not found, fall back to active provider
-				if provider == nil {
+				// For "anthropic", provider remains nil (uses default env)
+			}
+			if provider == nil {
+				// Fall back to active provider (only if no override)
+				if providerOverride == "" {
 					provider = getActiveProvider(config)
 				}
 			}
-			// For "anthropic", provider remains nil (uses default env)
+			cmd.Env = applyProviderEnv(cmd.Env, provider)
 		}
-		if provider == nil {
-			// Fall back to active provider (only if no override)
-			if providerOverride == "" {
-				provider = getActiveProvider(config)
-			}
-		}
-		cmd.Env = applyProviderEnv(cmd.Env, provider)
+		// Note: When resumeSessionID is set, we intentionally skip provider env application
+		// to preserve the environment where the session was originally created
 
 		// Ensure OAuth token is available from config if not already in environment
 		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && config.OAuthToken != "" {

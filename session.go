@@ -28,6 +28,40 @@ func getWindowID(config *Config, sessionName string) string {
 	return info.WindowID
 }
 
+// getSessionWorkDir returns the correct working directory for a session.
+// For worktree sessions, this returns the base repository path (not the .claude/worktrees path).
+// For regular sessions, this returns the session's stored Path.
+func getSessionWorkDir(config *Config, sessionName string, sessionInfo *SessionInfo) string {
+	if sessionInfo == nil {
+		if config != nil && config.Sessions != nil {
+			sessionInfo = config.Sessions[sessionName]
+		}
+		if sessionInfo == nil {
+			return resolveProjectPath(config, sessionName)
+		}
+	}
+
+	// For worktree sessions, use the base session's path
+	if sessionInfo.IsWorktree && sessionInfo.BaseSession != "" {
+		if config != nil && config.Sessions != nil {
+			if baseInfo := config.Sessions[sessionInfo.BaseSession]; baseInfo != nil && baseInfo.Path != "" {
+				return baseInfo.Path
+			}
+		}
+		// Fallback: derive from worktree path (remove .claude/worktrees/<name>/ suffix)
+		worktreePath := sessionInfo.Path
+		if strings.HasSuffix(worktreePath, "/.claude/worktrees/"+sessionInfo.WorktreeName) {
+			return strings.TrimSuffix(worktreePath, "/.claude/worktrees/"+sessionInfo.WorktreeName)
+		}
+	}
+
+	// For regular sessions, use the stored Path
+	if sessionInfo.Path != "" {
+		return sessionInfo.Path
+	}
+	return resolveProjectPath(config, sessionName)
+}
+
 func createSession(config *Config, name string) error {
 	// Check if session already exists
 	if _, exists := config.Sessions[name]; exists {
@@ -47,23 +81,22 @@ func createSession(config *Config, name string) error {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
-	// Create tmux window
+	// Create work directory
 	workDir := resolveProjectPath(config, name)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		// Create project directory
 		os.MkdirAll(workDir, 0755)
 	}
 
-	windowID, err := createTmuxWindow(tmuxSafeName(name), workDir, false, providerName, "")
-	if err != nil {
-		return fmt.Errorf("failed to create tmux window: %w", err)
+	// Switch to the new session in the single ccc window
+	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	// Save mapping with full path
+	// Save mapping with full path (no WindowID needed for single window)
 	config.Sessions[name] = &SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
-		WindowID:     windowID,
 		ProviderName: providerName,
 	}
 	if err := saveConfig(config); err != nil {
@@ -78,10 +111,7 @@ func killSession(config *Config, name string) error {
 		return fmt.Errorf("session '%s' not found", name)
 	}
 
-	// Kill tmux window
-	killTmuxWindow(getWindowID(config, name), tmuxSafeName(name))
-
-	// Remove from config
+	// Remove from config (no need to kill tmux window with single window approach)
 	delete(config.Sessions, name)
 	saveConfig(config)
 
@@ -105,13 +135,12 @@ func startSession(continueSession bool) error {
 		return err
 	}
 	name := filepath.Base(cwd)
-	winName := tmuxSafeName(name)
 
 	// Load config to check/create topic
 	config, err := loadConfig()
 	if err != nil {
 		// No config, just run claude directly with default provider
-		return runClaudeRaw(continueSession, "", "")
+		return runClaudeRaw(continueSession, "", "", "")
 	}
 
 	// Get the provider to use for this session
@@ -122,6 +151,12 @@ func startSession(continueSession bool) error {
 	} else if config.ActiveProvider != "" {
 		// Use the active provider
 		providerName = config.ActiveProvider
+	}
+
+	// Get stored session ID if continuing
+	resumeSessionID := ""
+	if continueSession && config.Sessions[name] != nil {
+		resumeSessionID = config.Sessions[name].ClaudeSessionID
 	}
 
 	// Create topic if it doesn't exist and we have a group configured
@@ -140,40 +175,28 @@ func startSession(continueSession bool) error {
 		}
 	}
 
-	// Check if window already exists
-	windowID := getWindowID(config, name)
-	if tmuxWindowExistsByID(windowID, winName) {
-		target := tmuxTargetByID(windowID, winName)
-		// Extract session name from target "session:window" (only for name-based targets)
-		sessName := strings.SplitN(target, ":", 2)[0]
-		if os.Getenv("TMUX") != "" {
-			cmd := exec.Command(tmuxPath, "select-window", "-t", target)
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			return cmd.Run()
-		}
-		exec.Command(tmuxPath, "select-window", "-t", target).Run()
-		cmd := exec.Command(tmuxPath, "attach-session", "-t", sessName)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
+	// Switch to the session in the single ccc window
+	workDir := cwd
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		os.MkdirAll(workDir, 0755)
 	}
 
-	// Create new window
-	windowID, err = createTmuxWindow(winName, cwd, continueSession, providerName, "")
+	// Check if this is a worktree session
+	worktreeName := ""
+	if config.Sessions[name] != nil && config.Sessions[name].IsWorktree {
+		worktreeName = config.Sessions[name].WorktreeName
+	}
+
+	if err := switchSessionInWindow(name, workDir, providerName, resumeSessionID, worktreeName, continueSession, true); err != nil {
+		return fmt.Errorf("failed to switch session: %w", err)
+	}
+
+	// Get the ccc session name for attaching
+	target, err := getCccWindowTarget()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
-	// Store window ID back to config
-	if config.Sessions[name] != nil {
-		config.Sessions[name].WindowID = windowID
-		saveConfig(config)
-	}
-
-	target := tmuxTargetByID(windowID, winName)
 	sessName := strings.SplitN(target, ":", 2)[0]
 	if os.Getenv("TMUX") != "" {
 		cmd := exec.Command(tmuxPath, "select-window", "-t", target)
@@ -213,33 +236,26 @@ func startDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
-	winName := tmuxSafeName(name)
-
-	// Kill existing window if any
-	oldWindowID := getWindowID(config, name)
-	if tmuxWindowExistsByID(oldWindowID, winName) {
-		killTmuxWindow(oldWindowID, winName)
-		time.Sleep(300 * time.Millisecond)
+	// Switch to the new session in the single ccc window
+	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	// Create tmux window (detached)
-	windowID, err := createTmuxWindow(winName, workDir, false, providerName, "")
-	if err != nil {
-		return fmt.Errorf("failed to create tmux window: %w", err)
-	}
-
-	// Save session info
+	// Save session info (no WindowID needed for single window)
 	config.Sessions[name] = &SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
-		WindowID:     windowID,
 		ProviderName: providerName,
 	}
 	if err := saveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	target := tmuxTargetByID(windowID, winName)
+	// Get the ccc window target
+	target, err := getCccWindowTarget()
+	if err != nil {
+		return fmt.Errorf("failed to get ccc window: %w", err)
+	}
 
 	// Wait for Claude to be ready before sending prompt
 	if err := waitForClaude(target, 30*time.Second); err != nil {
@@ -251,6 +267,6 @@ func startDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to send prompt: %w", err)
 	}
 
-	fmt.Printf("Session '%s' started in window '%s' with topic %d\n", name, winName, topicID)
+	fmt.Printf("Session '%s' started in ccc window with topic %d\n", name, topicID)
 	return nil
 }
