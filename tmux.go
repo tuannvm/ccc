@@ -116,6 +116,8 @@ func tmuxTargetByName(windowName string) string {
 
 // tmuxWindowHasClaudeRunning checks if the tmux window has a functional Claude/ccc process running
 // Returns false if window doesn't exist or only has a shell (zsh/bash) without Claude
+// Handles npm-installed Claude which shows as 'node' or 'nodejs' process
+// Checks only the ACTIVE pane to avoid false positives in split-pane windows
 func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 	// First find the window
 	target := tmuxTargetByID(windowID, windowName)
@@ -124,28 +126,111 @@ func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 		return false
 	}
 
-	// Get the pane's current command
-	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_current_command}")
+	// Get pane IDs, active flag, and commands together to check only the active pane
+	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}\t#{pane_current_command}")
 	out, err := cmd.Output()
 	if err != nil {
 		listenLog("tmuxWindowHasClaudeRunning: list-panes failed for target=%s: %v", target, err)
 		return false
 	}
 
-	// Check each pane's command (multi-pane windows have newline-separated output)
+	// Check only the ACTIVE pane's command
 	panesOutput := strings.TrimSpace(string(out))
 	lines := strings.Split(panesOutput, "\n")
-	for _, paneCmd := range lines {
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		isActive, paneID, paneCmd := parts[0], parts[1], parts[2]
+		if isActive != "1" {
+			continue // Skip non-active panes
+		}
+
 		paneCmd = strings.TrimSpace(paneCmd)
 		// Check if this pane has ccc or claude running
 		if paneCmd == "ccc" || strings.HasPrefix(paneCmd, "claude") {
-			listenLog("tmuxWindowHasClaudeRunning: Claude IS running (cmd=%s) in target=%s", paneCmd, target)
+			listenLog("tmuxWindowHasClaudeRunning: Claude IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 			return true
+		}
+		// Check for npm-installed Claude (shows as 'node' or 'nodejs')
+		if paneCmd == "node" || paneCmd == "nodejs" {
+			// Verify it's actually Claude by checking if THIS pane's buffer contains Claude's prompt
+			// This avoids false positives from other Node.js processes
+			if tmuxPaneHasClaudePrompt(paneID) {
+				listenLog("tmuxWindowHasClaudeRunning: Claude (npm) IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
+				return true
+			}
 		}
 	}
 
-	// If we reach here, no pane has Claude running (only shells or empty)
-	listenLog("tmuxWindowHasClaudeRunning: Claude NOT running (cmds=%s) in target=%s - will auto-restart", panesOutput, target)
+	// If we reach here, the active pane doesn't have Claude running
+	listenLog("tmuxWindowHasClaudeRunning: Claude NOT running in active pane (cmds=%s) in target=%s - will auto-restart", panesOutput, target)
+	return false
+}
+
+// tmuxPaneHasClaudePrompt checks if the tmux pane contains Claude's prompt character (❯)
+// This is used to verify that a node/nodejs process is actually Claude Code
+// The target can be a pane ID (%0) or window:pane format (session:window.pane)
+func tmuxPaneHasClaudePrompt(paneTarget string) bool {
+	// Capture the pane buffer and check for Claude's prompt
+	// Use -e for escape sequences and -J to join wrapped lines
+	// Do NOT use -C as it escapes non-ASCII bytes, breaking Unicode prompt detection
+	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	content := string(out)
+	// Claude Code shows "❯" when ready for input
+	// Also check for "How can I help?" which appears in the welcome message
+	return strings.Contains(content, "❯") || strings.Contains(content, "How can I help")
+}
+
+// tmuxWindowHasShellRunning checks if the target tmux window has a shell running
+// Returns true if the ACTIVE pane has a shell, which means the window is ready for input
+// This is scoped to the active pane to avoid misrouting commands in split-pane windows
+// Supports common shells: zsh, bash, sh, fish, dash, nu, elvish, xonsh, tcsh, csh, ksh
+func tmuxWindowHasShellRunning(windowID string, windowName string) bool {
+	target := tmuxTargetByID(windowID, windowName)
+	if target == "" {
+		return false
+	}
+
+	// Get only the ACTIVE pane's current command
+	// Using -t target without -F format gets us the active pane by default
+	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_current_command}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	// Common shell names to recognize
+	shells := map[string]bool{
+		"sh": true, "bash": true, "zsh": true, "fish": true,
+		"dash": true, "nu": true, "elvish": true, "xonsh": true,
+		"tcsh": true, "csh": true, "ksh": true,
+	}
+
+	// Check only the active pane's command
+	panesOutput := strings.TrimSpace(string(out))
+	lines := strings.Split(panesOutput, "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		isActive, paneCmd := parts[0], parts[1]
+		if isActive == "1" {
+			paneCmd = strings.TrimSpace(paneCmd)
+			// Check if the active pane has a recognized shell running
+			if shells[paneCmd] {
+				return true
+			}
+			return false
+		}
+	}
 	return false
 }
 
@@ -320,12 +405,14 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 	}
 
 	// Check if we should skip restarting
-	// Only skip if: 1) skipRestart is true, AND 2) the target window already has Claude running
+	// Only skip if: 1) skipRestart is true, AND 2) the target window already has Claude/shell running
 	shouldRestart := true
 	if skipRestart {
-		// Check if the target window already has Claude running (regardless of which window is currently active)
-		if tmuxWindowHasClaudeRunning(target, "") {
-			// Target window already has Claude running - skip restart
+		// Check if the target window already has Claude or a shell running
+		// A shell means the window is ready for input and we can send commands directly
+		if tmuxWindowHasClaudeRunning(target, "") || tmuxWindowHasShellRunning(target, "") {
+			// Target window already has Claude or shell running - skip respawn
+			// We can send commands directly without restarting
 			shouldRestart = false
 		}
 	}
@@ -333,12 +420,24 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 	// Build the ccc run command with all flags
 	// Use ccc run instead of claude directly to ensure provider env setup
 	runCmd := cccPath + " run"
+
+	// Determine if we should continue an existing session
+	// Only add -c flag if Claude is actually running OR we have a specific session ID
+	// This prevents "No conversation found to continue" errors on new sessions
 	if sessionID != "" {
+		// Explicit session ID to resume - use --resume flag
 		runCmd += " --resume " + shellQuote(sessionID)
 	} else if continueSession {
-		runCmd += " -c"
+		// Check if Claude is actually running before adding -c flag
+		if tmuxWindowHasClaudeRunning(target, "") {
+			runCmd += " -c"
+			listenLog("Claude is running, will continue existing session")
+		} else {
+			listenLog("continueSession=true but Claude not running, will start new session instead")
+		}
 	}
-	// If no sessionID and not continueSession, start fresh (no flags)
+	// If no sessionID and not continueSession (or Claude not running), start fresh (no flags)
+
 	if providerName != "" && providerName != "anthropic" {
 		runCmd += " --provider " + shellQuote(providerName)
 	}
@@ -385,9 +484,33 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 		if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 			return fmt.Errorf("failed to send command: %w", err)
 		}
+	} else {
+		// Not restarting - check what's running in the target window
+		if tmuxWindowHasClaudeRunning(target, "") {
+			// Claude is already running in this window - don't send any command
+			// The user can continue their existing session
+			listenLog("Claude already running in target window, skipping command send")
+		} else if tmuxWindowHasShellRunning(target, "") {
+			// Shell is running - send the command to start Claude
+			fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+			if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+				return fmt.Errorf("failed to send command: %w", err)
+			}
+		} else {
+			// Pane is empty or has unknown process - respawn to get clean state
+			listenLog("Pane has unknown state, respawning for clean start")
+			if err := exec.Command(tmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
+				return fmt.Errorf("failed to respawn pane: %w", err)
+			}
+
+			// Wait for respawn and send command
+			time.Sleep(500 * time.Millisecond)
+			fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+			if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+				return fmt.Errorf("failed to send command: %w", err)
+			}
+		}
 	}
-	// Note: When not restarting (skipRestart=true and Claude is running), we just select the window
-	// The running Claude process continues uninterrupted, now associated with the new session context
 
 	// Select the window to make it active (this is important when switching between projects)
 	// Only attempt selection if there might be an attached client - ignore errors in headless mode
@@ -612,36 +735,40 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	// Load config and apply provider settings
 	config, err := loadConfig()
 	if err == nil {
-		// When resuming a session, preserve existing environment to avoid overriding
-		// the provider config dir where the session was originally created
-		if resumeSessionID == "" {
-			// Only apply provider settings when NOT resuming
-			// Determine which provider to use
-			var provider *ProviderConfig
-			if providerOverride != "" {
-				// Check for anthropic (built-in default, no config needed)
-				if providerOverride != "anthropic" {
-					// Look up provider in config
-					if config.Providers != nil {
-						provider = config.Providers[providerOverride]
-					}
-					// If provider not found, fall back to active provider
-					if provider == nil {
-						provider = getActiveProvider(config)
-					}
+		// Determine which provider to use
+		var provider *ProviderConfig
+		if providerOverride != "" {
+			// Check for anthropic (built-in default, no config needed)
+			if providerOverride != "anthropic" {
+				// Look up provider in config
+				if config.Providers != nil {
+					provider = config.Providers[providerOverride]
 				}
-				// For "anthropic", provider remains nil (uses default env)
-			}
-			if provider == nil {
-				// Fall back to active provider (only if no override)
-				if providerOverride == "" {
+				// If provider not found, fall back to active provider
+				if provider == nil {
 					provider = getActiveProvider(config)
 				}
 			}
-			cmd.Env = applyProviderEnv(cmd.Env, provider)
+			// For "anthropic", provider remains nil (uses default env)
 		}
-		// Note: When resumeSessionID is set, we intentionally skip provider env application
-		// to preserve the environment where the session was originally created
+		if provider == nil {
+			// Fall back to active provider (only if no override)
+			if providerOverride == "" {
+				provider = getActiveProvider(config)
+			}
+		}
+
+		// Apply provider env in the following cases:
+		// 1. When NOT resuming (resumeSessionID == "") - start new session with provider env
+		// 2. When resuming WITH explicit provider override - user specified which provider to use
+		// Skip provider env only when resuming WITHOUT explicit override (preserve original session env)
+		shouldApplyProviderEnv := (resumeSessionID == "") || (providerOverride != "")
+		if shouldApplyProviderEnv {
+			cmd.Env = applyProviderEnv(cmd.Env, provider)
+			listenLog("Applying provider env: providerOverride=%q resumeSessionID=%q", providerOverride, resumeSessionID)
+		} else {
+			listenLog("Preserving original session environment for resumeSessionID=%q", resumeSessionID)
+		}
 
 		// Ensure OAuth token is available from config if not already in environment
 		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && config.OAuthToken != "" {
@@ -714,15 +841,76 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		return err
 	}
 
-	// Brief pause for TUI to process pasted text
-	time.Sleep(100 * time.Millisecond)
+	// Apply the specified delay as minimum wait time before checking buffer
+	// This allows callers to request additional settling time if needed
+	minDelay := delay
+	if minDelay > 0 {
+		time.Sleep(minDelay)
+	}
 
-	// Send Enter twice (Claude Code needs double Enter)
-	exec.Command(tmuxPath, "send-keys", "-t", target, "C-m").Run()
-	time.Sleep(50 * time.Millisecond)
-	exec.Command(tmuxPath, "send-keys", "-t", target, "C-m").Run()
+	// Wait for the text to be fully processed by the TUI before sending Enter
+	// This prevents Enter from being interpreted as a newline in the input buffer
+	// We poll the pane buffer to verify the text appears, with a bounded timeout
+	textAppeared := waitForTextInPane(target, text, 5*time.Second)
+	if !textAppeared {
+		listenLog("sendToTmuxWithDelay: text did not appear in pane after timeout, sending Enter anyway")
+	}
+
+	// Send Enter to execute the prompt
+	// Single Enter is sufficient for normal prompt execution
+	// The TUI will process the command and display results
+	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-m").Run(); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+// waitForTextInPane polls the tmux pane buffer until the expected text appears
+// Returns true if text appears within timeout, false otherwise
+// Checks for text AFTER the last prompt marker to avoid false positives on historical content
+func waitForTextInPane(target string, expectedText string, timeout time.Duration) bool {
+	// Poll the pane buffer to verify text appears
+	// This works for all text lengths and avoids timing races
+	deadline := time.Now().Add(timeout)
+	checkInterval := 50 * time.Millisecond
+
+	// Take last 100 chars of expected text for verification (more reliable than full text)
+	searchText := expectedText
+	if len(searchText) > 100 {
+		searchText = searchText[len(searchText)-100:]
+	}
+	// For very short text, search for the full text
+	if len(searchText) < 10 {
+		searchText = expectedText
+	}
+
+	for time.Now().Before(deadline) {
+		// Use -e for escape sequences and -J to join wrapped lines
+		// Do NOT use -C as it escapes non-ASCII bytes, breaking Unicode prompt detection
+		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p", "-e", "-J")
+		out, err := cmd.Output()
+		if err == nil {
+			content := string(out)
+			// Check for text AFTER the last prompt marker to ensure we're checking newly pasted content
+			// This avoids false positives when the same text was sent previously
+			if lastPromptIndex := strings.LastIndex(content, "❯"); lastPromptIndex >= 0 {
+				// Only check content after the last prompt
+				contentAfterPrompt := content[lastPromptIndex:]
+				if strings.Contains(contentAfterPrompt, searchText) {
+					return true
+				}
+			} else {
+				// No prompt found, check entire buffer (for fresh panes)
+				if strings.Contains(content, searchText) {
+					return true
+				}
+			}
+		}
+		time.Sleep(checkInterval)
+	}
+
+	return false
 }
 
 func killTmuxWindow(windowID string, windowName string) error {
