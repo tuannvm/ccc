@@ -314,31 +314,39 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 
 	// Send commands to switch session context
 	if shouldRestart {
-		// 1. Clear any running claude process
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run(); err != nil {
-			return fmt.Errorf("failed to send C-c: %w", err)
+		// Strategy: Always use respawn-pane for clean pane restart when shouldRestart is true
+		// This ensures we have a clean shell regardless of what's currently running
+		// (Claude, vim, less, or any other foreground process)
+		// respawn-pane kills the process and restarts the shell atomically
+
+		listenLog("Respawning pane for clean session restart")
+		if err := exec.Command(tmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
+			return fmt.Errorf("failed to respawn pane: %w", err)
 		}
 
-		// 2. Wait for Claude to exit and shell to be ready
-		// Poll until the pane is running a shell (zsh/bash) instead of ccc/claude
+		// Poll for pane restart completion with bounded timeout
+		// Shell startup can take longer on slower systems or under load
 		deadline := time.Now().Add(5 * time.Second)
-		claudeExited := false
+		respawnComplete := false
 		for time.Now().Before(deadline) {
-			// Check if Claude is still running
+			time.Sleep(200 * time.Millisecond)
 			if !tmuxWindowHasClaudeRunning(target, "") {
-				// Claude has exited, shell should be ready
-				claudeExited = true
+				respawnComplete = true
+				listenLog("Pane respawn complete, shell is ready")
 				break
 			}
-			time.Sleep(50 * time.Millisecond)
 		}
 
-		// Safety check: if Claude is still running after timeout, don't send command
-		if !claudeExited && tmuxWindowHasClaudeRunning(target, "") {
-			return fmt.Errorf("Claude did not exit after 5 seconds - cannot restart session")
+		if !respawnComplete && tmuxWindowHasClaudeRunning(target, "") {
+			return fmt.Errorf("pane respawn timed out - still shows Claude running after 5 seconds")
 		}
 
-		// 3. Change to work directory and start claude via ccc run (as one command)
+		// Verify we have a shell running now
+		if tmuxWindowHasClaudeRunning(target, "") {
+			return fmt.Errorf("pane still shows Claude running after respawn - cannot proceed safely")
+		}
+
+		// Change to work directory and start claude via ccc run (as one command)
 		fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
 		if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 			return fmt.Errorf("failed to send command: %w", err)
