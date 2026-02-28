@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -125,12 +126,18 @@ func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 		listenLog("tmuxWindowHasClaudeRunning: no target found for windowID=%s name=%s", windowID, windowName)
 		return false
 	}
+	return tmuxTargetHasClaudeRunning(target)
+}
+
+// tmuxTargetHasClaudeRunning checks if a tmux target (pane or window) has Claude running
+// This is the shared implementation used by both tmuxWindowHasClaudeRunning and currentPaneHasClaudeRunning
+func tmuxTargetHasClaudeRunning(target string) bool {
 
 	// Get pane IDs, active flag, and commands together to check only the active pane
 	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}\t#{pane_current_command}")
 	out, err := cmd.Output()
 	if err != nil {
-		listenLog("tmuxWindowHasClaudeRunning: list-panes failed for target=%s: %v", target, err)
+		listenLog("tmuxTargetHasClaudeRunning: list-panes failed for target=%s: %v", target, err)
 		return false
 	}
 
@@ -148,30 +155,37 @@ func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 		}
 
 		paneCmd = strings.TrimSpace(paneCmd)
-		// Check if this pane has ccc or claude running
-		if paneCmd == "ccc" || strings.HasPrefix(paneCmd, "claude") {
-			listenLog("tmuxWindowHasClaudeRunning: Claude IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
+		// Check if this pane has claude running (exclude ccc wrapper which is just the launcher)
+		if strings.HasPrefix(paneCmd, "claude") {
+			listenLog("tmuxTargetHasClaudeRunning: Claude IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 			return true
 		}
+		// Note: We explicitly DON'T check for "ccc" here because ccc is just a wrapper
+		// that launches claude. When ccc is running, it means we're in the process of
+		// starting a new session, not continuing an existing one.
 		// Check for npm-installed Claude (shows as 'node' or 'nodejs')
 		if paneCmd == "node" || paneCmd == "nodejs" {
-			// Verify it's actually Claude by checking if THIS pane's buffer contains Claude's prompt
-			// This avoids false positives from other Node.js processes
-			if tmuxPaneHasClaudePrompt(paneID) {
-				listenLog("tmuxWindowHasClaudeRunning: Claude (npm) IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
+			// Verify it's actually Claude by examining the process command line
+			// This avoids false positives from other Node.js processes and accurately
+			// detects whether Claude is actually running (not just a stale pane state)
+			if tmuxPaneIsClaudeProcess(paneID) {
+				listenLog("tmuxTargetHasClaudeRunning: Claude (npm) IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 				return true
 			}
+			listenLog("tmuxTargetHasClaudeRunning: node found but not Claude process in pane=%s target=%s", paneID, target)
 		}
 	}
 
 	// If we reach here, the active pane doesn't have Claude running
-	listenLog("tmuxWindowHasClaudeRunning: Claude NOT running in active pane (cmds=%s) in target=%s - will auto-restart", panesOutput, target)
+	listenLog("tmuxTargetHasClaudeRunning: Claude NOT running in active pane (cmds=%s) in target=%s - will auto-restart", panesOutput, target)
 	return false
 }
 
 // tmuxPaneHasClaudePrompt checks if the tmux pane contains Claude's prompt character (❯)
 // This is used to verify that a node/nodejs process is actually Claude Code
 // The target can be a pane ID (%0) or window:pane format (session:window.pane)
+// NOTE: This only checks for the prompt anywhere in the buffer. For detecting ACTIVE
+// sessions, use tmuxPaneHasActiveClaudePrompt() instead to avoid false positives.
 func tmuxPaneHasClaudePrompt(paneTarget string) bool {
 	// Capture the pane buffer and check for Claude's prompt
 	// Use -e for escape sequences and -J to join wrapped lines
@@ -186,6 +200,129 @@ func tmuxPaneHasClaudePrompt(paneTarget string) bool {
 	// Claude Code shows "❯" when ready for input
 	// Also check for "How can I help?" which appears in the welcome message
 	return strings.Contains(content, "❯") || strings.Contains(content, "How can I help")
+}
+
+// tmuxPaneIsClaudeProcess checks if the pane's foreground process is actually the Claude CLI
+// This finds the foreground node process (child of shell) and examines its command line
+// Returns true if the pane is running a node process with claude/cli in its command line
+func tmuxPaneIsClaudeProcess(paneID string) bool {
+	// Get the pane's PID (shell PID) using tmux
+	cmd := exec.Command(tmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	shellPid := strings.TrimSpace(string(out))
+	if shellPid == "" || shellPid == "0" {
+		return false
+	}
+
+	// Find child processes of the shell that are running node
+	// Try GNU ps syntax first (Linux with --ppid)
+	psOut, err := exec.Command("ps", "-o", "pid,command", "--ppid", shellPid, "--no-headers").Output()
+	if err != nil {
+		// GNU ps failed, try getting all processes and filter in Go (works cross-platform)
+		// Use -ax on BSD/macOS to get all processes
+		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+		if psErr != nil {
+			// ps completely failed, fall back to prompt check
+			listenLog("tmuxPaneIsClaudeProcess: ps failed for shellPid=%s, falling back to prompt check", shellPid)
+			return tmuxPaneHasClaudePrompt(paneID)
+		}
+
+		// Parse all processes and find children of shell
+		psOut = filterChildProcesses(allPsOut, shellPid)
+	}
+
+	// Parse ps output to find node processes
+	// Format: "PID command" (no header due to --no-headers or filtering)
+	lines := strings.Split(strings.TrimSpace(string(psOut)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Split on first whitespace to get PID and command
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		pid := parts[0]
+		cmdline := strings.TrimSpace(parts[1])
+
+		// Check if this is a node process running Claude
+		// Match against various node invocation styles:
+		// - "node /path/to/claude" (npm global)
+		// - "nodejs /path/to/claude" (some systems)
+		// - "/usr/bin/node /path/to/claude" (full path)
+		// - "node /path/to/@anthropic-ai/cli/..." (npm package)
+		//
+		// IMPORTANT: Be specific to avoid false positives from unrelated processes
+		// that happen to contain "claude" in their path/name. Use path separators
+		// to ensure we're matching actual Claude CLI entrypoints.
+		isNode := strings.HasPrefix(cmdline, "node ") ||
+			strings.HasPrefix(cmdline, "nodejs ") ||
+			strings.Contains(cmdline, "/node ") ||
+			strings.Contains(cmdline, "/nodejs ")
+
+		// Check for Claude CLI specific patterns:
+		// 1. "/claude" or "/claude.js" as a path component (not just substring)
+		// 2. "@anthropic-ai/" npm package namespace
+		// 3. Known Claude entrypoint patterns
+		isClaude := isNode && (
+			strings.Contains(cmdline, "/claude ") ||           // "node .../claude" (global bin)
+			strings.Contains(cmdline, "/claude.js ") ||        // direct script
+			strings.Contains(cmdline, "/@anthropic-ai/") ||    // npm package
+			strings.HasSuffix(cmdline, "/claude") ||           // ends with /claude
+			strings.HasSuffix(cmdline, "/claude.js"))          // ends with /claude.js
+
+		if isClaude {
+			listenLog("tmuxPaneIsClaudeProcess: paneID=%s shellPid=%s nodePid=%s cmdline=%q isClaude=true", paneID, shellPid, pid, cmdline)
+			return true
+		}
+	}
+
+	// No node process found as child of shell, or not Claude
+	listenLog("tmuxPaneIsClaudeProcess: paneID=%s shellPid=%s no Claude node process found", paneID, shellPid)
+	return false
+}
+
+// filterChildProcesses parses ps output and returns lines where PPID matches parentPid
+// ps output format: "PID PPID COMMAND" (may have header line)
+func filterChildProcesses(psOutput []byte, parentPid string) []byte {
+	lines := strings.Split(string(psOutput), "\n")
+	var result []string
+
+	shellPidInt, err := strconv.Atoi(parentPid)
+	if err != nil {
+		// If we can't parse the PID, return empty
+		return []byte{}
+	}
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Skip empty lines and header (lines starting with "PID" or "  PID")
+		if line == "" || strings.HasPrefix(line, "PID") {
+			continue
+		}
+
+		// Split into fields: PID PPID COMMAND...
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		// Check if PPID (second field) matches parentPid
+		if len(fields[1]) > 0 {
+			if ppid, err := strconv.Atoi(fields[1]); err == nil && ppid == shellPidInt {
+				// This is a child process, return "PID COMMAND" format
+				result = append(result, fields[0]+" "+strings.Join(fields[2:], " "))
+			}
+		}
+	}
+
+	return []byte(strings.Join(result, "\n"))
 }
 
 // tmuxWindowHasShellRunning checks if the target tmux window has a shell running
@@ -763,6 +900,16 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		// 2. When resuming WITH explicit provider override - user specified which provider to use
 		// Skip provider env only when resuming WITHOUT explicit override (preserve original session env)
 		shouldApplyProviderEnv := (resumeSessionID == "") || (providerOverride != "")
+
+		// Ensure provider settings have trusted directories configured
+		// This prevents "Do you trust the files in this folder?" prompts
+		// Do this whenever we have a provider config (even if not applying env)
+		if provider != nil {
+			if err := ensureProviderSettings(provider); err != nil {
+				listenLog("Failed to update provider settings: %v", err)
+			}
+		}
+
 		if shouldApplyProviderEnv {
 			cmd.Env = applyProviderEnv(cmd.Env, provider)
 			listenLog("Applying provider env: providerOverride=%q resumeSessionID=%q", providerOverride, resumeSessionID)

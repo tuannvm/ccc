@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,4 +191,120 @@ func getActiveProvider(config *Config) *ProviderConfig {
 	}
 	// Legacy: direct provider field
 	return config.Provider
+}
+
+// ensureProviderSettings updates the provider's settings.json with trusted directories
+// This prevents the "Do you trust the files in this folder?" prompt
+func ensureProviderSettings(provider *ProviderConfig) error {
+	if provider == nil || provider.ConfigDir == "" {
+		return nil // No provider config dir, nothing to do
+	}
+
+	// Expand ~ in config dir path
+	configDir := provider.ConfigDir
+	if configDir == "~" || configDir == "~/" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot resolve home directory for config path: %w", err)
+		}
+		configDir = home
+	} else if strings.HasPrefix(configDir, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot resolve home directory for config path: %w", err)
+		}
+		configDir = filepath.Join(home, configDir[2:])
+	}
+
+	settingsPath := filepath.Join(configDir, "settings.json")
+
+	// Read existing settings or create new
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			// Invalid JSON - return error to avoid data loss
+			// The user should fix the malformed file manually
+			return fmt.Errorf("settings file %q contains invalid JSON: %w", settingsPath, err)
+		}
+		// Initialize map if JSON was null (json.Unmarshal leaves it as nil)
+		if settings == nil {
+			settings = make(map[string]interface{})
+		}
+	} else if os.IsNotExist(err) {
+		// File doesn't exist, create new settings
+		settings = make(map[string]interface{})
+	} else {
+		// Other error (permission, I/O, etc.) - return error to avoid data loss
+		return fmt.Errorf("failed to read settings file: %w", err)
+	}
+
+	// Get home directory for trusted paths
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Can't resolve home directory, skip adding trusted directories
+		// but continue with the rest of the settings
+		listenLog("ensureProviderSettings: cannot resolve home directory for trusted paths: %v (skipping trusted directories)", err)
+		return nil
+	}
+
+	// Check if trustedDirectories and trustDirectories auto-approve are already configured
+	_, hasTrustedDirs := settings["trustedDirectories"]
+	hasTrustDirAutoApprove := false
+	if autoApprove, ok := settings["autoApprove"].(map[string]interface{}); ok {
+		if trustDirs, ok := autoApprove["trustDirectories"].(bool); ok {
+			hasTrustDirAutoApprove = trustDirs
+		}
+	}
+
+	// Only update if not already configured
+	if !hasTrustedDirs || !hasTrustDirAutoApprove {
+		// Add trusted directories
+		// Trust home directory and common project locations
+		trustedDirs := []interface{}{
+			home,
+			filepath.Join(home, "Projects"),
+			filepath.Join(home, "Projects", "cli"),
+			filepath.Join(home, "Projects", "sandbox"),
+		}
+
+		// If existing trusted directories exist, preserve them
+		if existingDirs, ok := settings["trustedDirectories"].([]interface{}); ok && len(existingDirs) > 0 {
+			for _, dir := range existingDirs {
+				if dirStr, ok := dir.(string); ok {
+					trustedDirs = append(trustedDirs, dirStr)
+				}
+			}
+		}
+
+		settings["trustedDirectories"] = trustedDirs
+
+		// Add autoApprove for trust directories
+		// Preserve existing autoApprove settings if they exist
+		var autoApprove map[string]interface{}
+		if existingAA, ok := settings["autoApprove"].(map[string]interface{}); ok {
+			autoApprove = existingAA
+		} else {
+			autoApprove = make(map[string]interface{})
+		}
+		autoApprove["trustDirectories"] = true
+		settings["autoApprove"] = autoApprove
+
+		// Write updated settings
+		newData, err := json.MarshalIndent(settings, "", "  ")
+		if err != nil {
+			return err
+		}
+
+		// Create config directory if it doesn't exist
+		os.MkdirAll(configDir, 0755)
+
+		if err := os.WriteFile(settingsPath, newData, 0600); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return nil
 }
