@@ -10,7 +10,12 @@ import (
 	"time"
 )
 
-const defaultTmuxSession = "ccc"
+const (
+	// cccSessionName is the main tmux session for all ccc work
+	cccSessionName = "ccc"
+	// cccWindowPrefix is the prefix for ccc windows (we use session/project name as window name)
+	cccWindowPrefix = ""
+)
 
 var (
 	tmuxPath   string
@@ -77,12 +82,12 @@ func getTargetSession() (string, error) {
 		}
 	}
 	// No sessions exist, create one
-	c := exec.Command(tmuxPath, "new-session", "-d", "-s", defaultTmuxSession)
+	c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
 	if err := c.Run(); err != nil {
 		return "", err
 	}
-	exec.Command(tmuxPath, "set-option", "-t", defaultTmuxSession, "mouse", "on").Run()
-	return defaultTmuxSession, nil
+	exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
+	return cccSessionName, nil
 }
 
 // tmuxTargetByID returns the window ID if available, otherwise falls back to name lookup
@@ -106,7 +111,7 @@ func tmuxTargetByName(windowName string) string {
 			}
 		}
 	}
-	return defaultTmuxSession + ":" + windowName
+	return cccSessionName + ":" + windowName
 }
 
 // tmuxWindowHasClaudeRunning checks if the tmux window has a functional Claude/ccc process running
@@ -175,123 +180,152 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	return false
 }
 
-// ensureCccSession ensures the ccc tmux session and window exist
-// Returns the target string for the ccc window (e.g., "ccc:0" for first window)
+// ensureCccSession ensures the main "ccc" tmux session exists
+// Returns the session name "ccc"
 func ensureCccSession() (string, error) {
-	// Always use the dedicated ccc session - never hijack other sessions
-	sess := defaultTmuxSession
-
 	// Check if the ccc session exists
 	cmd := exec.Command(tmuxPath, "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		// No sessions at all, create ccc session
-		c := exec.Command(tmuxPath, "new-session", "-d", "-s", sess)
+		c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
 		if err := c.Run(); err != nil {
 			return "", err
 		}
-		exec.Command(tmuxPath, "set-option", "-t", sess, "mouse", "on").Run()
-	} else {
-		// Check if ccc session exists
-		hasCccSession := false
-		scanner := bufio.NewScanner(bytes.NewReader(out))
-		for scanner.Scan() {
-			if scanner.Text() == sess {
-				hasCccSession = true
-				break
-			}
-		}
-		// Create ccc session if it doesn't exist
-		if !hasCccSession {
-			c := exec.Command(tmuxPath, "new-session", "-d", "-s", sess)
-			if err := c.Run(); err != nil {
-				return "", err
-			}
-			exec.Command(tmuxPath, "set-option", "-t", sess, "mouse", "on").Run()
-		}
+		exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
+		return cccSessionName, nil
 	}
 
-	// Check if the session has any windows at all
-	cmd = exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_index}")
-	out, err = cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to list windows: %w", err)
-	}
-
-	firstWindowIndex := ""
+	// Check if ccc session exists
+	hasCccSession := false
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
-		firstWindowIndex = scanner.Text()
-		break
-	}
-
-	// Create first window if session is empty
-	if firstWindowIndex == "" {
-		exec.Command(tmuxPath, "new-window", "-t", sess+":", "-n", defaultTmuxSession).Run()
-		// Get the newly created window's index
-		cmd = exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_index}")
-		out, err = cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("failed to list windows after creation: %w", err)
-		}
-		scanner = bufio.NewScanner(bytes.NewReader(out))
-		for scanner.Scan() {
-			firstWindowIndex = scanner.Text()
+		if scanner.Text() == cccSessionName {
+			hasCccSession = true
 			break
 		}
 	}
 
-	// Return the actual first window by its real index
-	return sess + ":" + firstWindowIndex, nil
+	// Create ccc session if it doesn't exist
+	if !hasCccSession {
+		c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
+		if err := c.Run(); err != nil {
+			return "", err
+		}
+		exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
+	}
+
+	return cccSessionName, nil
 }
 
-// getCccWindowTarget returns the target for the ccc window
-func getCccWindowTarget() (string, error) {
-	return ensureCccSession()
+// ensureProjectWindow ensures a window exists for the project within the ccc session
+// Returns the target string "ccc:TommyClaw" (session:window format)
+func ensureProjectWindow(sessionName string) (string, error) {
+	sess, err := ensureCccSession()
+	if err != nil {
+		return "", err
+	}
+
+	// Make the session name tmux-safe (dots are interpreted as separators)
+	windowName := tmuxSafeName(sessionName)
+
+	// Check if a window with this name already exists in the ccc session
+	cmd := exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
+	out, err := cmd.Output()
+	if err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(out))
+		for scanner.Scan() {
+			if scanner.Text() == windowName {
+				// Window exists, return its target
+				return sess + ":" + windowName, nil
+			}
+		}
+	}
+
+	// Window doesn't exist, create it
+	// Note: We use sess + ":" to target the session for window creation
+	// Without the colon, tmux interprets it as a window target which can cause conflicts
+	cmd = exec.Command(tmuxPath, "new-window", "-t", sess + ":", "-n", windowName)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to create window: %w", err)
+	}
+
+	return sess + ":" + windowName, nil
 }
 
-// getCurrentSessionName returns the session name currently displayed in the ccc window
+// findExistingWindow finds an existing window without creating it
+// Returns the target string "ccc:TommyClaw" if window exists, empty string otherwise
+func findExistingWindow(sessionName string) (string, error) {
+	sess, err := ensureCccSession()
+	if err != nil {
+		return "", err
+	}
+
+	// Make the session name tmux-safe (dots are interpreted as separators)
+	windowName := tmuxSafeName(sessionName)
+
+	// Check if a window with this name already exists in the ccc session
+	cmd := exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		if scanner.Text() == windowName {
+			// Window exists, return its target
+			return sess + ":" + windowName, nil
+		}
+	}
+
+	// Window doesn't exist, return empty (no error)
+	return "", nil
+}
+
+// getCccWindowTarget returns the target for a project's window in the ccc session
+// Takes a session name (e.g., "TommyClaw") and returns "ccc:TommyClaw"
+func getCccWindowTarget(sessionName string) (string, error) {
+	return ensureProjectWindow(sessionName)
+}
+
+// getCurrentSessionName returns the session name currently displayed in the ccc session
 // Returns empty string if unable to determine
 func getCurrentSessionName() string {
-	target, err := getCccWindowTarget()
+	sess, err := ensureCccSession()
 	if err != nil {
 		return ""
 	}
 
-	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{window_name}")
+	// Get the current window name in the ccc session
+	cmd := exec.Command(tmuxPath, "display-message", "-t", sess, "-p", "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 
-	windowName := strings.TrimSpace(string(out))
-	// Window name format is "[PROVIDER_PREFIX] session_name" or just "session_name"
-	// Extract the session name part
-	if strings.Contains(windowName, " ") {
-		parts := strings.SplitN(windowName, " ", 2)
-		if len(parts) == 2 {
-			return parts[1]
-		}
-	}
-	return windowName
+	// Window name is the project name (e.g., "TommyClaw", "Ghostty")
+	// We no longer add provider prefixes to avoid lookup issues
+	return strings.TrimSpace(string(out))
 }
 
-// switchSessionInWindow switches the context in the single ccc window
-// Sends commands to change directory and start/continue Claude with the specified provider
+// switchSessionInWindow switches the context to the project's window in the ccc session
+// Each project gets its own named window within the main "ccc" session
 // If skipRestart is true and the requested session is already active, it will skip restarting
 func switchSessionInWindow(sessionName string, workDir string, providerName string, sessionID string, worktreeName string, continueSession bool, skipRestart bool) error {
-	target, err := ensureCccSession()
+	// Ensure the project window exists in the ccc session (e.g., "ccc:TommyClaw")
+	target, err := ensureProjectWindow(sessionName)
 	if err != nil {
 		return err
 	}
 
 	// Check if we should skip restarting
-	// Only skip if: 1) skipRestart is true, AND 2) the requested session is already the active one
+	// Only skip if: 1) skipRestart is true, AND 2) the target window already has Claude running
 	shouldRestart := true
 	if skipRestart {
-		currentSession := getCurrentSessionName()
-		if currentSession == sessionName && tmuxWindowHasClaudeRunning(target, "") {
-			// Already in the correct session with Claude running - skip restart
+		// Check if the target window already has Claude running (regardless of which window is currently active)
+		if tmuxWindowHasClaudeRunning(target, "") {
+			// Target window already has Claude running - skip restart
 			shouldRestart = false
 		}
 	}
@@ -352,17 +386,24 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 			return fmt.Errorf("failed to send command: %w", err)
 		}
 	}
-	// Note: When not restarting (skipRestart=true and Claude is running), we just rename the window
+	// Note: When not restarting (skipRestart=true and Claude is running), we just select the window
 	// The running Claude process continues uninterrupted, now associated with the new session context
 
-	// Rename window to show current session (safe since we target by index)
-	displayName := sessionName
+	// Select the window to make it active (this is important when switching between projects)
+	// Only attempt selection if there might be an attached client - ignore errors in headless mode
+	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+	// We ignore the error from select-window because:
+	// 1. In headless/non-interactive mode, there's no client to switch
+	// 2. The window is still created and commands are sent successfully
+	// 3. When the user later attaches, they'll see the correct window
+
+	// Set window title for display purposes, but keep the base name stable
+	// We use the 'window-status-format' to show provider info without renaming the window
+	// This ensures ensureProjectWindow can always find the window by its original name
 	if providerName != "" && len(providerName) > 0 {
+		// Store provider info in a user option for display purposes
 		prefix := strings.ToUpper(string(providerName[0]))
-		displayName = fmt.Sprintf("%s %s", prefix, sessionName)
-	}
-	if err := exec.Command(tmuxPath, "rename-window", "-t", target, displayName).Run(); err != nil {
-		return fmt.Errorf("failed to rename window: %w", err)
+		exec.Command(tmuxPath, "set-window-option", "-t", target, "@ccc-provider", prefix).Run()
 	}
 
 	return nil

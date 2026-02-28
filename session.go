@@ -11,8 +11,10 @@ import (
 
 // tmuxSafeName converts a session name to a tmux-safe window name
 // (dots are interpreted as window/pane separators in tmux)
+// We replace dots with "__" (double underscore) to avoid name collisions
+// while keeping the name readable and avoiding conflicts with natural underscores
 func tmuxSafeName(name string) string {
-	return strings.ReplaceAll(name, ".", "_")
+	return strings.ReplaceAll(name, ".", "__")
 }
 
 // getWindowID safely looks up the tmux WindowID from config for a session name.
@@ -191,25 +193,40 @@ func startSession(continueSession bool) error {
 		return fmt.Errorf("failed to switch session: %w", err)
 	}
 
-	// Get the ccc session name for attaching
-	target, err := getCccWindowTarget()
+	// Get the ccc window target for attaching
+	target, err := getCccWindowTarget(name)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
-	sessName := strings.SplitN(target, ":", 2)[0]
 	if os.Getenv("TMUX") != "" {
+		// Inside tmux: just select the window
 		cmd := exec.Command(tmuxPath, "select-window", "-t", target)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
 	}
+
+	// Outside tmux: need to attach to the session and select the window
+	// First attach to the session, then select the specific window
+	sessName := strings.SplitN(target, ":", 2)[0]
 	cmd := exec.Command(tmuxPath, "attach-session", "-t", sessName)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	// Start attach in background, then select the window
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Wait a moment for attach to complete, then select the window
+	time.Sleep(100 * time.Millisecond)
+	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+
+	// Wait for attach command to complete
+	return cmd.Wait()
 }
 
 // startDetached creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach)
@@ -252,7 +269,7 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Get the ccc window target
-	target, err := getCccWindowTarget()
+	target, err := getCccWindowTarget(name)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}

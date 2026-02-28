@@ -878,19 +878,6 @@ func listen() error {
 						// Switch to the session and send arrow keys
 						sessionInfo, exists := config.Sessions[sessionName]
 						if exists && sessionInfo != nil {
-							// Check if this callback is for the currently active session
-							currentSession := getCurrentSessionName()
-							if currentSession != sessionName {
-								// Stale callback - user has switched to a different session
-								// Reject the callback to avoid sending keys to the wrong context
-								listenLog("[callback] Rejecting stale callback for %s (current session: %s)", sessionName, currentSession)
-								if cb.Message != nil {
-									editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
-										fmt.Sprintf("⚠️ This poll is no longer valid.\n\nYou have switched to a different session. Please send a new message to this topic to create a new poll."))
-								}
-								continue
-							}
-
 							workDir := getSessionWorkDir(config, sessionName, sessionInfo)
 
 							// Get worktree name if this is a worktree session
@@ -905,7 +892,7 @@ func listen() error {
 							// Switch to the session (preserve session context for callbacks)
 							// Since currentSession == sessionName, this will skip restart
 							if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
-								target, _ := getCccWindowTarget()
+								target, _ := getCccWindowTarget(sessionName)
 								// Send arrow down keys to select option, then Enter
 								for i := 0; i < optionIndex; i++ {
 									exec.Command(tmuxPath, "send-keys", "-t", target, "Down").Run()
@@ -975,7 +962,7 @@ func listen() error {
 								// Use stored Claude session ID to resume existing conversation
 								resumeSessionID := sessionInfo.ClaudeSessionID
 								if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
-									target, _ := getCccWindowTarget()
+									target, _ := getCccWindowTarget(sessionName)
 									if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessionName), voiceText); err == nil {
 										updateDelivery(sessionName, voiceLedgerID, "terminal_delivered", true)
 									}
@@ -1021,7 +1008,7 @@ func listen() error {
 							// Use stored Claude session ID to resume existing conversation
 							resumeSessionID := sessionInfo.ClaudeSessionID
 							if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
-								target, _ := getCccWindowTarget()
+								target, _ := getCccWindowTarget(sessionName)
 								if err := sendToTmuxFromTelegramWithDelay(target, tmuxSafeName(sessionName), prompt, 2*time.Second); err == nil {
 									updateDelivery(sessionName, photoLedgerID, "terminal_delivered", true)
 								}
@@ -1069,7 +1056,7 @@ func listen() error {
 							// Use stored Claude session ID to resume existing conversation
 							resumeSessionID := sessionInfo.ClaudeSessionID
 							if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
-								target, _ := getCccWindowTarget()
+								target, _ := getCccWindowTarget(sessionName)
 								if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessionName), caption); err == nil {
 									updateDelivery(sessionName, docLedgerID, "terminal_delivered", true)
 								}
@@ -1215,24 +1202,21 @@ func listen() error {
 				}
 
 				// Check if this is the currently active session and stop Claude if so
-				target, err := getCccWindowTarget()
+				target, err := findExistingWindow(sessName)
 				if err == nil {
 					// Get current window name to check if it matches the session being deleted
 					cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{window_name}")
 					out, err := cmd.Output()
 					if err == nil {
 						currentWindowName := strings.TrimSpace(string(out))
-						// Check if current window matches the session (accounting for provider prefix)
-						sessionInfo := config.Sessions[sessName]
-						expectedPrefix := ""
-						if sessionInfo != nil && sessionInfo.ProviderName != "" && len(sessionInfo.ProviderName) > 0 {
-							expectedPrefix = strings.ToUpper(string(sessionInfo.ProviderName[0])) + " "
-						}
-						expectedName := expectedPrefix + sessName
+						// Window names are tmux-safe (dots replaced with underscores)
+						expectedName := tmuxSafeName(sessName)
 						if currentWindowName == expectedName {
 							// This is the active session, send C-c to stop Claude
 							exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
-							time.Sleep(50 * time.Millisecond)
+							time.Sleep(100 * time.Millisecond)
+							// Also kill the window to clean up
+							exec.Command(tmuxPath, "kill-window", "-t", target).Run()
 						}
 					}
 				}
@@ -1514,18 +1498,20 @@ func listen() error {
 					continue
 				}
 
-				// Stop the active Claude process in the ccc window first
-				if target, err := getCccWindowTarget(); err == nil {
-					exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
-					time.Sleep(50 * time.Millisecond)
-				}
+				// In multi-window architecture, we need to stop Claude in each project window
+				// and close the windows before cleaning up
 
 				var cleaned []string
 				var errors []string
 
 				for sessName, info := range config.Sessions {
-					// NOTE: No longer killing tmux windows - single window approach
-					_ = info // Keep info reference for TopicID below
+					// Stop Claude process in the project window
+					if target, err := findExistingWindow(sessName); err == nil && target != "" {
+						exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
+						time.Sleep(100 * time.Millisecond)
+						// Kill the window to clean up
+						exec.Command(tmuxPath, "kill-window", "-t", target).Run()
+					}
 
 					// Delete telegram thread
 					if info.TopicID > 0 && config.GroupID > 0 {
@@ -1790,8 +1776,9 @@ func listen() error {
 					var err error
 
 					// Only switch if the requested session is different from current
+					// Compare using tmux-safe names since window names are sanitized
 					currentSession := getCurrentSessionName()
-					needsSwitch := currentSession != sessName
+					needsSwitch := currentSession != tmuxSafeName(sessName)
 
 					if needsSwitch {
 						// Switch to the correct session in the single ccc window
@@ -1816,8 +1803,8 @@ func listen() error {
 							continue
 						}
 
-						// Get the target for the single ccc window
-						target, err = getCccWindowTarget()
+						// Get the target for the project window
+						target, err = getCccWindowTarget(sessName)
 						if err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
 							continue
@@ -1840,7 +1827,7 @@ func listen() error {
 						listenLog("sendToTmux: target=%s session=%s (switched from %s)", target, sessName, currentSession)
 					} else {
 						// Already in the correct session, just get the target
-						target, err = getCccWindowTarget()
+						target, err = getCccWindowTarget(sessName)
 						if err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
 							continue
