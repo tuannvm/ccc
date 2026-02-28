@@ -1178,17 +1178,17 @@ func listen() error {
 			if text == "/providers" {
 				config, _ := loadConfig()
 				if config.Providers == nil || len(config.Providers) == 0 {
-					sendMessage(config, chatID, threadID, "No providers configured.\n\nConfigure providers in ~/.config/ccc/config.json:\n{\n  \"active_provider\": \"zai\",\n  \"providers\": {\n    \"zai\": {\"provider\": \"zai\", \"base_url\": \"...\"},\n    \"gemini\": {\"provider\": \"gemini\", \"base_url\": \"...\"}\n  }\n}")
+					sendMessage(config, chatID, threadID, "No providers configured.\n\nConfigure providers in ~/.config/ccc/config.json:\n{\n  \"active_provider\": \"my-provider\",\n  \"providers\": {\n    \"my-provider\": {\"auth_env_var\": \"MY_API_KEY\", \"base_url\": \"...\"}\n  }\n}")
 					continue
 				}
 				var msg []string
 				msg = append(msg, "📋 Available providers:")
-				for name, p := range config.Providers {
+				for name := range config.Providers {
 					active := ""
 					if config.ActiveProvider == name {
 						active = " (active)"
 					}
-					msg = append(msg, fmt.Sprintf("  • %s%s - %s", name, active, p.Provider))
+					msg = append(msg, fmt.Sprintf("  • %s%s", name, active))
 				}
 				sendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
 				continue
@@ -1669,25 +1669,10 @@ func handleAuth(config *Config, chatID, threadID int64) {
 	envCmd := ""
 	provider := getActiveProvider(config)
 	if provider != nil {
-		// Determine auth token (auto-load from env if empty/placeholder)
+		// Determine auth token (auto-load from env if empty)
 		authToken := provider.AuthToken
-		if authToken == "" || authToken == "YOUR_ZAI_API_KEY" || authToken == "sk-dummy" {
-			switch provider.Provider {
-			case "zai":
-				if token := os.Getenv("ZAI_API_KEY"); token != "" {
-					authToken = token
-				}
-			case "gemini":
-				if token := os.Getenv("GEMINI_API_KEY"); token != "" {
-					authToken = token
-				}
-			case "openai":
-				if token := os.Getenv("OPENAI_API_KEY"); token != "" {
-					authToken = token
-				}
-			case "ollama":
-				authToken = "ollama"
-			}
+		if authToken == "" && provider.AuthEnvVar != "" {
+			authToken = os.Getenv(provider.AuthEnvVar)
 		}
 		if authToken != "" {
 			envCmd += fmt.Sprintf("export ANTHROPIC_AUTH_TOKEN='%s'; ", authToken)

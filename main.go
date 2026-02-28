@@ -20,18 +20,16 @@ type SessionInfo struct {
 
 // ProviderConfig configures Claude provider (API keys, models, etc.)
 type ProviderConfig struct {
-	// Provider type: "anthropic" (default), "zai", "gemini", "openai", "ollama"
-	Provider string `json:"provider,omitempty"`
-
 	// API settings
-	AuthToken string `json:"auth_token,omitempty"` // API key/token
-	BaseURL   string `json:"base_url,omitempty"`   // API base URL
-	ApiTimeout int  `json:"api_timeout,omitempty"` // API timeout in milliseconds
+	AuthToken  string `json:"auth_token,omitempty"`   // API key/token
+	AuthEnvVar string `json:"auth_env_var,omitempty"` // Env var to read auth token from (e.g., "MY_API_KEY")
+	BaseURL    string `json:"base_url,omitempty"`     // API base URL
+	ApiTimeout int    `json:"api_timeout,omitempty"`  // API timeout in milliseconds
 
 	// Model overrides
-	OpusModel   string `json:"opus_model,omitempty"`
-	SonnetModel string `json:"sonnet_model,omitempty"`
-	HaikuModel  string `json:"haiku_model,omitempty"`
+	OpusModel     string `json:"opus_model,omitempty"`
+	SonnetModel   string `json:"sonnet_model,omitempty"`
+	HaikuModel    string `json:"haiku_model,omitempty"`
 	SubagentModel string `json:"subagent_model,omitempty"`
 
 	// Config directory for this provider (supports ~ expansion)

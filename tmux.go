@@ -196,36 +196,19 @@ func applyProviderEnv(baseEnv []string, provider *ProviderConfig) []string {
 		"CLAUDE_CODE_SUBAGENT_MODEL",
 	})
 
-	// Determine auth token (auto-load from env if empty/placeholder)
+	// Determine auth token (auto-load from env if empty)
 	authToken := provider.AuthToken
-	if authToken == "" || authToken == "YOUR_ZAI_API_KEY" || authToken == "sk-dummy" {
-		// Auto-load from environment based on provider type
-		switch provider.Provider {
-		case "zai":
-			if token := os.Getenv("ZAI_API_KEY"); token != "" {
-				authToken = token
-			}
-		case "gemini":
-			if token := os.Getenv("GEMINI_API_KEY"); token != "" {
-				authToken = token
-			}
-		case "openai":
-			if token := os.Getenv("OPENAI_API_KEY"); token != "" {
-				authToken = token
-			}
-		case "ollama":
-			authToken = "ollama"
-		}
-
-		// If still no token, preserve existing Anthropic credentials from environment
-		if authToken == "" {
-			if existing := os.Getenv("ANTHROPIC_API_KEY"); existing != "" {
-				authToken = existing
-			} else if existing := os.Getenv("ANTHROPIC_AUTH_TOKEN"); existing != "" {
-				authToken = existing
-			} else if existing := os.Getenv("CLAUDE_API_KEY"); existing != "" {
-				authToken = existing
-			}
+	if authToken == "" && provider.AuthEnvVar != "" {
+		authToken = os.Getenv(provider.AuthEnvVar)
+	}
+	// If still no token, preserve existing Anthropic credentials from environment
+	if authToken == "" {
+		if existing := os.Getenv("ANTHROPIC_API_KEY"); existing != "" {
+			authToken = existing
+		} else if existing := os.Getenv("ANTHROPIC_AUTH_TOKEN"); existing != "" {
+			authToken = existing
+		} else if existing := os.Getenv("CLAUDE_API_KEY"); existing != "" {
+			authToken = existing
 		}
 	}
 	if authToken != "" {
