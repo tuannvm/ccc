@@ -140,11 +140,14 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	return false
 }
 
-func createTmuxWindow(windowName string, workDir string, continueSession bool) (string, error) {
+func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string) (string, error) {
 	// Build the command to run inside the window
 	cccCmd := cccPath + " run"
 	if continueSession {
 		cccCmd += " -c"
+	}
+	if providerName != "" {
+		cccCmd += " --provider " + providerName
 	}
 
 	// Get an existing session or create one
@@ -169,8 +172,137 @@ func createTmuxWindow(windowName string, workDir string, continueSession bool) (
 	return windowID, nil
 }
 
+// applyProviderEnv applies provider-specific environment variables to cmd.Env
+// Returns the modified environment slice
+func applyProviderEnv(baseEnv []string, provider *ProviderConfig) []string {
+	if provider == nil {
+		return baseEnv
+	}
+
+	home, _ := os.UserHomeDir()
+
+	// Build environment with provider settings
+	// First, unset any Anthropic-related vars to avoid conflicts
+	env := baseEnv
+	env = unsetEnvVars(env, []string{
+		"ANTHROPIC_API_KEY",
+		"CLAUDE_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"CLAUDE_CODE_SUBAGENT_MODEL",
+	})
+
+	// Determine auth token (auto-load from env if empty/placeholder)
+	authToken := provider.AuthToken
+	if authToken == "" || authToken == "YOUR_ZAI_API_KEY" || authToken == "sk-dummy" {
+		// Auto-load from environment based on provider type
+		switch provider.Provider {
+		case "zai":
+			if token := os.Getenv("ZAI_API_KEY"); token != "" {
+				authToken = token
+			}
+		case "gemini":
+			if token := os.Getenv("GEMINI_API_KEY"); token != "" {
+				authToken = token
+			}
+		case "openai":
+			if token := os.Getenv("OPENAI_API_KEY"); token != "" {
+				authToken = token
+			}
+		case "ollama":
+			authToken = "ollama"
+		}
+
+		// If still no token, preserve existing Anthropic credentials from environment
+		if authToken == "" {
+			if existing := os.Getenv("ANTHROPIC_API_KEY"); existing != "" {
+				authToken = existing
+			} else if existing := os.Getenv("ANTHROPIC_AUTH_TOKEN"); existing != "" {
+				authToken = existing
+			} else if existing := os.Getenv("CLAUDE_API_KEY"); existing != "" {
+				authToken = existing
+			}
+		}
+	}
+	if authToken != "" {
+		env = append(env, "ANTHROPIC_AUTH_TOKEN="+authToken)
+	}
+
+	// Base URL
+	if provider.BaseURL != "" {
+		env = append(env, "ANTHROPIC_BASE_URL="+provider.BaseURL)
+	}
+
+	// Models
+	if provider.OpusModel != "" {
+		env = append(env, "ANTHROPIC_DEFAULT_OPUS_MODEL="+provider.OpusModel)
+		env = append(env, "ANTHROPIC_MODEL="+provider.OpusModel)
+	}
+	if provider.SonnetModel != "" {
+		env = append(env, "ANTHROPIC_DEFAULT_SONNET_MODEL="+provider.SonnetModel)
+	}
+	if provider.HaikuModel != "" {
+		env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+provider.HaikuModel)
+	}
+	if provider.SubagentModel != "" {
+		env = append(env, "CLAUDE_CODE_SUBAGENT_MODEL="+provider.SubagentModel)
+	}
+
+	// Config dir with ~ expansion
+	if provider.ConfigDir != "" {
+		configDir := provider.ConfigDir
+		if strings.HasPrefix(configDir, "~/") {
+			configDir = home + configDir[1:]
+		} else if configDir == "~" {
+			configDir = home
+		}
+		env = append(env, "CLAUDE_CONFIG_DIR="+configDir)
+	}
+
+	// Common settings for all providers (use values from config)
+	if provider.ApiTimeout > 0 {
+		env = append(env, fmt.Sprintf("API_TIMEOUT_MS=%d", provider.ApiTimeout))
+	}
+	env = append(env, []string{
+		"TMPDIR=/tmp/claude",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"DISABLE_COST_WARNINGS=1",
+		"DISABLE_TELEMETRY=1",
+		"DISABLE_ERROR_REPORTING=1",
+	}...)
+
+	return env
+}
+
+// unsetEnvVars removes specified environment variables from env slice
+func unsetEnvVars(env []string, keys []string) []string {
+	keyMap := make(map[string]bool)
+	for _, k := range keys {
+		keyMap[k] = true
+	}
+
+	var result []string
+	for _, e := range env {
+		idx := strings.IndexByte(e, '=')
+		if idx < 0 {
+			result = append(result, e)
+			continue
+		}
+		key := e[:idx]
+		if !keyMap[key] {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // runClaudeRaw runs claude directly (used inside tmux sessions)
-func runClaudeRaw(continueSession bool) error {
+// providerOverride, if non-empty, specifies which provider to use instead of active_provider
+func runClaudeRaw(continueSession bool, providerOverride string) error {
 	if claudePath == "" {
 		return fmt.Errorf("claude binary not found")
 	}
@@ -194,10 +326,27 @@ func runClaudeRaw(continueSession bool) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Ensure OAuth token is available from config if not already in environment
-	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" {
-		if config, err := loadConfig(); err == nil && config.OAuthToken != "" {
-			cmd.Env = append(os.Environ(), "CLAUDE_CODE_OAUTH_TOKEN="+config.OAuthToken)
+	// Start with current environment
+	cmd.Env = os.Environ()
+
+	// Load config and apply provider settings
+	config, err := loadConfig()
+	if err == nil {
+		// Determine which provider to use
+		var provider *ProviderConfig
+		if providerOverride != "" && config.Providers != nil {
+			// Use explicitly specified provider
+			provider = config.Providers[providerOverride]
+		}
+		if provider == nil {
+			// Fall back to active provider
+			provider = getActiveProvider(config)
+		}
+		cmd.Env = applyProviderEnv(cmd.Env, provider)
+
+		// Ensure OAuth token is available from config if not already in environment
+		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && config.OAuthToken != "" {
+			cmd.Env = append(cmd.Env, "CLAUDE_CODE_OAUTH_TOKEN="+config.OAuthToken)
 		}
 	}
 

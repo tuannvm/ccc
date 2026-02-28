@@ -193,11 +193,21 @@ func runClaude(prompt string) (string, error) {
 	cmd := exec.CommandContext(ctx, claudePath, "--dangerously-skip-permissions", "-p", prompt)
 	cmd.Dir = workDir
 
+	// Start with current environment
+	cmd.Env = os.Environ()
+
+	// Load config and apply provider settings
+	config, err := loadConfig()
+	if err == nil {
+		provider := getActiveProvider(config)
+		cmd.Env = applyProviderEnv(cmd.Env, provider)
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	output := stdout.String()
 	if stderr.Len() > 0 {
@@ -816,46 +826,64 @@ func listen() error {
 					continue
 				}
 
-					answerCallbackQuery(config, cb.ID)
+				answerCallbackQuery(config, cb.ID)
 
-				// Parse callback data: session:questionIndex:totalQuestions:optionIndex
+				// Parse callback data
 				parts := strings.Split(cb.Data, ":")
-				if len(parts) >= 3 {
-					sessionName := parts[0]
-					questionIndex, _ := strconv.Atoi(parts[1])
-					var totalQuestions, optionIndex int
-					if len(parts) == 4 {
-						totalQuestions, _ = strconv.Atoi(parts[2])
-						optionIndex, _ = strconv.Atoi(parts[3])
-					} else {
-						// Legacy format: session:questionIndex:optionIndex
-						optionIndex, _ = strconv.Atoi(parts[2])
-					}
+				if len(parts) == 0 {
+					continue
+				}
 
-					// Edit message to show selection and remove buttons
-					if cb.Message != nil {
-						originalText := cb.Message.Text
-						newText := fmt.Sprintf("%s\n\n✓ Selected option %d", originalText, optionIndex+1)
-						editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, newText)
+				// Handle different callback types
+				switch parts[0] {
+				case "new":
+					// Provider selection for /new command: new:session_name:provider_name
+					if len(parts) == 3 {
+						sessionName := parts[1]
+						providerName := parts[2]
+						handleNewWithProvider(config, cb, sessionName, providerName)
 					}
+					continue
 
-					tmuxName := tmuxSafeName(sessionName)
-					windowID := getWindowID(config, sessionName)
-					if tmuxWindowExistsByID(windowID, tmuxName) {
-						target := tmuxTargetByID(windowID, tmuxName)
-						// Send arrow down keys to select option, then Enter
-						for i := 0; i < optionIndex; i++ {
-							exec.Command(tmuxPath, "send-keys", "-t", target, "Down").Run()
-							time.Sleep(50 * time.Millisecond)
+				default:
+					// Legacy: AskUserQuestion callback - session:questionIndex:totalQuestions:optionIndex
+					if len(parts) >= 3 {
+						sessionName := parts[0]
+						questionIndex, _ := strconv.Atoi(parts[1])
+						var totalQuestions, optionIndex int
+						if len(parts) == 4 {
+							totalQuestions, _ = strconv.Atoi(parts[2])
+							optionIndex, _ = strconv.Atoi(parts[3])
+						} else {
+							// Legacy format: session:questionIndex:optionIndex
+							optionIndex, _ = strconv.Atoi(parts[2])
 						}
-						exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
-						listenLog("[callback] Selected option %d for %s (question %d/%d)", optionIndex, sessionName, questionIndex+1, totalQuestions)
 
-						// After the last question, send Enter to confirm "Submit answers"
-						if totalQuestions > 0 && questionIndex == totalQuestions-1 {
-							time.Sleep(300 * time.Millisecond)
+						// Edit message to show selection and remove buttons
+						if cb.Message != nil {
+							originalText := cb.Message.Text
+							newText := fmt.Sprintf("%s\n\n✓ Selected option %d", originalText, optionIndex+1)
+							editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, newText)
+						}
+
+						tmuxName := tmuxSafeName(sessionName)
+						windowID := getWindowID(config, sessionName)
+						if tmuxWindowExistsByID(windowID, tmuxName) {
+							target := tmuxTargetByID(windowID, tmuxName)
+							// Send arrow down keys to select option, then Enter
+							for i := 0; i < optionIndex; i++ {
+								exec.Command(tmuxPath, "send-keys", "-t", target, "Down").Run()
+								time.Sleep(50 * time.Millisecond)
+							}
 							exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
-							listenLog("[callback] Auto-submitted answers for %s", sessionName)
+							listenLog("[callback] Selected option %d for %s (question %d/%d)", optionIndex, sessionName, questionIndex+1, totalQuestions)
+
+							// After the last question, send Enter to confirm "Submit answers"
+							if totalQuestions > 0 && questionIndex == totalQuestions-1 {
+								time.Sleep(300 * time.Millisecond)
+								exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
+								listenLog("[callback] Auto-submitted answers for %s", sessionName)
+							}
 						}
 					}
 				}
@@ -1104,7 +1132,7 @@ func listen() error {
 				if _, err := os.Stat(workDir); os.IsNotExist(err) {
 					os.MkdirAll(workDir, 0755)
 				}
-				newWindowID, err := createTmuxWindow(tmuxName, workDir, true)
+				newWindowID, err := createTmuxWindow(tmuxName, workDir, true, sessionInfo.ProviderName)
 				if err != nil {
 					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start: %v", err))
 				} else {
@@ -1143,6 +1171,67 @@ func listen() error {
 					sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session deleted but failed to delete thread: %v", err))
 				}
 				// No message needed - thread is gone
+				continue
+			}
+
+			// /providers command - list available providers
+			if text == "/providers" {
+				config, _ := loadConfig()
+				if config.Providers == nil || len(config.Providers) == 0 {
+					sendMessage(config, chatID, threadID, "No providers configured.\n\nConfigure providers in ~/.config/ccc/config.json:\n{\n  \"active_provider\": \"zai\",\n  \"providers\": {\n    \"zai\": {\"provider\": \"zai\", \"base_url\": \"...\"},\n    \"gemini\": {\"provider\": \"gemini\", \"base_url\": \"...\"}\n  }\n}")
+					continue
+				}
+				var msg []string
+				msg = append(msg, "📋 Available providers:")
+				for name, p := range config.Providers {
+					active := ""
+					if config.ActiveProvider == name {
+						active = " (active)"
+					}
+					msg = append(msg, fmt.Sprintf("  • %s%s - %s", name, active, p.Provider))
+				}
+				sendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
+				continue
+			}
+
+			// /provider command - show or set provider for current session
+			if strings.HasPrefix(text, "/provider") && isGroup && threadID > 0 {
+				config, _ := loadConfig()
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
+					continue
+				}
+				sessionInfo := config.Sessions[sessName]
+
+				arg := strings.TrimSpace(strings.TrimPrefix(text, "/provider"))
+				if arg == "" {
+					// Show current provider
+					current := sessionInfo.ProviderName
+					if current == "" {
+						current = config.ActiveProvider
+						if current == "" {
+							current = "default"
+						}
+					}
+					sendMessage(config, chatID, threadID, fmt.Sprintf("🤖 Current provider: %s\n\nUsage: /provider <name> to change for this session.", current))
+					continue
+				}
+
+				// Validate provider
+				if config.Providers == nil {
+					sendMessage(config, chatID, threadID, "❌ No providers configured. Use /providers to see available providers.")
+					continue
+				}
+				if _, exists := config.Providers[arg]; !exists {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Unknown provider '%s'\n\nUse /providers to list available providers.", arg))
+					continue
+				}
+
+				// Update session provider
+				sessionInfo.ProviderName = arg
+				saveConfig(config)
+				sendMessage(config, chatID, threadID, fmt.Sprintf("✅ Provider changed to %s\n\nRestart session with /new to apply the new provider.", arg))
 				continue
 			}
 
@@ -1195,43 +1284,106 @@ func listen() error {
 				config, _ = loadConfig()
 				arg := strings.TrimSpace(strings.TrimPrefix(text, "/new"))
 
-				// /new <name> - create brand new session + topic
+				// /new <name>[@provider] - create brand new session + topic
 				if arg != "" {
-					existing, exists := config.Sessions[arg]
-					if exists && existing != nil && existing.TopicID != 0 {
-						sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", arg))
+					// Parse provider from argument: name@provider or name --provider provider
+					sessionName := arg
+					providerName := ""
+
+					// Check for @provider syntax
+					if idx := strings.Index(arg, "@"); idx > 0 {
+						sessionName = arg[:idx]
+						providerName = strings.TrimSpace(arg[idx+1:])
+					} else if strings.Contains(arg, " --provider ") {
+						// Check for --provider syntax
+						parts := strings.SplitN(arg, " --provider ", 2)
+						sessionName = strings.TrimSpace(parts[0])
+						providerName = strings.TrimSpace(parts[1])
+					}
+
+					// Validate provider if specified
+					if providerName != "" && config.Providers != nil {
+						if _, exists := config.Providers[providerName]; !exists {
+							// List available providers
+							var available []string
+							for name := range config.Providers {
+								available = append(available, name)
+							}
+							msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
+								providerName, strings.Join(available, ", "))
+							sendMessage(config, chatID, threadID, msg)
+							continue
+						}
+					}
+
+					// Always show keyboard if multiple providers and no explicit provider selected
+					if providerName == "" && config.Providers != nil && len(config.Providers) > 1 {
+						// Check if session already exists
+						existing, exists := config.Sessions[sessionName]
+						if exists && existing != nil && existing.TopicID != 0 {
+							sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
+							continue
+						}
+
+						// Build provider selection keyboard
+						var buttons [][]InlineKeyboardButton
+						for name := range config.Providers {
+							label := name
+							if config.ActiveProvider == name {
+								label += " ⭐"
+							}
+							callbackData := fmt.Sprintf("new:%s:%s", sessionName, name)
+							buttons = append(buttons, []InlineKeyboardButton{
+								{Text: label, CallbackData: callbackData},
+							})
+						}
+
+						msg := fmt.Sprintf("🤖 Select provider for '%s':", sessionName)
+						sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
 						continue
 					}
-					topicID, err := createForumTopic(config, arg)
+
+					// Direct creation (single provider or provider specified)
+					existing, exists := config.Sessions[sessionName]
+					if exists && existing != nil && existing.TopicID != 0 {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
+						continue
+					}
+					topicID, err := createForumTopic(config, sessionName)
 					if err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 						continue
 					}
 					// Use pre-configured path if session was preset, otherwise resolve from name
-					workDir := resolveProjectPath(config, arg)
+					workDir := resolveProjectPath(config, sessionName)
 					if exists && existing != nil && existing.Path != "" {
 						workDir = existing.Path
 					}
-					config.Sessions[arg] = &SessionInfo{
-						TopicID: topicID,
-						Path:    workDir,
+					config.Sessions[sessionName] = &SessionInfo{
+						TopicID:      topicID,
+						Path:         workDir,
+						ProviderName: providerName,
 					}
 					saveConfig(config)
 					if _, err := os.Stat(workDir); os.IsNotExist(err) {
 						os.MkdirAll(workDir, 0755)
 					}
-					tmuxName := tmuxSafeName(arg)
-					newWindowID, err := createTmuxWindow(tmuxName, workDir, false)
+					tmuxName := tmuxSafeName(sessionName)
+					providerMsg := ""
+					if providerName != "" {
+						providerMsg = fmt.Sprintf("\n🤖 Provider: %s", providerName)
+					}
+					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName)
 					if err != nil {
 						sendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start tmux: %v", err))
 					} else {
-						config.Sessions[arg].WindowID = newWindowID
+						config.Sessions[sessionName].WindowID = newWindowID
 						saveConfig(config)
 						time.Sleep(500 * time.Millisecond)
 						if tmuxWindowExistsByID(newWindowID, tmuxName) {
-							sendMessage(config, config.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!\n\nSend messages here to interact with Claude.", arg))
+							sendMessage(config, config.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
 						} else {
-							sendMessage(config, config.GroupID, topicID, fmt.Sprintf("⚠️ Session '%s' created but died immediately. Check if ~/bin/ccc works.", arg))
+							sendMessage(config, config.GroupID, topicID, fmt.Sprintf("⚠️ Session '%s' created but died immediately. Check if ~/bin/ccc works.", sessionName))
 						}
 					}
 					continue
@@ -1258,7 +1410,7 @@ func listen() error {
 					if _, err := os.Stat(workDir); os.IsNotExist(err) {
 						os.MkdirAll(workDir, 0755)
 					}
-					newWindowID, err := createTmuxWindow(tmuxName, workDir, false)
+					newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName)
 					if err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start: %v", err))
 					} else {
@@ -1293,7 +1445,7 @@ func listen() error {
 						if _, err := os.Stat(workDir); os.IsNotExist(err) {
 							os.MkdirAll(workDir, 0755)
 						}
-						newWindowID, err := createTmuxWindow(tmuxName, workDir, false)
+						newWindowID, err := createTmuxWindow(tmuxName, workDir, false, sessionInfo.ProviderName)
 						if err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start session: %v", err))
 							continue
@@ -1385,6 +1537,67 @@ func listen() error {
 	}
 }
 
+// handleNewWithProvider creates a session after provider selection via inline keyboard
+func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, providerName string) {
+	// Check if session already exists
+	existing, exists := config.Sessions[sessionName]
+	if exists && existing != nil && existing.TopicID != 0 {
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("⚠️ Session '%s' already exists.\n\nUse /new without args in that topic to restart.", sessionName))
+		}
+		return
+	}
+
+	// Create topic
+	topicID, err := createForumTopic(config, sessionName)
+	if err != nil {
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("❌ Failed to create topic: %v", err))
+		}
+		return
+	}
+
+	// Resolve work directory
+	workDir := resolveProjectPath(config, sessionName)
+	if exists && existing != nil && existing.Path != "" {
+		workDir = existing.Path
+	}
+
+	// Create session
+	config.Sessions[sessionName] = &SessionInfo{
+		TopicID:      topicID,
+		Path:         workDir,
+		ProviderName: providerName,
+	}
+	saveConfig(config)
+
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		os.MkdirAll(workDir, 0755)
+	}
+
+	tmuxName := tmuxSafeName(sessionName)
+	newWindowID, err := createTmuxWindow(tmuxName, workDir, false, providerName)
+
+	// Update message to show result
+	resultMsg := fmt.Sprintf("🚀 Session '%s' started!\n🤖 Provider: %s\n\nSend messages here to interact with Claude.", sessionName, providerName)
+	if err != nil {
+		resultMsg = fmt.Sprintf("❌ Failed to start tmux: %v", err)
+	} else {
+		config.Sessions[sessionName].WindowID = newWindowID
+		saveConfig(config)
+		time.Sleep(500 * time.Millisecond)
+		if !tmuxWindowExistsByID(newWindowID, tmuxName) {
+			resultMsg = fmt.Sprintf("⚠️ Session '%s' created but died immediately. Check if ~/bin/ccc works.", sessionName)
+		}
+	}
+
+	if cb.Message != nil {
+		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
+	}
+}
+
 func printHelp() {
 	fmt.Printf(`ccc - Claude Code Companion v%s
 
@@ -1409,10 +1622,13 @@ COMMANDS:
     run                     Run Claude directly (used by tmux sessions)
 
 TELEGRAM COMMANDS:
-    /new <name>             Create new session with topic (in projects_dir)
+    /new <name>             Create new session (tap to select provider)
+    /new <name>@provider    Create session with specific provider
     /new ~/path/name        Create session with custom path
     /new                    Restart session in current topic
     /continue               Restart session keeping conversation history
+    /providers              List available AI providers
+    /provider [name]        Show or change provider for current session
     /c <cmd>                Execute shell command
     /update                 Update ccc binary from GitHub
     /restart                Restart ccc service
@@ -1449,8 +1665,72 @@ func handleAuth(config *Config, chatID, threadID int64) {
 		return
 	}
 
+	// Build environment string for tmux from provider config
+	envCmd := ""
+	provider := getActiveProvider(config)
+	if provider != nil {
+		// Determine auth token (auto-load from env if empty/placeholder)
+		authToken := provider.AuthToken
+		if authToken == "" || authToken == "YOUR_ZAI_API_KEY" || authToken == "sk-dummy" {
+			switch provider.Provider {
+			case "zai":
+				if token := os.Getenv("ZAI_API_KEY"); token != "" {
+					authToken = token
+				}
+			case "gemini":
+				if token := os.Getenv("GEMINI_API_KEY"); token != "" {
+					authToken = token
+				}
+			case "openai":
+				if token := os.Getenv("OPENAI_API_KEY"); token != "" {
+					authToken = token
+				}
+			case "ollama":
+				authToken = "ollama"
+			}
+		}
+		if authToken != "" {
+			envCmd += fmt.Sprintf("export ANTHROPIC_AUTH_TOKEN='%s'; ", authToken)
+		}
+
+		if provider.BaseURL != "" {
+			envCmd += fmt.Sprintf("export ANTHROPIC_BASE_URL='%s'; ", provider.BaseURL)
+		}
+		if provider.OpusModel != "" {
+			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_OPUS_MODEL='%s'; ", provider.OpusModel)
+			envCmd += fmt.Sprintf("export ANTHROPIC_MODEL='%s'; ", provider.OpusModel)
+		}
+		if provider.SonnetModel != "" {
+			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_SONNET_MODEL='%s'; ", provider.SonnetModel)
+		}
+		if provider.HaikuModel != "" {
+			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_HAIKU_MODEL='%s'; ", provider.HaikuModel)
+		}
+		if provider.SubagentModel != "" {
+			envCmd += fmt.Sprintf("export CLAUDE_CODE_SUBAGENT_MODEL='%s'; ", provider.SubagentModel)
+		}
+
+		// Config dir with ~ expansion
+		if provider.ConfigDir != "" {
+			configDir := provider.ConfigDir
+			if strings.HasPrefix(configDir, "~/") {
+				configDir = home + configDir[1:]
+			} else if configDir == "~" {
+				configDir = home
+			}
+			envCmd += fmt.Sprintf("export CLAUDE_CONFIG_DIR='%s'; ", configDir)
+		}
+
+		// API timeout from config
+		if provider.ApiTimeout > 0 {
+			envCmd += fmt.Sprintf("export API_TIMEOUT_MS=%d; ", provider.ApiTimeout)
+		}
+	}
+
 	time.Sleep(500 * time.Millisecond)
-	exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, claudePath+" --dangerously-skip-permissions", "C-m").Run()
+	// Send env vars + claude command to tmux
+	cmdStr := envCmd + claudePath + " --dangerously-skip-permissions"
+	exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, cmdStr, "C-m").Run()
 
 	var oauthURL string
 	for i := 0; i < 30; i++ {

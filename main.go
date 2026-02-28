@@ -15,6 +15,27 @@ type SessionInfo struct {
 	Path            string `json:"path"`
 	ClaudeSessionID string `json:"claude_session_id,omitempty"`
 	WindowID        string `json:"window_id,omitempty"` // tmux window ID (@N)
+	ProviderName    string `json:"provider_name,omitempty"` // Provider to use for this session
+}
+
+// ProviderConfig configures Claude provider (API keys, models, etc.)
+type ProviderConfig struct {
+	// Provider type: "anthropic" (default), "zai", "gemini", "openai", "ollama"
+	Provider string `json:"provider,omitempty"`
+
+	// API settings
+	AuthToken string `json:"auth_token,omitempty"` // API key/token
+	BaseURL   string `json:"base_url,omitempty"`   // API base URL
+	ApiTimeout int  `json:"api_timeout,omitempty"` // API timeout in milliseconds
+
+	// Model overrides
+	OpusModel   string `json:"opus_model,omitempty"`
+	SonnetModel string `json:"sonnet_model,omitempty"`
+	HaikuModel  string `json:"haiku_model,omitempty"`
+	SubagentModel string `json:"subagent_model,omitempty"`
+
+	// Config directory for this provider (supports ~ expansion)
+	ConfigDir string `json:"config_dir,omitempty"`
 }
 
 // Config stores bot configuration and session mappings
@@ -29,6 +50,9 @@ type Config struct {
 	Away             bool                    `json:"away"`
 	OAuthToken       string                  `json:"oauth_token,omitempty"`
 	OTPSecret        string                  `json:"otp_secret,omitempty"`        // TOTP secret for safe mode
+	ActiveProvider   string                  `json:"active_provider,omitempty"`  // Which provider to use from providers map
+	Providers        map[string]*ProviderConfig `json:"providers,omitempty"`    // Named provider configurations
+	Provider         *ProviderConfig         `json:"provider,omitempty"`          // Deprecated: Use providers + active_provider
 }
 
 // TelegramMessage represents a Telegram message
@@ -194,8 +218,19 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		// Run claude directly (used inside tmux sessions)
-		continueSession := len(os.Args) > 2 && os.Args[2] == "-c"
-		if err := runClaudeRaw(continueSession); err != nil {
+		// Flags: -c (continue), --provider <name>
+		continueSession := false
+		var providerOverride string
+		args := os.Args[2:]
+		for i := 0; i < len(args); i++ {
+			if args[i] == "-c" {
+				continueSession = true
+			} else if args[i] == "--provider" && i+1 < len(args) {
+				providerOverride = args[i+1]
+				i++
+			}
+		}
+		if err := runClaudeRaw(continueSession, providerOverride); err != nil {
 			os.Exit(1)
 		}
 		return
@@ -383,15 +418,12 @@ func main() {
 	case "install":
 		if err := installHook(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
 		}
 		if err := installSkill(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
 		}
 		if err := installService(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
 		}
 
 	case "uninstall":

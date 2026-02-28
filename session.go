@@ -34,6 +34,13 @@ func createSession(config *Config, name string) error {
 		return fmt.Errorf("session '%s' already exists", name)
 	}
 
+	// Get the provider to use for this session
+	provider := getActiveProvider(config)
+	providerName := ""
+	if provider != nil && config.ActiveProvider != "" {
+		providerName = config.ActiveProvider
+	}
+
 	// Create Telegram topic
 	topicID, err := createForumTopic(config, name)
 	if err != nil {
@@ -47,16 +54,17 @@ func createSession(config *Config, name string) error {
 		os.MkdirAll(workDir, 0755)
 	}
 
-	windowID, err := createTmuxWindow(tmuxSafeName(name), workDir, false)
+	windowID, err := createTmuxWindow(tmuxSafeName(name), workDir, false, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create tmux window: %w", err)
 	}
 
 	// Save mapping with full path
 	config.Sessions[name] = &SessionInfo{
-		TopicID:  topicID,
-		Path:     workDir,
-		WindowID: windowID,
+		TopicID:      topicID,
+		Path:         workDir,
+		WindowID:     windowID,
+		ProviderName: providerName,
 	}
 	if err := saveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
@@ -102,8 +110,18 @@ func startSession(continueSession bool) error {
 	// Load config to check/create topic
 	config, err := loadConfig()
 	if err != nil {
-		// No config, just run claude directly
-		return runClaudeRaw(continueSession)
+		// No config, just run claude directly with default provider
+		return runClaudeRaw(continueSession, "")
+	}
+
+	// Get the provider to use for this session
+	providerName := ""
+	if config.Sessions[name] != nil && config.Sessions[name].ProviderName != "" {
+		// Use the session's saved provider
+		providerName = config.Sessions[name].ProviderName
+	} else if config.ActiveProvider != "" {
+		// Use the active provider
+		providerName = config.ActiveProvider
 	}
 
 	// Create topic if it doesn't exist and we have a group configured
@@ -112,8 +130,9 @@ func startSession(continueSession bool) error {
 			topicID, err := createForumTopic(config, name)
 			if err == nil {
 				config.Sessions[name] = &SessionInfo{
-					TopicID: topicID,
-					Path:    cwd,
+					TopicID:      topicID,
+					Path:         cwd,
+					ProviderName: providerName,
 				}
 				saveConfig(config)
 				fmt.Printf("📱 Created Telegram topic: %s\n", name)
@@ -143,7 +162,7 @@ func startSession(continueSession bool) error {
 	}
 
 	// Create new window
-	windowID, err = createTmuxWindow(winName, cwd, continueSession)
+	windowID, err = createTmuxWindow(winName, cwd, continueSession, providerName)
 	if err != nil {
 		return err
 	}
@@ -181,6 +200,13 @@ func startDetached(name string, workDir string, prompt string) error {
 		config.Sessions = make(map[string]*SessionInfo)
 	}
 
+	// Get the provider to use for this session
+	provider := getActiveProvider(config)
+	providerName := ""
+	if provider != nil && config.ActiveProvider != "" {
+		providerName = config.ActiveProvider
+	}
+
 	// Create Telegram topic
 	topicID, err := createForumTopic(config, name)
 	if err != nil {
@@ -197,16 +223,17 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Create tmux window (detached)
-	windowID, err := createTmuxWindow(winName, workDir, false)
+	windowID, err := createTmuxWindow(winName, workDir, false, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create tmux window: %w", err)
 	}
 
 	// Save session info
 	config.Sessions[name] = &SessionInfo{
-		TopicID:  topicID,
-		Path:     workDir,
-		WindowID: windowID,
+		TopicID:      topicID,
+		Path:         workDir,
+		WindowID:     windowID,
+		ProviderName: providerName,
 	}
 	if err := saveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)

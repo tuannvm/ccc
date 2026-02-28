@@ -505,6 +505,8 @@ func setBotCommands(botToken string) {
 		{"command": "cleanup", "description": "Delete ALL sessions, folders and threads"},
 		{"command": "c", "description": "Execute shell command: /c <cmd>"},
 		{"command": "continue", "description": "Restart session with history"},
+		{"command": "providers", "description": "List available AI providers"},
+		{"command": "provider", "description": "Show/change provider for session"},
 		{"command": "update", "description": "Update ccc binary from GitHub"},
 		{"command": "version", "description": "Show ccc version"},
 		{"command": "stats", "description": "Show system stats (RAM, disk, etc)"},

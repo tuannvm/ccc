@@ -178,3 +178,16 @@ func expandPath(path string) string {
 	}
 	return path
 }
+
+// getActiveProvider returns the active provider config.
+// First checks providers map + active_provider, then falls back to legacy provider field.
+func getActiveProvider(config *Config) *ProviderConfig {
+	// New style: providers map with active_provider
+	if config.Providers != nil && config.ActiveProvider != "" {
+		if provider := config.Providers[config.ActiveProvider]; provider != nil {
+			return provider
+		}
+	}
+	// Legacy: direct provider field
+	return config.Provider
+}

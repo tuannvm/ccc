@@ -291,6 +291,7 @@ func handleStopHook() error {
 
 	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
 	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s", hookData.Cwd, hookData.SessionID)
 		return nil
 	}
 
@@ -325,6 +326,7 @@ func handleStopHook() error {
 // into the tool blockquote (for text before/between tools in PreToolUse).
 // If false, texts are sent as separate messages (for text after tools in Stop hook).
 func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool) int {
+	hookLog("deliver-unsent: sess=%s topic=%d transcript=%s", sessName, topicID, transcriptPath)
 	blocks := extractRecentAssistantTexts(transcriptPath, 80)
 	lastPreview := ""
 	if len(blocks) > 0 {
@@ -383,11 +385,13 @@ type assistantTextBlock struct {
 // to avoid resending previously delivered messages.
 func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assistantTextBlock {
 	if transcriptPath == "" {
+		hookLog("extract: empty transcript path")
 		return nil
 	}
 
 	f, err := os.Open(transcriptPath)
 	if err != nil {
+		hookLog("extract: failed to open transcript %s: %v", transcriptPath, err)
 		return nil
 	}
 	defer f.Close()
@@ -891,15 +895,65 @@ func removeCccHooks(hookArray []interface{}) []interface{} {
 
 func installHook() error {
 	home, _ := os.UserHomeDir()
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	defaultSettingsPath := filepath.Join(home, ".claude", "settings.json")
 
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read settings.json: %w", err)
+	// First, load config to get all provider config dirs
+	config, err := loadConfig()
+	installedCount := 0
+	configDirs := make(map[string]bool)
+
+	if err == nil && config.Providers != nil {
+		// Collect all unique config dirs
+		for _, provider := range config.Providers {
+			if provider.ConfigDir != "" {
+				// Expand ~
+				configDir := provider.ConfigDir
+				if strings.HasPrefix(configDir, "~/") {
+					configDir = filepath.Join(home, configDir[2:])
+				} else if configDir == "~" {
+					configDir = home
+				}
+				configDirs[configDir] = true
+			}
+		}
+
+		// Install hooks in each provider config dir
+		for configDir := range configDirs {
+			providerSettingsPath := filepath.Join(configDir, "settings.json")
+			if err := installHooksToPath(providerSettingsPath); err != nil {
+				fmt.Printf("⚠️ Failed to install hooks to %s: %v\n", configDir, err)
+			} else {
+				fmt.Printf("✅ Hooks installed to %s\n", configDir)
+				installedCount++
+			}
+		}
 	}
 
+	// Always install to default ~/.claude
+	if err := installHooksToPath(defaultSettingsPath); err != nil {
+		return err
+	}
+	installedCount++
+	fmt.Printf("✅ Hooks installed to %s\n", defaultSettingsPath)
+
+	fmt.Printf("✅ Claude hooks installed to %d location(s)!\n", installedCount)
+	return nil
+}
+
+func installHooksToPath(settingsPath string) error {
+	// Ensure directory exists
+	settingsDir := filepath.Dir(settingsPath)
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Read existing settings or create new
 	var settings map[string]interface{}
-	if err := json.Unmarshal(data, &settings); err != nil {
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		// File doesn't exist, create empty settings
+		settings = make(map[string]interface{})
+	} else if err := json.Unmarshal(data, &settings); err != nil {
 		return fmt.Errorf("failed to parse settings.json: %w", err)
 	}
 
@@ -996,14 +1050,60 @@ func installHook() error {
 		return fmt.Errorf("failed to write settings.json: %w", err)
 	}
 
-	fmt.Println("✅ Claude hooks installed!")
 	return nil
 }
 
 func uninstallHook() error {
 	home, _ := os.UserHomeDir()
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	defaultSettingsPath := filepath.Join(home, ".claude", "settings.json")
 
+	// Load config to get all provider config dirs
+	config, err := loadConfig()
+	uninstalledCount := 0
+	configDirs := make(map[string]bool)
+
+	if err == nil && config.Providers != nil {
+		// Collect all unique config dirs
+		for _, provider := range config.Providers {
+			if provider.ConfigDir != "" {
+				// Expand ~
+				configDir := provider.ConfigDir
+				if strings.HasPrefix(configDir, "~/") {
+					configDir = filepath.Join(home, configDir[2:])
+				} else if configDir == "~" {
+					configDir = home
+				}
+				configDirs[configDir] = true
+			}
+		}
+
+		// Uninstall hooks from each provider config dir
+		for configDir := range configDirs {
+			providerSettingsPath := filepath.Join(configDir, "settings.json")
+			if _, err := os.Stat(providerSettingsPath); err == nil {
+				if err := uninstallHooksFromPath(providerSettingsPath); err != nil {
+					fmt.Printf("⚠️ Failed to uninstall hooks from %s: %v\n", configDir, err)
+				} else {
+					fmt.Printf("✅ Hooks uninstalled from %s\n", configDir)
+					uninstalledCount++
+				}
+			}
+		}
+	}
+
+	// Always uninstall from default ~/.claude
+	if err := uninstallHooksFromPath(defaultSettingsPath); err != nil {
+		return err
+	}
+	uninstalledCount++
+	fmt.Printf("✅ Hooks uninstalled from %s\n", defaultSettingsPath)
+
+	fmt.Printf("✅ Claude hooks uninstalled from %d location(s)!\n", uninstalledCount)
+	return nil
+}
+
+// uninstallHooksFromPath removes ccc hooks from a specific settings.json file
+func uninstallHooksFromPath(settingsPath string) error {
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return fmt.Errorf("failed to read settings.json: %w", err)
@@ -1016,8 +1116,7 @@ func uninstallHook() error {
 
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
-		fmt.Println("No hooks found")
-		return nil
+		return nil // No hooks to remove
 	}
 
 	hookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
@@ -1043,7 +1142,6 @@ func uninstallHook() error {
 		return fmt.Errorf("failed to write settings.json: %w", err)
 	}
 
-	fmt.Println("✅ Claude hooks uninstalled!")
 	return nil
 }
 
