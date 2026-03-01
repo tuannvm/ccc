@@ -2075,10 +2075,13 @@ func handleAuth(config *Config, chatID, threadID int64) {
 		}
 		if provider.OpusModel != "" {
 			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_OPUS_MODEL='%s'; ", provider.OpusModel)
-			envCmd += fmt.Sprintf("export ANTHROPIC_MODEL='%s'; ", provider.OpusModel)
 		}
 		if provider.SonnetModel != "" {
 			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_SONNET_MODEL='%s'; ", provider.SonnetModel)
+			envCmd += fmt.Sprintf("export ANTHROPIC_MODEL='%s'; ", provider.SonnetModel)
+		} else if provider.OpusModel != "" {
+			// Fallback: if Sonnet is not configured but Opus is, use Opus as default
+			envCmd += fmt.Sprintf("export ANTHROPIC_MODEL='%s'; ", provider.OpusModel)
 		}
 		if provider.HaikuModel != "" {
 			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_HAIKU_MODEL='%s'; ", provider.HaikuModel)

@@ -131,6 +131,7 @@ func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 
 // tmuxTargetHasClaudeRunning checks if a tmux target (pane or window) has Claude running
 // This is the shared implementation used by both tmuxWindowHasClaudeRunning and currentPaneHasClaudeRunning
+// Uses hybrid detection: process name check + process tree check + prompt character check
 func tmuxTargetHasClaudeRunning(target string) bool {
 
 	// Get pane IDs, active flag, and commands together to check only the active pane
@@ -141,9 +142,17 @@ func tmuxTargetHasClaudeRunning(target string) bool {
 		return false
 	}
 
+	// Common shell names
+	shells := map[string]bool{
+		"sh": true, "bash": true, "zsh": true, "fish": true,
+		"dash": true, "nu": true, "elvish": true, "xonsh": true,
+		"tcsh": true, "csh": true, "ksh": true,
+	}
+
 	// Check only the ACTIVE pane's command
 	panesOutput := strings.TrimSpace(string(out))
 	lines := strings.Split(panesOutput, "\n")
+	var activePaneID, activePaneCmd string
 	for _, line := range lines {
 		parts := strings.SplitN(line, "\t", 3)
 		if len(parts) != 3 {
@@ -153,31 +162,58 @@ func tmuxTargetHasClaudeRunning(target string) bool {
 		if isActive != "1" {
 			continue // Skip non-active panes
 		}
+		activePaneID = paneID
+		activePaneCmd = strings.TrimSpace(paneCmd)
 
-		paneCmd = strings.TrimSpace(paneCmd)
-		// Check if this pane has claude running (exclude ccc wrapper which is just the launcher)
+		// Process-based detection: check if this pane has claude running
 		if strings.HasPrefix(paneCmd, "claude") {
 			listenLog("tmuxTargetHasClaudeRunning: Claude IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 			return true
 		}
-		// Note: We explicitly DON'T check for "ccc" here because ccc is just a wrapper
-		// that launches claude. When ccc is running, it means we're in the process of
-		// starting a new session, not continuing an existing one.
 		// Check for npm-installed Claude (shows as 'node' or 'nodejs')
 		if paneCmd == "node" || paneCmd == "nodejs" {
 			// Verify it's actually Claude by examining the process command line
-			// This avoids false positives from other Node.js processes and accurately
-			// detects whether Claude is actually running (not just a stale pane state)
 			if tmuxPaneIsClaudeProcess(paneID) {
 				listenLog("tmuxTargetHasClaudeRunning: Claude (npm) IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 				return true
 			}
 			listenLog("tmuxTargetHasClaudeRunning: node found but not Claude process in pane=%s target=%s", paneID, target)
 		}
+		// Special case: "ccc" process means the wrapper is running
+		// This could mean Claude is starting OR it's already running
+		// We need prompt-based detection to tell the difference
+		if paneCmd == "ccc" || paneCmd == "ccc run" {
+			listenLog("tmuxTargetHasClaudeRunning: ccc process detected, checking active prompt in pane=%s target=%s", paneID, target)
+			// Check if Claude prompt is present at the END of the buffer - means Claude is actually running
+			if tmuxPaneHasActiveClaudePrompt(paneID) {
+				listenLog("tmuxTargetHasClaudeRunning: Claude IS running (ccc+active prompt detected) in active pane=%s target=%s", paneID, target)
+				return true
+			}
+			// ccc without active prompt means it's still starting up
+			listenLog("tmuxTargetHasClaudeRunning: ccc running but no active Claude prompt yet in pane=%s target=%s", paneID, target)
+		}
+		// Special case: shell process (zsh/bash) - check if it has Claude as a child process
+		// This handles cases where pane_current_command shows the shell but Claude is running under it
+		if shells[paneCmd] {
+			listenLog("tmuxTargetHasClaudeRunning: shell detected (cmd=%s) in pane=%s target=%s, checking for Claude children", paneCmd, paneID, target)
+			// Check if this shell has Claude/node children
+			if tmuxPaneHasClaudeChild(paneID) {
+				listenLog("tmuxTargetHasClaudeRunning: Claude IS running as child of shell in pane=%s target=%s", paneID, target)
+				return true
+			}
+		}
+	}
+
+	// Process-based detection failed, try prompt-based detection as final fallback
+	// We use strict detection here to avoid false positives from shell prompts
+	// Only accept the prompt if we have Claude-specific context (via tmuxPaneHasActiveClaudePrompt)
+	if activePaneID != "" && tmuxPaneHasActiveClaudePrompt(activePaneID) {
+		listenLog("tmuxTargetHasClaudeRunning: Claude IS running (prompt fallback detected) in active pane=%s target=%s", activePaneID, target)
+		return true
 	}
 
 	// If we reach here, the active pane doesn't have Claude running
-	listenLog("tmuxTargetHasClaudeRunning: Claude NOT running in active pane (cmds=%s) in target=%s - will auto-restart", panesOutput, target)
+	listenLog("tmuxTargetHasClaudeRunning: Claude NOT running in active pane (cmd=%s) in target=%s - will auto-restart", activePaneCmd, target)
 	return false
 }
 
@@ -200,6 +236,125 @@ func tmuxPaneHasClaudePrompt(paneTarget string) bool {
 	// Claude Code shows "❯" when ready for input
 	// Also check for "How can I help?" which appears in the welcome message
 	return strings.Contains(content, "❯") || strings.Contains(content, "How can I help")
+}
+
+// tmuxPaneHasActiveClaudePrompt checks if the tmux pane has Claude's prompt at the END of the buffer
+// This indicates Claude is currently active and waiting for input (not just historical content)
+// The target can be a pane ID (%0) or window:pane format (session:window.pane)
+// Uses strict detection with context requirement to avoid false positives from shell prompts
+func tmuxPaneHasActiveClaudePrompt(paneTarget string) bool {
+	// Capture the last few lines of the pane buffer to check for active prompt
+	// Use -e for escape sequences and -J to join wrapped lines
+	// -S -15 captures last 15 lines (enough to see prompt + recent context)
+	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J", "-S", "-15")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	content := string(out)
+	// Check if the last non-empty line contains Claude's prompt
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+
+	// Find the last non-empty line
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			// Check for Claude's prompt character (❯)
+			if strings.Contains(line, "❯") {
+				// To avoid false positives from shell prompts (e.g., Powerlevel10k),
+				// we require Claude-specific context in the recent buffer
+				// Claude-specific indicators:
+				// - "How can I help?" in welcome message
+				// - "Claude" or "Anthropic" in output
+				// - Tool use blocks (e.g., "function:", "result:", "Bash:")
+				hasClaudeContext := false
+				lowerContent := strings.ToLower(content)
+				if strings.Contains(content, "How can I help") ||
+					strings.Contains(lowerContent, "claude") ||
+					strings.Contains(lowerContent, "anthropic") ||
+					strings.Contains(content, "Bash:") ||
+					strings.Contains(content, "function:") ||
+					strings.Contains(content, "result:") {
+					hasClaudeContext = true
+				}
+
+				// Only accept the prompt if we have Claude-specific context
+				// This avoids false positives from shell prompts that use ❯
+				if hasClaudeContext {
+					listenLog("tmuxPaneHasActiveClaudePrompt: found Claude prompt with context in pane=%s: %q", paneTarget, line)
+					return true
+				}
+				// Has ❯ but no Claude context - likely a shell prompt
+				listenLog("tmuxPaneHasActiveClaudePrompt: found ❯ but no Claude context in pane=%s: %q", paneTarget, line)
+			}
+			// If we found a non-empty line without the prompt, Claude is not active
+			break
+		}
+	}
+	return false
+}
+
+// tmuxPaneHasClaudeChild checks if the pane's process (typically a shell) has Claude as a child process
+// This is used when pane_current_command shows a shell (zsh/bash) but Claude might be running under it
+// Returns true if the pane has a child process that is Claude (claude binary or node with claude/cli)
+func tmuxPaneHasClaudeChild(paneID string) bool {
+	// Get the pane's PID using tmux
+	cmd := exec.Command(tmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	panePid := strings.TrimSpace(string(out))
+	if panePid == "" || panePid == "0" {
+		return false
+	}
+
+	// Find child processes of the pane
+	// Try GNU ps syntax first (Linux with --ppid)
+	psOut, err := exec.Command("ps", "-o", "pid,command", "--ppid", panePid, "--no-headers").Output()
+	if err != nil {
+		// GNU ps failed, try getting all processes and filter in Go (works cross-platform)
+		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+		if psErr != nil {
+			return false
+		}
+		psOut = filterChildProcesses(allPsOut, panePid)
+	}
+
+	if len(psOut) == 0 {
+		// No children found
+		return false
+	}
+
+	// Check if any child is Claude
+	lines := strings.Split(string(psOut), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Split on first whitespace to get PID and command
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		cmdline := strings.TrimSpace(parts[1])
+
+		// Check for claude binary
+		if strings.Contains(cmdline, "claude") && !strings.Contains(cmdline, "ccc") {
+			listenLog("tmuxPaneHasClaudeChild: found claude child in pane=%s: %q", paneID, cmdline)
+			return true
+		}
+		// Check for node process with claude/cli
+		if (strings.HasPrefix(cmdline, "node ") || strings.HasPrefix(cmdline, "nodejs ")) &&
+			(strings.Contains(cmdline, "/claude") || strings.Contains(cmdline, "/@anthropic-ai/")) {
+			listenLog("tmuxPaneHasClaudeChild: found node/claude child in pane=%s: %q", paneID, cmdline)
+			return true
+		}
+	}
+
+	return false
 }
 
 // tmuxPaneIsClaudeProcess checks if the pane's foreground process is actually the Claude CLI
@@ -764,10 +919,13 @@ func applyProviderEnv(baseEnv []string, provider *ProviderConfig) []string {
 	// Models
 	if provider.OpusModel != "" {
 		env = append(env, "ANTHROPIC_DEFAULT_OPUS_MODEL="+provider.OpusModel)
-		env = append(env, "ANTHROPIC_MODEL="+provider.OpusModel)
 	}
 	if provider.SonnetModel != "" {
 		env = append(env, "ANTHROPIC_DEFAULT_SONNET_MODEL="+provider.SonnetModel)
+		env = append(env, "ANTHROPIC_MODEL="+provider.SonnetModel)
+	} else if provider.OpusModel != "" {
+		// Fallback: if Sonnet is not configured but Opus is, use Opus as default
+		env = append(env, "ANTHROPIC_MODEL="+provider.OpusModel)
 	}
 	if provider.HaikuModel != "" {
 		env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+provider.HaikuModel)
@@ -982,10 +1140,62 @@ func sendToTmux(target string, text string) error {
 }
 
 func sendToTmuxWithDelay(target string, text string, delay time.Duration) error {
-	// Send text literally
-	cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
-	if err := cmd.Run(); err != nil {
-		return err
+	// Normalize line endings to LF only (handles CRLF from Telegram/Windows)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+
+	// Handle empty or whitespace-only text - nothing to send
+	if strings.TrimSpace(text) == "" {
+		listenLog("sendToTmuxWithDelay: empty or whitespace-only text, skipping")
+		return nil
+	}
+
+	// Check if text contains newlines - use bracketed paste mode for multi-line text
+	// This prevents newlines from being interpreted as Enter key presses
+	hasNewlines := strings.Contains(text, "\n")
+
+	if hasNewlines {
+		// Use bracketed paste mode for multi-line text
+		// This wraps the text in escape sequences that tell the terminal
+		// the content is a paste operation, so newlines should not execute
+		listenLog("sendToTmuxWithDelay: using bracketed paste for multi-line text (%d chars)", len(text))
+
+		// Calculate adaptive delay based on text length
+		// More text needs more time for the terminal to process
+		pasteDelay := time.Duration(len(text)/10) * time.Millisecond
+		if pasteDelay < 20*time.Millisecond {
+			pasteDelay = 20 * time.Millisecond
+		}
+		if pasteDelay > 200*time.Millisecond {
+			pasteDelay = 200 * time.Millisecond
+		}
+
+		// Send bracketed paste start sequence: ESC [ 2 0 0 ~
+		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", "\x1b[200~").Run(); err != nil {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+
+		// Send the actual text content
+		cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		// Use adaptive delay based on text length
+		time.Sleep(pasteDelay)
+
+		// Send bracketed paste end sequence: ESC [ 2 0 1 ~
+		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", "\x1b[201~").Run(); err != nil {
+			return err
+		}
+		// Brief delay before checking buffer
+		time.Sleep(20 * time.Millisecond)
+	} else {
+		// Single-line text: use original simple approach
+		listenLog("sendToTmuxWithDelay: single-line text (%d chars)", len(text))
+		cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
 	}
 
 	// Apply the specified delay as minimum wait time before checking buffer
@@ -1016,19 +1226,60 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 // waitForTextInPane polls the tmux pane buffer until the expected text appears
 // Returns true if text appears within timeout, false otherwise
 // Checks for text AFTER the last prompt marker to avoid false positives on historical content
+// For multi-line text, uses the last non-empty line for more reliable detection
 func waitForTextInPane(target string, expectedText string, timeout time.Duration) bool {
 	// Poll the pane buffer to verify text appears
 	// This works for all text lengths and avoids timing races
 	deadline := time.Now().Add(timeout)
 	checkInterval := 50 * time.Millisecond
 
-	// Take last 100 chars of expected text for verification (more reliable than full text)
+	// Normalize line endings for consistent searching
+	expectedText = strings.ReplaceAll(expectedText, "\r\n", "\n")
+
+	// Determine the best search text for verification
 	searchText := expectedText
-	if len(searchText) > 100 {
+
+	// For multi-line text, extract the last non-empty line for more reliable detection
+	// This handles bracketed paste mode where newlines are preserved
+	if strings.Contains(expectedText, "\n") {
+		lines := strings.Split(expectedText, "\n")
+		// Find the last non-empty line
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) != "" {
+				searchText = lines[i]
+				break
+			}
+		}
+		// Handle edge case: all lines are empty (only whitespace/newlines)
+		if strings.TrimSpace(searchText) == "" {
+			// For empty-only text, just check for any newlines appearing after prompt
+			listenLog("waitForTextInPane: all lines empty, searching for any content")
+			searchText = "\n"
+		} else if len(searchText) < 5 {
+			// Last line is very short (e.g., "}", ")") - could cause false positives
+			// Fall back to last 50 chars of the full text for more unique match
+			if len(expectedText) > 50 {
+				searchText = expectedText[len(expectedText)-50:]
+			} else {
+				// Use full text if it's not long enough
+				searchText = expectedText
+			}
+			listenLog("waitForTextInPane: last line too short, using tail of text: %q", searchText)
+		} else if searchText == expectedText && len(searchText) > 100 {
+			// Fallback: couldn't find non-empty line and text is long
+			searchText = searchText[len(searchText)-100:]
+		}
+		listenLog("waitForTextInPane: multi-line text, using search text: %q", searchText)
+		// For multi-line text, keep the search strategy - don't override with full expectedText
+	} else if len(searchText) > 100 {
+		// Single-line: take last 100 chars for verification (more reliable than full text)
 		searchText = searchText[len(searchText)-100:]
-	}
-	// For very short text, search for the full text
-	if len(searchText) < 10 {
+		// For very short single-line text, search for the full text
+		if len(searchText) < 10 {
+			searchText = expectedText
+		}
+	} else if len(searchText) < 10 {
+		// Single-line and very short: search for the full text
 		searchText = expectedText
 	}
 
