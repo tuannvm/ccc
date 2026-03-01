@@ -730,7 +730,9 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 	}
 	// If no sessionID and not continueSession (or Claude not running), start fresh (no flags)
 
-	if providerName != "" && providerName != "anthropic" {
+	// Always pass provider flag if specified
+	// This ensures provider-agnostic behavior - no special case for "anthropic"
+	if providerName != "" {
 		runCmd += " --provider " + shellQuote(providerName)
 	}
 	if worktreeName != "" {
@@ -870,7 +872,87 @@ func createTmuxWindow(windowName string, workDir string, continueSession bool, p
 
 // applyProviderEnv applies provider-specific environment variables to cmd.Env
 // Returns the modified environment slice
-func applyProviderEnv(baseEnv []string, provider *ProviderConfig) []string {
+// This version uses the Provider interface for provider-agnostic design
+func applyProviderEnv(baseEnv []string, provider Provider, config *Config) []string {
+	if provider == nil {
+		return baseEnv
+	}
+
+	env := baseEnv
+
+	// Get provider variables and track which ones we'll actually set
+	providerVars := provider.EnvVars(config)
+
+	// For ConfiguredProvider with auth, we need to check if auth_env_var expands to non-empty
+	// If it expands to empty, we should preserve ambient credentials instead
+	shouldUnsetAuth := false
+	if !provider.IsBuiltin() {
+		for _, v := range providerVars {
+			if strings.HasPrefix(v, "ANTHROPIC_AUTH_TOKEN=$") {
+				// This is auth_env_var - check if it expands to non-empty
+				envVarName := strings.TrimPrefix(v, "ANTHROPIC_AUTH_TOKEN=$")
+				if envVal := os.Getenv(envVarName); envVal != "" {
+					shouldUnsetAuth = true
+				}
+				// If env var is empty, we DON'T unset existing auth - preserve ambient
+				break
+			} else if strings.HasPrefix(v, "ANTHROPIC_AUTH_TOKEN=") && !strings.Contains(v, "$") {
+				// Direct token value (no $ prefix)
+				shouldUnsetAuth = true
+				break
+			}
+		}
+	}
+
+	// Unset auth vars only if we're actually replacing them
+	if shouldUnsetAuth {
+		env = unsetEnvVars(env, []string{
+			"ANTHROPIC_API_KEY",
+			"CLAUDE_API_KEY",
+			"ANTHROPIC_AUTH_TOKEN",
+		})
+		// Also unset model vars when using a configured provider with auth
+		env = unsetEnvVars(env, []string{
+			"ANTHROPIC_BASE_URL",
+			"ANTHROPIC_MODEL",
+			"ANTHROPIC_DEFAULT_OPUS_MODEL",
+			"ANTHROPIC_DEFAULT_SONNET_MODEL",
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+			"CLAUDE_CODE_SUBAGENT_MODEL",
+		})
+	}
+
+	// Add provider-specific environment variables
+	// For ConfiguredProvider, this includes expanded auth_env_var values and api_timeout
+	for _, v := range providerVars {
+		// Expand $VAR references for ConfiguredProvider auth_env_var
+		if strings.HasPrefix(v, "ANTHROPIC_AUTH_TOKEN=$") {
+			envVarName := strings.TrimPrefix(v, "ANTHROPIC_AUTH_TOKEN=$")
+			if envVal := os.Getenv(envVarName); envVal != "" {
+				env = append(env, "ANTHROPIC_AUTH_TOKEN="+envVal)
+			}
+			// If env var is empty, we skip it (preserving ambient credentials)
+		} else {
+			env = append(env, v)
+		}
+	}
+
+	// Common settings for all providers
+	// Note: TMPDIR is set for all providers including builtin, as before
+	env = append(env, []string{
+		"TMPDIR=/tmp/claude",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"DISABLE_COST_WARNINGS=1",
+		"DISABLE_TELEMETRY=1",
+		"DISABLE_ERROR_REPORTING=1",
+	}...)
+
+	return env
+}
+
+// applyProviderEnvLegacy applies provider-specific environment variables using the old ProviderConfig struct
+// This is a transitional function for backward compatibility
+func applyProviderEnvLegacy(baseEnv []string, provider *ProviderConfig, config *Config) []string {
 	if provider == nil {
 		return baseEnv
 	}
@@ -1030,27 +1112,13 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	// Load config and apply provider settings
 	config, err := loadConfig()
 	if err == nil {
-		// Determine which provider to use
-		var provider *ProviderConfig
-		if providerOverride != "" {
-			// Check for anthropic (built-in default, no config needed)
-			if providerOverride != "anthropic" {
-				// Look up provider in config
-				if config.Providers != nil {
-					provider = config.Providers[providerOverride]
-				}
-				// If provider not found, fall back to active provider
-				if provider == nil {
-					provider = getActiveProvider(config)
-				}
-			}
-			// For "anthropic", provider remains nil (uses default env)
-		}
-		if provider == nil {
-			// Fall back to active provider (only if no override)
-			if providerOverride == "" {
-				provider = getActiveProvider(config)
-			}
+		// Determine which provider to use using the Provider interface
+		// getProvider returns nil only for unknown providers
+		provider := getProvider(config, providerOverride)
+
+		// Validate provider - getProvider returns nil for unknown providers
+		if providerOverride != "" && provider == nil {
+			return fmt.Errorf("unknown provider: %s (available providers: %v)", providerOverride, getProviderNames(config))
 		}
 
 		// Apply provider env in the following cases:
@@ -1061,16 +1129,14 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 
 		// Ensure provider settings have trusted directories configured
 		// This prevents "Do you trust the files in this folder?" prompts
-		// Do this whenever we have a provider config (even if not applying env)
-		if provider != nil {
-			if err := ensureProviderSettings(provider); err != nil {
-				listenLog("Failed to update provider settings: %v", err)
-			}
+		// Works with both BuiltinProvider and ConfiguredProvider
+		if err := ensureProviderSettings(provider); err != nil {
+			listenLog("Failed to update provider settings: %v", err)
 		}
 
 		if shouldApplyProviderEnv {
-			cmd.Env = applyProviderEnv(cmd.Env, provider)
-			listenLog("Applying provider env: providerOverride=%q resumeSessionID=%q", providerOverride, resumeSessionID)
+			cmd.Env = applyProviderEnv(cmd.Env, provider, config)
+			listenLog("Applying provider env: providerOverride=%q resumeSessionID=%q provider=%q", providerOverride, resumeSessionID, provider.Name())
 		} else {
 			listenLog("Preserving original session environment for resumeSessionID=%q", resumeSessionID)
 		}

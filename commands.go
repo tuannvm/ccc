@@ -199,8 +199,8 @@ func runClaude(prompt string) (string, error) {
 	// Load config and apply provider settings
 	config, err := loadConfig()
 	if err == nil {
-		provider := getActiveProvider(config)
-		cmd.Env = applyProviderEnv(cmd.Env, provider)
+		provider := getProvider(config, "")
+		cmd.Env = applyProviderEnv(cmd.Env, provider, config)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -1248,24 +1248,16 @@ func listen() error {
 						if current == "" {
 							current = config.ActiveProvider
 							if current == "" {
-								current = "default"
+								current = "anthropic" // Default builtin provider
 							}
 						}
 
-						// Show keyboard with providers (always include anthropic)
+						// Show keyboard with all available providers
 						var buttons [][]InlineKeyboardButton
 
-						// Add anthropic first (built-in default)
-						label := "anthropic"
-						if current == "anthropic" || (sessionInfo.ProviderName == "" && (config.ActiveProvider == "" || config.ActiveProvider == "anthropic")) {
-							label += " ✓"
-						}
-						buttons = append(buttons, []InlineKeyboardButton{
-							{Text: label, CallbackData: fmt.Sprintf("provider:%s:anthropic", sessName)},
-						})
-
-						// Add configured providers
-						for name := range config.Providers {
+						// Get all providers (builtin + configured)
+						providerNames := getProviderNames(config)
+						for _, name := range providerNames {
 							label := name
 							if current == name || (sessionInfo.ProviderName == "" && config.ActiveProvider == name) {
 								label += " ✓"
@@ -1286,20 +1278,18 @@ func listen() error {
 				var msg []string
 				msg = append(msg, "📋 Available providers:")
 
-				// Always show anthropic as built-in default
-				active := ""
-				if config.ActiveProvider == "" || config.ActiveProvider == "anthropic" {
-					active = " (active)"
-				}
-				msg = append(msg, fmt.Sprintf("  • anthropic%s (built-in, uses default env vars)", active))
-
-				// Show configured providers
-				if config.Providers != nil {
-					for name := range config.Providers {
-						active := ""
-						if config.ActiveProvider == name {
-							active = " (active)"
-						}
+				// Get all providers (builtin + configured)
+				providerNames := getProviderNames(config)
+				for _, name := range providerNames {
+					active := ""
+					// Mark provider as active if it's the configured active provider
+					// OR if no active provider is configured and this is "anthropic" (the default)
+					if config.ActiveProvider == name || (config.ActiveProvider == "" && name == "anthropic") {
+						active = " (active)"
+					}
+					if name == "anthropic" {
+						msg = append(msg, fmt.Sprintf("  • %s%s (built-in, uses default env vars)", name, active))
+					} else {
 						msg = append(msg, fmt.Sprintf("  • %s%s", name, active))
 					}
 				}
@@ -1557,15 +1547,12 @@ func listen() error {
 						providerName = strings.TrimSpace(parts[1])
 					}
 
-					// Validate provider if specified (anthropic is always valid)
-					if providerName != "" && providerName != "anthropic" && config.Providers != nil {
-						if _, exists := config.Providers[providerName]; !exists {
-							// List available providers (including anthropic)
-							var available []string
-							available = append(available, "anthropic")
-							for name := range config.Providers {
-								available = append(available, name)
-							}
+					// Validate provider if specified using getProvider()
+					if providerName != "" {
+						provider := getProvider(config, providerName)
+						if provider == nil {
+							// List available providers
+							available := getProviderNames(config)
 							msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 								providerName, strings.Join(available, ", "))
 							sendMessage(config, chatID, threadID, msg)
@@ -1582,20 +1569,12 @@ func listen() error {
 							continue
 						}
 
-						// Build provider selection keyboard (always include anthropic)
+						// Build provider selection keyboard using getProviderNames()
 						var buttons [][]InlineKeyboardButton
 
-						// Add anthropic first (built-in default)
-						label := "anthropic"
-						if config.ActiveProvider == "" || config.ActiveProvider == "anthropic" {
-							label += " ⭐"
-						}
-						buttons = append(buttons, []InlineKeyboardButton{
-							{Text: label, CallbackData: fmt.Sprintf("new:%s:anthropic", sessionName)},
-						})
-
-						// Add configured providers
-						for name := range config.Providers {
+						// Get all providers (builtin + configured)
+						providerNames := getProviderNames(config)
+						for _, name := range providerNames {
 							label := name
 							if config.ActiveProvider == name {
 								label += " ⭐"
@@ -1961,29 +1940,22 @@ func handleProviderChange(config *Config, cb *CallbackQuery, sessionName, provid
 		return
 	}
 
-	// Validate provider (anthropic is always valid)
-	if providerName != "anthropic" {
-		if config.Providers == nil {
-			if cb.Message != nil {
-				editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
-					"❌ No providers configured.")
-			}
-			return
+	// Validate provider using getProvider()
+	// getProvider returns nil for unknown providers
+	provider := getProvider(config, providerName)
+	if provider == nil {
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("❌ Provider '%s' not found. Available: %v", providerName, getProviderNames(config)))
 		}
-		if _, exists := config.Providers[providerName]; !exists {
-			if cb.Message != nil {
-				editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
-					fmt.Sprintf("❌ Provider '%s' not found.", providerName))
-			}
-			return
-		}
+		return
 	}
 
 	// Update session provider
 	session.ProviderName = providerName
 	saveConfig(config)
 
-	resultMsg := fmt.Sprintf("✅ Provider changed to %s for session '%s'\n\nRestart with /new to apply the new provider.", providerName, sessionName)
+	resultMsg := fmt.Sprintf("✅ Provider changed to %s for session '%s'\n\nRestart with /new to apply the new provider.", provider.Name(), sessionName)
 	if cb.Message != nil {
 		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
 	}

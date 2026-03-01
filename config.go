@@ -134,7 +134,24 @@ func saveConfig(config *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(getConfigPath(), data, 0600)
+	// Atomic write: use unique temp file + rename to prevent concurrent write corruption
+	// Multiple ccc processes (listener, hooks, CLI) may write config simultaneously
+	// Using unique temp filename prevents race conditions where multiple processes
+	// use the same .tmp file and one process's rename causes another to fail
+	configPath := getConfigPath()
+	tmpFile, err := os.CreateTemp(filepath.Dir(configPath), "config-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+	return os.Rename(tmpFile.Name(), configPath)
 }
 
 // getProjectsDir returns the base directory for projects
@@ -193,15 +210,65 @@ func getActiveProvider(config *Config) *ProviderConfig {
 	return config.Provider
 }
 
+// getProviderNames returns a list of configured provider names
+// Includes the builtin 'anthropic' provider and all configured providers
+func getProviderNames(config *Config) []string {
+	var names []string
+	// Always include anthropic as a built-in option
+	names = append(names, "anthropic")
+	// Add configured providers
+	if config.Providers != nil {
+		for name := range config.Providers {
+			if name != "anthropic" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// getProvider returns a Provider interface for the given provider name
+// If name is empty, returns the active provider (or builtin if none active)
+// Returns nil if provider name is specified but not found
+func getProvider(config *Config, name string) Provider {
+	if name == "" {
+		// No specific name requested - use active provider or builtin
+		if config.ActiveProvider != "" && config.Providers != nil {
+			if p := config.Providers[config.ActiveProvider]; p != nil {
+				return ConfiguredProvider{name: config.ActiveProvider, config: p}
+			}
+		}
+		// Legacy fallback: check config.Provider (old single-provider config)
+		if config.Provider != nil {
+			return ConfiguredProvider{name: "legacy", config: config.Provider}
+		}
+		return BuiltinProvider{}
+	}
+
+	// Specific name requested
+	if name == "anthropic" {
+		return BuiltinProvider{}
+	}
+
+	if config.Providers != nil {
+		if p := config.Providers[name]; p != nil {
+			return ConfiguredProvider{name: name, config: p}
+		}
+	}
+
+	// Unknown provider
+	return nil
+}
+
 // ensureProviderSettings updates the provider's settings.json with trusted directories
 // This prevents the "Do you trust the files in this folder?" prompt
-func ensureProviderSettings(provider *ProviderConfig) error {
-	if provider == nil || provider.ConfigDir == "" {
+func ensureProviderSettings(provider Provider) error {
+	if provider == nil || provider.ConfigDir() == "" {
 		return nil // No provider config dir, nothing to do
 	}
 
 	// Expand ~ in config dir path
-	configDir := provider.ConfigDir
+	configDir := provider.ConfigDir()
 	if configDir == "~" || configDir == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
