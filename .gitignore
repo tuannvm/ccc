@@ -1,5 +1,6 @@
 # Binaries
 ccc
+ccc-test
 *.exe
 
 # Test coverage
