@@ -1616,6 +1616,12 @@ func listen() error {
 						ProviderName: providerName,
 					}
 					saveConfig(config)
+
+					// Ensure hooks are installed in the project directory
+					if err := ensureHooksForSession(config, sessionName, config.Sessions[sessionName]); err != nil {
+						listenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
+					}
+
 					if _, err := os.Stat(workDir); os.IsNotExist(err) {
 						os.MkdirAll(workDir, 0755)
 					}
@@ -1651,6 +1657,11 @@ func listen() error {
 					}
 					// Use stored Claude session ID to resume existing conversation
 					resumeSessionID := sessionInfo.ClaudeSessionID
+
+					// Ensure hooks are installed before resuming
+					if err := ensureHooksForSession(config, sessionName, sessionInfo); err != nil {
+						listenLog("[/new] Failed to verify/install hooks for %s: %v", sessionName, err)
+					}
 
 					if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
@@ -1730,6 +1741,11 @@ func listen() error {
 				}
 				saveConfig(config)
 
+				// Ensure hooks are installed in the base project directory
+				if err := ensureHooksForSession(config, worktreeSessionName, config.Sessions[worktreeSessionName]); err != nil {
+					listenLog("[/worktree] Failed to install hooks for %s: %v", worktreeSessionName, err)
+				}
+
 				// Switch to the worktree session in the single ccc window
 				// Use basePath for cd (worktree dir is created by Claude Code with --worktree flag)
 				if err := switchSessionInWindow(worktreeSessionName, basePath, providerName, "", worktreeName, false, false); err != nil {
@@ -1775,6 +1791,11 @@ func listen() error {
 
 						// Use stored Claude session ID to resume existing conversation
 						resumeSessionID := sessionInfo.ClaudeSessionID
+
+						// Ensure hooks are installed before resuming session
+						if err := ensureHooksForSession(config, sessName, sessionInfo); err != nil {
+							listenLog("[sendToTmux] Failed to verify/install hooks for %s: %v", sessName, err)
+						}
 
 						// Switch to the session in the single ccc window (always restart when switching sessions)
 						if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
@@ -1980,6 +2001,8 @@ COMMANDS:
     setgroup                Configure Telegram group for topics (if skipped during setup)
     listen                  Start the Telegram bot listener manually
     install                 Install Claude hook manually
+    uninstall               Uninstall CCC (deprecated - hooks now per-project)
+    cleanup-hooks           Remove old ccc hooks from global config
     send <file>             Send file to current session's Telegram topic
     relay [port]            Start relay server for large files (default: 8080)
     run                     Run Claude directly (used by tmux sessions)

@@ -90,12 +90,7 @@ func createSession(config *Config, name string) error {
 		os.MkdirAll(workDir, 0755)
 	}
 
-	// Switch to the new session in the single ccc window
-	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
-	}
-
-	// Save mapping with full path (no WindowID needed for single window)
+	// Save session info first (needed for ensureHooksForSession)
 	config.Sessions[name] = &SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
@@ -103,6 +98,16 @@ func createSession(config *Config, name string) error {
 	}
 	if err := saveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Ensure hooks are installed in the project directory
+	if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
+		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
+	}
+
+	// Switch to the new session in the single ccc window
+	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
 	}
 
 	return nil
@@ -172,8 +177,21 @@ func startSession(continueSession bool) error {
 					ProviderName: providerName,
 				}
 				saveConfig(config)
+
+				// Ensure hooks are installed in the project directory
+				if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
+					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
+				}
+
 				fmt.Printf("📱 Created Telegram topic: %s\n", name)
 			}
+		}
+	}
+
+	// For existing sessions, ensure hooks are present (both for new and existing sessions)
+	if config.Sessions[name] != nil {
+		if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
+			fmt.Printf("⚠️ Failed to verify/install hooks: %v\n", err)
 		}
 	}
 
@@ -266,6 +284,11 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 	if err := saveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Ensure hooks are installed in the project directory
+	if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
+		return fmt.Errorf("failed to install hooks: %w", err)
 	}
 
 	// Get the ccc window target

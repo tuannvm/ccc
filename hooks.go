@@ -913,53 +913,78 @@ func removeCccHooks(hookArray []interface{}) []interface{} {
 }
 
 func installHook() error {
-	home, _ := os.UserHomeDir()
-	defaultSettingsPath := filepath.Join(home, ".claude", "settings.json")
-
-	// First, load config to get all provider config dirs
-	config, err := loadConfig()
-	installedCount := 0
-	configDirs := make(map[string]bool)
-
-	if err == nil && config.Providers != nil {
-		// Collect all unique config dirs
-		for _, provider := range config.Providers {
-			if provider.ConfigDir != "" {
-				// Expand ~
-				configDir := provider.ConfigDir
-				if strings.HasPrefix(configDir, "~/") {
-					configDir = filepath.Join(home, configDir[2:])
-				} else if configDir == "~" {
-					configDir = home
-				}
-				configDirs[configDir] = true
-			}
-		}
-
-		// Install hooks in each provider config dir
-		for configDir := range configDirs {
-			providerSettingsPath := filepath.Join(configDir, "settings.json")
-			if err := installHooksToPath(providerSettingsPath); err != nil {
-				fmt.Printf("⚠️ Failed to install hooks to %s: %v\n", configDir, err)
-			} else {
-				fmt.Printf("✅ Hooks installed to %s\n", configDir)
-				installedCount++
-			}
-		}
-	}
-
-	// Always install to default ~/.claude
-	if err := installHooksToPath(defaultSettingsPath); err != nil {
-		return err
-	}
-	installedCount++
-	fmt.Printf("✅ Hooks installed to %s\n", defaultSettingsPath)
-
-	fmt.Printf("✅ Claude hooks installed to %d location(s)!\n", installedCount)
+	// NOTE: Hook installation is now done per-project via installHooksForProject()
+	// This global install function is kept for backward compatibility but does nothing
+	fmt.Println("⚠️ Global hook installation is deprecated. Hooks are now installed per-project automatically.")
+	fmt.Println("💡 Hooks will be automatically installed when you create or resume a session.")
 	return nil
 }
 
-func installHooksToPath(settingsPath string) error {
+// installHooksForProject installs ccc hooks to a project's .claude/settings.local.json
+func installHooksForProject(projectPath string) error {
+	settingsLocalPath := filepath.Join(projectPath, ".claude", "settings.local.json")
+
+	// Ensure .claude directory exists
+	claudeDir := filepath.Dir(settingsLocalPath)
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .claude directory: %w", err)
+	}
+
+	// Install hooks
+	if err := installHooksToPath(settingsLocalPath, true); err != nil {
+		return fmt.Errorf("failed to install hooks to %s: %w", settingsLocalPath, err)
+	}
+
+	hookLog("install-hooks: installed to %s", settingsLocalPath)
+	return nil
+}
+
+// verifyHooksForProject checks if ccc hooks are present in a project's .claude/settings.local.json
+func verifyHooksForProject(projectPath string) bool {
+	settingsLocalPath := filepath.Join(projectPath, ".claude", "settings.local.json")
+
+	data, err := os.ReadFile(settingsLocalPath)
+	if err != nil {
+		hookLog("verify-hooks: no settings.local.json at %s", settingsLocalPath)
+		return false
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		hookLog("verify-hooks: failed to parse settings.local.json: %v", err)
+		return false
+	}
+
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		hookLog("verify-hooks: no hooks in settings.local.json")
+		return false
+	}
+
+	// Check if ccc hooks are present
+	hasCccHooks := false
+	requiredHooks := []string{"PreToolUse", "Stop", "UserPromptSubmit", "Notification"}
+
+	for _, hookType := range requiredHooks {
+		if hookEntries, exists := hooks[hookType].([]interface{}); exists {
+			for _, entry := range hookEntries {
+				if entryMap, ok := entry.(map[string]interface{}); ok {
+					if cmd, ok := entryMap["command"].(string); ok {
+						if strings.Contains(cmd, "ccc hook-") {
+							hasCccHooks = true
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	hookLog("verify-hooks: hasCccHooks=%v for %s", hasCccHooks, projectPath)
+	return hasCccHooks
+}
+
+func installHooksToPath(settingsPath string, isLocal bool) error {
 	// Ensure directory exists
 	settingsDir := filepath.Dir(settingsPath)
 	if err := os.MkdirAll(settingsDir, 0755); err != nil {
@@ -973,7 +998,7 @@ func installHooksToPath(settingsPath string) error {
 		// File doesn't exist, create empty settings
 		settings = make(map[string]interface{})
 	} else if err := json.Unmarshal(data, &settings); err != nil {
-		return fmt.Errorf("failed to parse settings.json: %w", err)
+		return fmt.Errorf("failed to parse settings: %w", err)
 	}
 
 	hooks, ok := settings["hooks"].(map[string]interface{})
@@ -1036,26 +1061,42 @@ func installHooksToPath(settingsPath string) error {
 		},
 	}
 
-	// Remove ALL existing ccc hooks from all hook types
-	allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
-	for _, hookType := range allHookTypes {
-		if existing, ok := hooks[hookType].([]interface{}); ok {
-			filtered := removeCccHooks(existing)
-			if len(filtered) == 0 {
-				delete(hooks, hookType)
-			} else {
-				hooks[hookType] = filtered
+	// For settings.local.json, we completely replace hooks (not merge)
+	// This ensures only ccc hooks are in the project-local settings
+	if isLocal {
+		// Remove ALL existing ccc hooks from all hook types (clean slate)
+		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+		for _, hookType := range allHookTypes {
+			delete(hooks, hookType)
+		}
+
+		// Add only our hooks (no merging)
+		for hookType, newHooks := range cccHooks {
+			hooks[hookType] = newHooks
+		}
+	} else {
+		// Legacy behavior for global settings: merge with existing hooks
+		// Remove ALL existing ccc hooks from all hook types
+		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+		for _, hookType := range allHookTypes {
+			if existing, ok := hooks[hookType].([]interface{}); ok {
+				filtered := removeCccHooks(existing)
+				if len(filtered) == 0 {
+					delete(hooks, hookType)
+				} else {
+					hooks[hookType] = filtered
+				}
 			}
 		}
-	}
 
-	// Add only the hooks we need
-	for hookType, newHooks := range cccHooks {
-		var existingHooks []interface{}
-		if existing, ok := hooks[hookType].([]interface{}); ok {
-			existingHooks = existing
+		// Add only the hooks we need
+		for hookType, newHooks := range cccHooks {
+			var existingHooks []interface{}
+			if existing, ok := hooks[hookType].([]interface{}); ok {
+				existingHooks = existing
+			}
+			hooks[hookType] = append(newHooks, existingHooks...)
 		}
-		hooks[hookType] = append(newHooks, existingHooks...)
 	}
 
 	settings["hooks"] = hooks
@@ -1066,19 +1107,30 @@ func installHooksToPath(settingsPath string) error {
 	}
 
 	if err := os.WriteFile(settingsPath, newData, 0600); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
+		return fmt.Errorf("failed to write settings: %w", err)
 	}
 
 	return nil
 }
 
 func uninstallHook() error {
+	// NOTE: Per-project hooks are managed via settings.local.json in each project
+	// This global uninstall function is kept for backward compatibility but does nothing
+	fmt.Println("⚠️ Global hook uninstallation is deprecated.")
+	fmt.Println("💡 To remove hooks from a project, delete the .claude/settings.local.json file in that project.")
+	fmt.Println("💡 To cleanup old global hooks, use: ccc cleanup-hooks")
+	return nil
+}
+
+// cleanupGlobalHooks removes ccc hooks from global config files
+// This is used to clean up old installations that installed hooks to global settings
+func cleanupGlobalHooks() error {
 	home, _ := os.UserHomeDir()
 	defaultSettingsPath := filepath.Join(home, ".claude", "settings.json")
 
 	// Load config to get all provider config dirs
 	config, err := loadConfig()
-	uninstalledCount := 0
+	cleanedCount := 0
 	configDirs := make(map[string]bool)
 
 	if err == nil && config.Providers != nil {
@@ -1095,30 +1147,51 @@ func uninstallHook() error {
 				configDirs[configDir] = true
 			}
 		}
+	}
 
-		// Uninstall hooks from each provider config dir
-		for configDir := range configDirs {
-			providerSettingsPath := filepath.Join(configDir, "settings.json")
-			if _, err := os.Stat(providerSettingsPath); err == nil {
-				if err := uninstallHooksFromPath(providerSettingsPath); err != nil {
-					fmt.Printf("⚠️ Failed to uninstall hooks from %s: %v\n", configDir, err)
-				} else {
-					fmt.Printf("✅ Hooks uninstalled from %s\n", configDir)
-					uninstalledCount++
-				}
+	// Cleanup hooks from each provider config dir
+	for configDir := range configDirs {
+		providerSettingsPath := filepath.Join(configDir, "settings.json")
+		if _, err := os.Stat(providerSettingsPath); err == nil {
+			if err := uninstallHooksFromPath(providerSettingsPath); err != nil {
+				fmt.Printf("⚠️ Failed to cleanup hooks from %s: %v\n", configDir, err)
+			} else {
+				fmt.Printf("✅ Cleaned up hooks from %s\n", configDir)
+				cleanedCount++
 			}
 		}
 	}
 
-	// Always uninstall from default ~/.claude
-	if err := uninstallHooksFromPath(defaultSettingsPath); err != nil {
-		return err
+	// Always cleanup from default ~/.claude
+	if _, err := os.Stat(defaultSettingsPath); err == nil {
+		if err := uninstallHooksFromPath(defaultSettingsPath); err != nil {
+			fmt.Printf("⚠️ Failed to cleanup hooks from %s: %v\n", defaultSettingsPath, err)
+		} else {
+			fmt.Printf("✅ Cleaned up hooks from %s\n", defaultSettingsPath)
+			cleanedCount++
+		}
 	}
-	uninstalledCount++
-	fmt.Printf("✅ Hooks uninstalled from %s\n", defaultSettingsPath)
 
-	fmt.Printf("✅ Claude hooks uninstalled from %d location(s)!\n", uninstalledCount)
+	if cleanedCount == 0 {
+		fmt.Println("✨ No global hooks found to cleanup")
+		return nil
+	}
+
+	fmt.Printf("✅ Cleaned up ccc hooks from %d location(s)\n", cleanedCount)
+	fmt.Println("💡 Hooks are now managed per-project in .claude/settings.local.json")
 	return nil
+}
+
+// uninstallHooksFromProject removes ccc hooks from a specific project's settings.local.json
+func uninstallHooksFromProject(projectPath string) error {
+	settingsLocalPath := filepath.Join(projectPath, ".claude", "settings.local.json")
+
+	// Check if file exists
+	if _, err := os.Stat(settingsLocalPath); os.IsNotExist(err) {
+		return nil // Nothing to uninstall
+	}
+
+	return uninstallHooksFromPath(settingsLocalPath)
 }
 
 // uninstallHooksFromPath removes ccc hooks from a specific settings.json file
@@ -1225,6 +1298,41 @@ func uninstallSkill() error {
 	home, _ := os.UserHomeDir()
 	skillPath := filepath.Join(home, ".claude", "skills", "ccc-send.md")
 	os.Remove(skillPath)
+	return nil
+}
+
+// ensureHooksForSession ensures ccc hooks are installed in the session's project directory
+// This should be called when a session is created or resumed
+func ensureHooksForSession(config *Config, sessionName string, sessionInfo *SessionInfo) error {
+	if sessionInfo == nil {
+		if config == nil || config.Sessions == nil {
+			return nil
+		}
+		sessionInfo = config.Sessions[sessionName]
+		if sessionInfo == nil {
+			return nil
+		}
+	}
+
+	// Get the project path for this session
+	projectPath := getSessionWorkDir(config, sessionName, sessionInfo)
+	if projectPath == "" {
+		return fmt.Errorf("unable to determine project path for session '%s'", sessionName)
+	}
+
+	// Check if hooks are already installed
+	if verifyHooksForProject(projectPath) {
+		hookLog("ensure-hooks: hooks already present for %s", projectPath)
+		return nil
+	}
+
+	// Install hooks to the project
+	hookLog("ensure-hooks: installing hooks to %s", projectPath)
+	if err := installHooksForProject(projectPath); err != nil {
+		return fmt.Errorf("failed to install hooks for project %s: %w", projectPath, err)
+	}
+
+	hookLog("ensure-hooks: hooks installed successfully for %s", projectPath)
 	return nil
 }
 
