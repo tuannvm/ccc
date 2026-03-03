@@ -1,4 +1,4 @@
-.PHONY: build build-voice install install-voice clean deps
+.PHONY: build build-voice install install-voice clean deps test
 
 PREFIX := $(CURDIR)/build/whisper
 BUILD_DIR := $(CURDIR)/build/cmake
@@ -64,3 +64,17 @@ install-voice: build-voice
 clean:
 	rm -f ccc
 	rm -rf build/
+
+# test: build, install, and restart the ccc service
+test: install
+	@echo "🔄 Restarting ccc service..."
+	@if [ "$(UNAME)" = "Darwin" ]; then \
+		launchctl unload ~/Library/LaunchAgents/com.ccc.plist 2>/dev/null || true; \
+		sleep 1; \
+		launchctl load ~/Library/LaunchAgents/com.ccc.plist; \
+		echo "✅ ccc service restarted (launchd)"; \
+	else \
+		systemctl --user daemon-reload 2>/dev/null || true; \
+		systemctl --user restart ccc.service 2>/dev/null || true; \
+		echo "✅ ccc service restarted (systemd)"; \
+	fi

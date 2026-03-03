@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -1112,6 +1113,20 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	// Load config and apply provider settings
 	config, err := loadConfig()
 	if err == nil {
+		// CRITICAL: Ensure hooks are installed in the current project directory
+		// Hooks are essential for ccc functionality (Telegram, OTP, tool tracking)
+		// We use cwd (current working directory) as the project path
+		sessionName := filepath.Base(cwd)
+		sessionInfo := &SessionInfo{Path: cwd}
+		if config.Sessions != nil {
+			if existing := config.Sessions[sessionName]; existing != nil {
+				sessionInfo = existing
+			}
+		}
+		if err := ensureHooksForSession(config, sessionName, sessionInfo); err != nil {
+			listenLog("Warning: Failed to ensure hooks in %s: %v", cwd, err)
+		}
+
 		// Determine which provider to use using the Provider interface
 		// getProvider returns nil only for unknown providers
 		provider := getProvider(config, providerOverride)

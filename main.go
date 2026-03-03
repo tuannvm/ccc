@@ -442,6 +442,12 @@ func main() {
 		uninstallSkill()
 		fmt.Println("✅ CCC uninstalled")
 
+	case "cleanup-hooks":
+		if err := cleanupGlobalHooks(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "send":
 		if len(os.Args) < 3 {
 			fmt.Fprintf(os.Stderr, "Usage: ccc send <file>\n")
