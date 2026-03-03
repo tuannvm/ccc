@@ -448,6 +448,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "install-hooks":
+		if err := installHooksToCurrentDir(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "send":
 		if len(os.Args) < 3 {
 			fmt.Fprintf(os.Stderr, "Usage: ccc send <file>\n")
@@ -478,7 +484,41 @@ func main() {
 		runRelayServer(port)
 
 	default:
-		if err := send(strings.Join(os.Args[1:], " ")); err != nil {
+		message := strings.Join(os.Args[1:], " ")
+
+		// If a message is provided, try to send it as a notification first (preserves old behavior)
+		if message != "" {
+			config, err := loadConfig()
+			if err == nil && config.Away {
+				// Away mode is on: send as notification to existing session
+				sendErr := send(message)
+				if sendErr == nil {
+					// Message sent successfully (to topic, private chat, or skipped because Away mode off)
+					return
+				}
+				// Send failed - determine if this is a config/setup error or transient error
+				// Config/setup errors should fall through to session creation
+				// Transient errors should exit immediately
+				errMsg := strings.ToLower(sendErr.Error())
+				isConfigError := strings.Contains(errMsg, "not configured") ||
+					strings.Contains(errMsg, "chat not found") ||
+					strings.Contains(errMsg, "unauthorized") ||
+					strings.Contains(errMsg, "forbidden") ||
+					strings.Contains(errMsg, "bad request")
+
+				if isConfigError {
+					// Config/setup error - fall through to session creation with helpful message
+					fmt.Fprintf(os.Stderr, "Note: %v\n", sendErr)
+				} else {
+					// Transient error (network, rate limit, etc.) - report it and don't fall through
+					fmt.Fprintf(os.Stderr, "Error: %v\n", sendErr)
+					os.Exit(1)
+				}
+			}
+		}
+
+		// Default behavior: start/attach to session in current directory
+		if err := startSessionInCurrentDir(message); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

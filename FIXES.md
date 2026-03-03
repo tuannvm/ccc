@@ -351,3 +351,89 @@ Enhanced detection of running Claude Code processes:
 - **Multiple methods**: Falls back through detection methods
 
 ---
+
+## Feature: install-hooks Command - March 3, 2026
+
+### Issue
+
+The documentation mentioned `ccc install-hooks` command but it didn't exist in the codebase. Users had no way to manually install hooks in their project directories.
+
+### Fix (PR #3)
+
+Added `install-hooks` command to manually install ccc hooks in the current project directory.
+
+**File:** `hooks.go`, function `installHooksToCurrentDir()`
+
+**New command:**
+```bash
+cd ~/myproject
+ccc install-hooks
+```
+
+This creates `.claude/settings.local.json` with the necessary hooks for:
+- `PreToolUse` - Permission requests
+- `Stop` - Session completion
+- `UserPromptSubmit` - User prompts
+- `Notification` - Claude notifications
+
+**Behavior:**
+- Checks if hooks are already installed (skips if present)
+- Creates `.claude/` directory if needed
+- Writes hooks to `.claude/settings.local.json`
+- Confirms installation location
+
+### When to Use
+
+1. **Manual installation**: Install hooks in an existing project
+2. **Troubleshooting**: Reinstall hooks if they're not working
+3. **Verification**: Check that hooks are properly installed
+
+**Note:** Hooks are also automatically installed when:
+- Creating a new session via `/new`
+- Starting a session via `ccc`
+- Running `ccc start`
+
+---
+
+## Issue: /new Command Requirements - March 3, 2026
+
+### Understanding the /new Command Behavior
+
+The `/new` command in Telegram has specific requirements that must be met for it to work properly.
+
+### Requirements
+
+1. **Supergroup Only**: `/new` only works in Telegram supergroups, not private chats
+   - Code: `isGroup := msg.Chat.Type == "supergroup"` (commands.go:927)
+   - Private messages are handled differently (use `ccc` from terminal for those)
+
+2. **GroupID Required**: The bot must be added to a group with topics enabled
+   - `GroupID != 0` is required for topic creation
+   - Run `ccc setgroup` to configure this
+   - Error: "no group configured. Add bot to a group with topics enabled and run: ccc setgroup"
+
+3. **Topics Enabled**: The Telegram group must have forum/topics feature enabled
+
+### Common Issues
+
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| No response to `/new` | Private chat (not supergroup) | Use in a group with topics enabled |
+| "no group configured" | GroupID not set | Run `ccc setgroup` |
+| "failed to create topic" | Bot doesn't have permission | Make bot admin in the group |
+| Topic created but Claude doesn't start | Hooks not installed | Run `ccc install-hooks` in project |
+
+### Expected Flow
+
+```
+1. User sends: /new myproject
+2. Bot checks: is supergroup? → YES
+3. Bot checks: GroupID configured? → YES
+4. Bot creates: Telegram topic "myproject"
+5. Bot saves: session config (topicID, path, provider)
+6. Bot installs: hooks to project directory
+7. Bot starts: tmux session with Claude
+8. Bot replies: "Session 'myproject' started!"
+```
+
+---
