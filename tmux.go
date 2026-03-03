@@ -707,6 +707,14 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 			// Target window already has Claude or shell running - skip respawn
 			// We can send commands directly without restarting
 			shouldRestart = false
+		} else {
+			// When skipRestart=true but we don't detect Claude or shell, be extra cautious
+			// This handles false negatives in detection where Claude is actually running
+			// Check for Claude prompt in the pane content as a fallback
+			if tmuxPaneHasActiveClaudePrompt(target) {
+				listenLog("skipRestart=true: Claude prompt detected in pane content (fallback detection)")
+				shouldRestart = false
+			}
 		}
 	}
 
@@ -786,23 +794,38 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 			// The user can continue their existing session
 			listenLog("Claude already running in target window, skipping command send")
 		} else if tmuxWindowHasShellRunning(target, "") {
-			// Shell is running - send the command to start Claude
-			fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
-			if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
-				return fmt.Errorf("failed to send command: %w", err)
+			// Shell is running - decide whether to start Claude
+			// When skipRestart=true, the caller indicates the session should already be usable
+			// This means Claude might be running but not properly detected (false negative)
+			// In this case, we should NOT send a restart command to avoid disrupting the session
+			if skipRestart {
+				listenLog("Shell detected with skipRestart=true - not sending restart command to preserve session state")
+			} else {
+				// Shell is running but no Claude - start Claude
+				fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+				if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+					return fmt.Errorf("failed to send command: %w", err)
+				}
 			}
 		} else {
-			// Pane is empty or has unknown process - respawn to get clean state
-			listenLog("Pane has unknown state, respawning for clean start")
-			if err := exec.Command(tmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
-				return fmt.Errorf("failed to respawn pane: %w", err)
-			}
+			// Pane is empty or has unknown process
+			// When skipRestart=true, be conservative and don't respawn
+			// The session might be in a transient state (Claude starting, tool running)
+			if skipRestart {
+				listenLog("Pane has unknown state but skipRestart=true - not respawning to preserve session state")
+			} else {
+				// Respawn to get clean state
+				listenLog("Pane has unknown state, respawning for clean start")
+				if err := exec.Command(tmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
+					return fmt.Errorf("failed to respawn pane: %w", err)
+				}
 
-			// Wait for respawn and send command
-			time.Sleep(500 * time.Millisecond)
-			fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
-			if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
-				return fmt.Errorf("failed to send command: %w", err)
+				// Wait for respawn and send command
+				time.Sleep(500 * time.Millisecond)
+				fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+				if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+					return fmt.Errorf("failed to send command: %w", err)
+				}
 			}
 		}
 	}
