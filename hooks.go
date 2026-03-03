@@ -1301,6 +1301,29 @@ func uninstallSkill() error {
 	return nil
 }
 
+// installHooksToCurrentDir installs ccc hooks to the current directory's .claude/settings.local.json
+// This is used by the 'ccc install-hooks' command
+func installHooksToCurrentDir() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Check if hooks are already installed
+	if verifyHooksForProject(cwd) {
+		fmt.Printf("✅ Hooks already installed in %s\n", cwd)
+		return nil
+	}
+
+	// Install hooks
+	if err := installHooksForProject(cwd); err != nil {
+		return fmt.Errorf("failed to install hooks: %w", err)
+	}
+
+	fmt.Printf("✅ Hooks installed to %s/.claude/settings.local.json\n", cwd)
+	return nil
+}
+
 // ensureHooksForSession ensures ccc hooks are installed in the session's project directory
 // This should be called when a session is created or resumed
 func ensureHooksForSession(config *Config, sessionName string, sessionInfo *SessionInfo) error {

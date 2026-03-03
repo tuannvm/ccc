@@ -2001,6 +2001,7 @@ COMMANDS:
     setgroup                Configure Telegram group for topics (if skipped during setup)
     listen                  Start the Telegram bot listener manually
     install                 Install Claude hook manually
+    install-hooks           Install hooks in current project directory
     uninstall               Uninstall CCC (deprecated - hooks now per-project)
     cleanup-hooks           Remove old ccc hooks from global config
     send <file>             Send file to current session's Telegram topic

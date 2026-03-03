@@ -9,6 +9,56 @@ import (
 
 const version = "1.7.0"
 
+// levenshteinDistance computes the edit distance between two strings
+// Used for detecting typos in command names
+// Handles Unicode correctly by converting strings to rune slices first
+func levenshteinDistance(a, b string) int {
+	// Convert to rune slices for proper Unicode handling
+	aRunes := []rune(a)
+	bRunes := []rune(b)
+
+	if len(aRunes) < len(bRunes) {
+		aRunes, bRunes = bRunes, aRunes
+	}
+	if len(bRunes) == 0 {
+		return len(aRunes)
+	}
+	previousRow := make([]int, len(bRunes)+1)
+	for i := range previousRow {
+		previousRow[i] = i
+	}
+	for i, ca := range aRunes {
+		currentRow := []int{i + 1}
+		for j, cb := range bRunes {
+			var cost int
+			if ca != cb {
+				cost = 1
+			}
+			currentRow = append(currentRow, min(
+				previousRow[j+1]+1,     // deletion
+				currentRow[j]+1,        // insertion
+				previousRow[j]+cost,    // substitution
+			))
+		}
+		previousRow = currentRow
+	}
+	return previousRow[len(bRunes)]
+}
+
+// min returns the minimum of three integers
+func min(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
 // SessionInfo stores information about a session
 type SessionInfo struct {
 	TopicID         int64  `json:"topic_id"`
@@ -448,6 +498,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "install-hooks":
+		if err := installHooksToCurrentDir(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "send":
 		if len(os.Args) < 3 {
 			fmt.Fprintf(os.Stderr, "Usage: ccc send <file>\n")
@@ -478,7 +534,60 @@ func main() {
 		runRelayServer(port)
 
 	default:
-		if err := send(strings.Join(os.Args[1:], " ")); err != nil {
+		// Validate that args[1] doesn't look like a typo'd command
+		// (e.g., "lisetn" instead of "listen", "hepl" instead of "help")
+		// We use an allowlist of known CLI commands to detect likely typos.
+		// Only single-word arguments are checked; multi-word arguments are treated as prompts.
+		if len(os.Args) == 2 {
+			potentialCmd := os.Args[1]
+			// Known CLI commands for typo detection (NOT Telegram commands)
+			// These are the actual top-level commands in the switch statement
+			knownCommands := []string{
+				"help", "doctor", "install-hooks", "listen", "setgroup",
+				"setprovider", "cleanup-hooks", "hook-permission", "hook-question",
+				"hook-stop", "hook-stop-retry", "start", "relay", "install",
+				"uninstall", "setup", "config", "get", "set", "version",
+			}
+			// Check if this looks like a typo of a known command (Levenshtein distance == 1)
+			// We only flag exact typos (distance 1) to avoid false positives on valid words
+			if !strings.Contains(potentialCmd, "/") && !strings.Contains(potentialCmd, ".") &&
+			   potentialCmd != "" && !strings.HasPrefix(potentialCmd, "-") && len(potentialCmd) > 3 {
+				for _, cmd := range knownCommands {
+					if levenshteinDistance(potentialCmd, cmd) == 1 {
+						// This looks like a typo'd command - show error
+						fmt.Fprintf(os.Stderr, "Error: unknown command '%s' (did you mean '%s'?)\n\n", potentialCmd, cmd)
+						fmt.Fprintln(os.Stderr, "Available commands:")
+						fmt.Fprintln(os.Stderr, "  ccc help          - Show this help message")
+						fmt.Fprintln(os.Stderr, "  ccc doctor        - Run diagnostics")
+						fmt.Fprintln(os.Stderr, "  ccc install-hooks - Install hooks in current project")
+						fmt.Fprintln(os.Stderr, "  ccc listen        - Listen for Telegram messages")
+						fmt.Fprintln(os.Stderr, "  ccc setgroup      - Set Telegram group for notifications")
+						fmt.Fprintln(os.Stderr, "  ccc setprovider   - Set AI provider")
+						fmt.Fprintln(os.Stderr, "  ccc cleanup-hooks - Remove ccc hooks from project")
+						fmt.Fprintln(os.Stderr, "\nOr run 'ccc' without arguments to start a session.")
+						fmt.Fprintln(os.Stderr, "\nYou can also pass a message to send: ccc <message>")
+						os.Exit(1)
+					}
+				}
+			}
+		}
+
+		message := strings.Join(os.Args[1:], " ")
+
+		// If a message is provided, try to send it as a notification first (preserves old behavior)
+		if message != "" {
+			config, err := loadConfig()
+			if err == nil && config.Away {
+				// Away mode is on: send as notification to existing session
+				if err := send(message); err == nil {
+					return
+				}
+				// If send failed (e.g., no matching session), fall through to session creation
+			}
+		}
+
+		// Default behavior: start/attach to session in current directory
+		if err := startSessionInCurrentDir(message); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

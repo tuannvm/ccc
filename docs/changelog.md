@@ -6,6 +6,15 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 
 ### Added
 - Documentation website with architecture, configuration, and usage guides
+- `ccc install-hooks` command for manual hook installation in current project directory
+  - Installs hooks to `.claude/settings.local.json`
+  - Checks if hooks are already installed before proceeding
+  - Useful for troubleshooting and manual setup
+
+### Fixed
+- **Hooks installation documentation**: The `install-hooks` command mentioned in docs but not implemented has now been added (PR #3)
+- **`/new` command requirements**: Documented that `/new` only works in supergroups, not private chats
+- **GroupID requirement**: Clarified that `ccc setgroup` must be run before `/new` will work
 
 ## [1.2.1] - 2026-03-03
 
