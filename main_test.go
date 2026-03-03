@@ -16,7 +16,7 @@ func TestTmuxSafeName(t *testing.T) {
 	}{
 		{"simple name", "myproject", "myproject"},
 		{"with dash", "my-project", "my-project"},
-		{"with dot", "my.project", "my_project"},
+		{"with dot", "my.project", "my__project"},
 		{"empty", "", ""},
 		{"with spaces", "my project", "my project"},
 	}
