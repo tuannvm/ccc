@@ -24,7 +24,7 @@ The main configuration file is stored at:
       "topic_id": 42,
       "path": "/home/user/Projects/myproject",
       "claude_session_id": "sess_abc123",
-      "provider_name": "anthropic"
+      "provider_name": "default"
     }
   },
   "projects_dir": "~/Projects",
@@ -33,27 +33,27 @@ The main configuration file is stored at:
   "away": false,
   "oauth_token": "",
   "otp_secret": "",
-  "active_provider": "anthropic",
+  "active_provider": "",
   "providers": {
-    "anthropic": {
-      "base_url": "https://api.anthropic.com",
-      "auth_env_var": "ANTHROPIC_API_KEY",
+    "example-provider": {
+      "base_url": "https://api.example.com/v1",
+      "auth_env_var": "EXAMPLE_API_KEY",
       "opus_model": "claude-3-opus-20250214",
       "sonnet_model": "claude-3-7-sonnet-20250214",
       "haiku_model": "claude-3-5-haiku-20250214",
       "subagent_model": "claude-3-5-haiku-20250214",
       "config_dir": "~/.claude",
       "api_timeout": 120000
-    },
-    "zai": {
-      "base_url": "https://api.zai.ai/v1",
-      "auth_env_var": "ZAI_API_KEY",
-      "sonnet_model": "claude-3-7-sonnet-20250214",
-      "config_dir": "~/.zai"
     }
   }
 }
 ```
+
+**Note:** The example above shows a custom provider configuration. In practice, you would:
+- Replace `example-provider` with your provider name
+- Replace `base_url` with your provider's API endpoint
+- Replace `auth_env_var` with your environment variable name
+- Adjust model names to match your provider's offerings
 
 ## Configuration Fields
 
@@ -76,7 +76,7 @@ The main configuration file is stored at:
 | `away` | bool | `false` | Enable notification mode |
 | `oauth_token` | string | - | Claude Code OAuth token |
 | `otp_secret` | string | - | TOTP secret for permission approval |
-| `active_provider` | string | `anthropic` | Default provider for new sessions |
+| `active_provider` | string | (empty) | Default provider for new sessions (empty = builtin) |
 | `providers` | map | `{}` | Named provider configurations |
 
 ## Session Configuration
@@ -88,7 +88,7 @@ Each session in the `sessions` map has the following structure:
   "topic_id": 42,
   "path": "/home/user/Projects/myproject",
   "claude_session_id": "sess_abc123",
-  "provider_name": "anthropic",
+  "provider_name": "default",
   "is_worktree": false,
   "worktree_name": "",
   "base_session": ""
@@ -144,30 +144,34 @@ graph TD
 
 ### Builtin Provider
 
-The builtin provider (`anthropic`) uses Claude Code's default configuration:
+The builtin provider uses Claude Code's default configuration:
 
 - Uses `CLAUDE_API_KEY` or Claude's OAuth
-- Respects `ANTHROPIC_BASE_URL` environment variable
+- Respects `ANTHROPIC_BASE_URL` environment variable (if set)
 - Uses Claude Code's default model configuration
 - Uses Claude Code's default config directory (`~/.claude`)
 
+This is the default option and requires no additional configuration.
+
 ### Configured Provider
 
-Configured providers override Claude Code defaults:
+Configured providers allow you to use different AI services or custom endpoints:
 
 ```json
 {
   "providers": {
-    "zai": {
-      "base_url": "https://api.zai.ai/v1",
-      "auth_env_var": "ZAI_API_KEY",
+    "custom-provider": {
+      "base_url": "https://api.example.com/v1",
+      "auth_env_var": "MY_API_KEY",
       "sonnet_model": "claude-3-7-sonnet-20250214",
-      "config_dir": "~/.zai"
+      "config_dir": "~/.custom-provider"
     }
   },
-  "active_provider": "zai"
+  "active_provider": "custom-provider"
 }
 ```
+
+**Note:** Replace `custom-provider`, `base_url`, and other values with your specific provider details.
 
 **Environment Variable Expansion:**
 
@@ -307,7 +311,7 @@ ccc config otp disable                # Disable OTP mode
 
 ```bash
 ccc providers                # List all providers
-ccc providers --set-active zai    # Set active provider
+ccc providers --set-active <provider-name>    # Set active provider
 ```
 
 ## Environment Variables
@@ -343,18 +347,18 @@ ccc respects the following environment variables:
   "relay_url": "https://ccc-relay.example.com",
   "away": false,
   "otp_secret": "JBSWY3DPEHPK3PXP",
-  "active_provider": "anthropic",
+  "active_provider": "example-provider",
   "providers": {
-    "anthropic": {
-      "auth_env_var": "ANTHROPIC_API_KEY",
+    "example-provider": {
+      "auth_env_var": "EXAMPLE_API_KEY",
       "sonnet_model": "claude-3-7-sonnet-20250214",
       "haiku_model": "claude-3-5-haiku-20250214"
     },
-    "zai": {
-      "base_url": "https://api.zai.ai/v1",
-      "auth_env_var": "ZAI_API_KEY",
+    "alternative-provider": {
+      "base_url": "https://api.example.com/v1",
+      "auth_env_var": "ALT_API_KEY",
       "sonnet_model": "claude-3-7-sonnet-20250214",
-      "config_dir": "~/.zai"
+      "config_dir": "~/.alt-provider"
     }
   },
   "sessions": {
@@ -362,7 +366,7 @@ ccc respects the following environment variables:
       "topic_id": 42,
       "path": "/home/user/Projects/myproject",
       "claude_session_id": "sess_abc123",
-      "provider_name": "anthropic"
+      "provider_name": "example-provider"
     }
   }
 }

@@ -96,8 +96,9 @@ You're now attached to the same session and can continue working.
 
 **Session with specific provider:**
 ```
-/new myproject@zai
+/new myproject@provider-name
 ```
+Replace `provider-name` with your configured provider.
 
 **Session with custom path:**
 ```
@@ -152,37 +153,41 @@ ccc delete myproject
 Response:
 ```
 Available providers:
-• anthropic (builtin)
-• zai
-• openai
+• default (builtin)
+• provider-name-1
+• provider-name-2
 
-Active: zai
+Active: provider-name-1
 ```
+
+Use inline buttons or provider names to switch between configured providers.
 
 ### Changing Provider for Current Session
 
 ```
-/provider anthropic
+/provider
 ```
 
-This shows inline buttons for quick provider selection.
+This shows inline buttons for quick provider selection. Choose a provider from the list to switch.
 
 ### Creating a Session with Specific Provider
 
 ```
-/new myproject@anthropic
+/new myproject@provider-name
 ```
+
+Replace `provider-name` with your configured provider. Use the `/providers` command to see available providers.
 
 ### Setting Default Provider
 
 ```bash
-ccc config providers --set-active zai
+ccc config providers --set-active provider-name
 ```
 
 Or edit `~/.config/ccc/config.json`:
 ```json
 {
-  "active_provider": "zai"
+  "active_provider": "provider-name"
 }
 ```
 
@@ -265,9 +270,8 @@ For large files, you'll receive a download link that streams directly from your 
 **Transcription backends:**
 
 Set via `transcription_cmd` in config:
-- **Local Whisper**: `~/bin/transcribe-whisper`
-- **Groq API**: `~/bin/transcribe-groq` (recommended, fastest)
-- **OpenAI API**: `~/bin/transcribe-openai`
+- **Local Whisper**: Run locally using your machine
+- **API Services**: Fast cloud transcription (choose your preferred service)
 
 ### Image Support
 
@@ -425,9 +429,10 @@ ccc
 
 ### Provider Selection
 
-- Use `anthropic` (builtin) for standard Claude access
-- Use custom providers (e.g., `zai`) for specialized models
+- Use the builtin provider for standard Claude access
+- Use custom providers for specialized models or alternative APIs
 - Set `active_provider` in config for your default
+- All providers are treated equally - no hardcoded preferences
 
 ### Hook Management
 

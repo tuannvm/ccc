@@ -1,4 +1,6 @@
-# CCC Fixes - January 4, 2026
+# CCC Fixes
+
+This document documents significant fixes and improvements to ccc.
 
 ## Problem: "Session created but died immediately"
 
@@ -216,3 +218,136 @@ tmux capture-pane -t test-session -p
 # Send: /new testproject
 # Expected: "Session 'testproject' started!" message in topic
 ```
+
+---
+
+## Problem: "Every prompt causes session restart" - March 3, 2026
+
+When sending prompts rapidly to a session, every prompt caused the session to restart even though Claude was already running.
+
+### Root Cause
+
+When `skipRestart=true` was passed to `switchSessionInWindow()`, the function would still send restart commands or respawn the pane if:
+
+1. `tmuxWindowHasClaudeRunning()` had a false negative (Claude running but not detected)
+2. A shell was detected in the pane (which could be the parent of Claude)
+3. The pane was in an unknown state (Claude might be starting up)
+
+### Fix (PR #2)
+
+**File:** `tmux.go`, function `switchSessionInWindow()`
+
+Added more conservative behavior when `skipRestart=true`:
+
+1. **Fallback detection**: When primary detection fails, check for Claude prompt in pane content
+2. **Shell handling**: Don't send restart command when shell detected with `skipRestart=true`
+3. **Unknown state**: Don't respawn when pane is in unknown state with `skipRestart=true`
+
+```go
+// When skipRestart=true but we don't detect Claude or shell, be extra cautious
+// This handles false negatives in detection where Claude is actually running
+if !tmuxWindowHasClaudeRunning(target, "") && !tmuxWindowHasShellRunning(target, "") {
+    // Check for Claude prompt in the pane content as a fallback
+    if tmuxPaneHasActiveClaudePrompt(target) {
+        listenLog("skipRestart=true: Claude prompt detected in pane content (fallback detection)")
+        shouldRestart = false
+    }
+}
+
+// When skipRestart=true and shell is detected
+if skipRestart {
+    listenLog("Shell detected with skipRestart=true - not sending restart command to preserve session state")
+} else {
+    // Send the command to start Claude
+    fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+    if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+        return fmt.Errorf("failed to send command: %w", err)
+    }
+}
+```
+
+### Impact
+
+- No more unnecessary session restarts when prompts arrive rapidly
+- Direct prompt delivery to existing Claude sessions
+- Better handling of concurrent/rapid prompts
+- Preserved session state during transient states
+
+---
+
+## Feature: Per-Project Hooks - February 28, 2026
+
+Previously, hooks were installed globally in `~/.claude/hooks/`, which affected all Claude Code sessions system-wide.
+
+### Enhancement (PR #1)
+
+Added per-project hook installation:
+
+1. **`ccc install-hooks`** - Install hooks in current project
+2. **`ccc cleanup-hooks`** - Remove hooks from current project
+3. **Auto-install** - Hooks are automatically installed when creating sessions
+
+**Hook location:**
+- Old: `~/.claude/hooks/*` (global)
+- New: `<project>/.claude/hooks/*` (per-project)
+
+**Benefits:**
+- Project-specific hook configurations
+- No interference between projects
+- Cleaner separation of concerns
+- Easier hook management
+
+**Implementation:**
+
+Hooks are installed in the project's `.claude/hooks/` directory:
+```bash
+myproject/.claude/hooks/
+├── pre-run
+├── post-run
+└── ask
+```
+
+Each hook checks if it's in the correct project directory before acting.
+
+---
+
+## Additional Improvements (2026)
+
+### Provider Abstraction
+
+Refactored provider configuration to support multiple AI providers:
+
+- **Provider interface**: `Provider` interface for provider-agnostic design
+- **Multiple providers**: Configure multiple providers in `config.json`
+- **Active provider**: Set default provider globally
+- **Per-session provider**: Override provider for specific sessions
+
+```json
+{
+  "active_provider": "example-provider",
+  "providers": {
+    "example-provider": { "auth_env_var": "EXAMPLE_API_KEY" },
+    "alternative-provider": { "base_url": "https://api.example.com/v1", "auth_env_var": "ALT_API_KEY" }
+  }
+}
+```
+
+### Atomic Config Writes
+
+Configuration writes now use atomic operations to prevent corruption:
+
+1. Write to temp file (`config-*.json.tmp`)
+2. Rename to `config.json`
+
+This prevents data corruption when multiple processes write simultaneously.
+
+### Improved Claude Detection
+
+Enhanced detection of running Claude Code processes:
+
+- **npm Claude**: Detects npm-installed Claude via `claude/cli`
+- **Child process detection**: Checks if shell has Claude as child
+- **Prompt detection**: Looks for Claude's prompt character (❯) in pane
+- **Multiple methods**: Falls back through detection methods
+
+---

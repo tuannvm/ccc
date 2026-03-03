@@ -282,6 +282,8 @@ ccc should auto-configure trusted directories. If issues persist:
    pip install openai-whisper
    ```
 
+   Or use an API-based transcription service for faster results.
+
 3. **API key not set**
 
    For Groq/OpenAI, ensure env var is set:
