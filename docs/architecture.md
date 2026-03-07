@@ -53,10 +53,11 @@ LEGEND:
 |-----------|------|---------------|
 | **Telegram Listener** | `telegram.go`, `commands.go` | Polls Telegram for messages, handles commands, routes prompts to sessions |
 | **Tmux Manager** | `tmux.go` | Creates/manages tmux sessions, switches windows, detects Claude state |
-| **Session Manager** | `session.go` | Manages session lifecycle, creates topics, persists state |
-| **Config Manager** | `config.go` | Loads/saves config, manages providers and sessions |
+| **Session Manager** | `session.go`, `session_lookup.go`, `session_persist.go` | Manages session lifecycle, creates topics, persists state |
+| **Config Manager** | `config_load.go`, `config_save.go`, `config_paths.go`, `config_validation.go`, `types.go` | Loads/saves config atomically, validates, manages providers and sessions |
 | **Hook System** | `hooks.go` | Installs Claude Code hooks, reads transcripts, sends notifications |
 | **Provider Abstraction** | `provider.go` | Provider-agnostic interface for AI providers |
+| **Message Ledger** | `ledger.go` | Tracks message delivery state between terminal and Telegram |
 
 ## Message Flow
 
@@ -309,6 +310,101 @@ type Provider interface {
 │      Code         │
 └───────────────────┘
 ```
+
+## Configuration System
+
+ccc uses a modular configuration system split across multiple files following Single Responsibility Principle.
+
+### Config File Structure
+
+The configuration system is organized into specialized files:
+
+| File | Purpose |
+|------|---------|
+| **types.go** | All struct definitions (Config, SessionInfo, ProviderConfig, Telegram types, etc.) |
+| **config_paths.go** | Path utilities (configDir, cacheDir, expandPath, getProjectsDir, etc.) |
+| **config_validation.go** | Config validation (validateConfig checks providers and sessions) |
+| **config_load.go** | Config loading with migration from old formats |
+| **config_save.go** | Atomic config saving using write-then-rename pattern |
+| **session_lookup.go** | Session query functions (getSessionByTopic, findSessionBy*, findSession) |
+| **session_persist.go** | Session write operations (persistClaudeSessionID) |
+| **provider.go** | Provider interface and helper functions (getActiveProvider, getProvider, etc.) |
+
+### Config File Location
+
+```
+~/.config/ccc/config.json
+```
+
+Legacy location (auto-migrated on first load):
+```
+~/.ccc.json
+```
+
+### Atomic Write Pattern
+
+Config writes use atomic operations to prevent corruption from concurrent writes:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ATOMIC CONFIG WRITE                           │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Marshal config to JSON
+        │
+        ▼
+2. Create temp file (config-*.json.tmp) with 0600 permissions
+        │
+        ▼
+3. Write data to temp file
+        │
+        ▼
+4. Sync temp file to disk (fsync)
+        │
+        ▼
+5. Close temp file
+        │
+        ▼
+6. Atomic rename (temp → config.json)
+        │
+        ▼
+7. Sync parent directory to persist rename
+        │
+        ▼
+   ✅ Complete
+```
+
+This ensures:
+- No partial/corrupt config files
+- Safe concurrent writes from multiple processes
+- Crash consistency (fsync before rename)
+
+### Config Migration
+
+The system automatically migrates configs from old formats:
+
+**Old Format** (map[string]int64 for sessions):
+```json
+{
+  "sessions": {
+    "myproject": 12345
+  }
+}
+```
+
+**New Format** (SessionInfo with path):
+```json
+{
+  "sessions": {
+    "myproject": {
+      "topic_id": 12345,
+      "path": "/home/user/Projects/myproject"
+    }
+  }
+}
+```
+
+Migration happens automatically on first load and is saved back.
 
 ## Hook System
 
