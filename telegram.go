@@ -150,26 +150,533 @@ func telegramAPI(config *Config, method string, params url.Values) (*TelegramRes
 	return &result, nil
 }
 
+// EscapeMarkdownV2 escapes special characters for Telegram MarkdownV2 format
+// Special characters that must be escaped: _ * [ ] ( ) ~ ` > # + - = | { } . !
+func EscapeMarkdownV2(text string) string {
+	// Must escape in this order to avoid double-escaping
+	// Backslash must be first to avoid escaping the escapes we add
+	replacements := []struct{ old, new string }{
+		{"\\", "\\\\"}, // Backslash MUST be first
+		{"_", "\\_"},
+		{"*", "\\*"},
+		{"[", "\\["},
+		{"]", "\\]"},
+		{"(", "\\("},
+		{")", "\\)"},
+		{"~", "\\~"},
+		{"`", "\\`"},
+		{">", "\\>"},
+		{"#", "\\#"},
+		{"+", "\\+"},
+		{"-", "\\-"},
+		{"=", "\\="},
+		{"|", "\\|"},
+		{"{", "\\{"},
+		{"}", "\\}"},
+		{".", "\\."},
+		{"!", "\\!"},
+	}
+
+	result := text
+	for _, r := range replacements {
+		result = strings.ReplaceAll(result, r.old, r.new)
+	}
+	return result
+}
+
+// escapeURL escapes special characters in URLs for MarkdownV2
+func escapeURL(url string) string {
+	var result strings.Builder
+	for _, ch := range url {
+		// Escape characters that need escaping in MarkdownV2 URLs
+		switch ch {
+		case ')', '\\', '`':
+			result.WriteByte('\\')
+		}
+		result.WriteRune(ch)
+	}
+	return result.String()
+}
+
+// unescapeMarkdownV2 removes MarkdownV2 escape sequences for plain text fallback
+func unescapeMarkdownV2(text string) string {
+	var result strings.Builder
+	i := 0
+	for i < len(text) {
+		if text[i] == '\\' && i+1 < len(text) {
+			// Skip the backslash, keep the next character
+			i++
+		}
+		result.WriteByte(text[i])
+		i++
+	}
+	return result.String()
+}
+
+// isBoundaryChar checks if a character is a word boundary (whitespace, punctuation, etc.)
+func isBoundaryChar(ch byte) bool {
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '.' ||
+		ch == ',' || ch == '!' || ch == '?' || ch == ';' || ch == ':' ||
+		ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '{' ||
+		ch == '}' || ch == '<' || ch == '>' || ch == '|' || ch == '`'
+}
+
+// MarkdownToTelegramV2 converts standard Markdown to Telegram MarkdownV2 format
+// It preserves formatting while escaping special characters in literal text
+func MarkdownToTelegramV2(text string) string {
+	var result strings.Builder
+	i := 0
+	n := len(text)
+
+	for i < n {
+		ch := text[i]
+
+		// Handle code blocks (fenced)
+		if i < n-2 && text[i:i+3] == "```" {
+			// Find closing ```
+			endIdx := strings.Index(text[i+3:], "```")
+			if endIdx != -1 {
+				// Extract the code block content (between ``` and ```)
+				contentStart := i + 3
+				contentEnd := i + 3 + endIdx
+				content := text[contentStart:contentEnd]
+
+				// Write opening ```
+				result.WriteString("```")
+				// Write escaped content
+				result.WriteString(escapeCodeContent(content))
+				// Write closing ```
+				result.WriteString("```")
+				i = contentEnd + 3
+				continue
+			}
+		}
+
+		// Handle inline code
+		if ch == '`' {
+			// Find closing backtick, skipping escaped ones
+			j := i + 1
+			for j < n {
+				if text[j] == '`' {
+					// Check if this backtick is escaped
+					escaped := false
+					backslashCount := 0
+					for k := j - 1; k >= i+1 && text[k] == '\\'; k-- {
+						backslashCount++
+					}
+					// If odd number of backslashes before this backtick, it's escaped
+					if backslashCount%2 == 1 {
+						escaped = true
+					}
+
+					if !escaped {
+						// Found the real closing backtick
+						content := text[i+1 : j]
+
+						// Write opening `
+						result.WriteByte('`')
+						// Write escaped content
+						result.WriteString(escapeCodeContent(content))
+						// Write closing `
+						result.WriteByte('`')
+						i = j + 1
+						break
+					}
+				}
+				j++
+			}
+			if j < n {
+				continue
+			}
+		}
+
+		// Handle HTML tags (<tag>, </tag>, <tag />) - escape them for Telegram MarkdownV2
+		if ch == '<' {
+			// Find closing >
+			endIdx := strings.Index(text[i:], ">")
+			if endIdx != -1 {
+				tag := text[i : i+endIdx+1]
+				// Validate it's actually an HTML tag (not just < and > around text)
+				if isHTMLTag(tag) {
+					// Escape the entire HTML tag
+					result.WriteString(escapeTextOnly(tag))
+					i = i + endIdx + 1
+					continue
+				}
+			}
+		}
+
+		// Handle bold (**text** or __text__)
+		if i < n-1 && text[i:i+2] == "**" {
+			endIdx := findClosing(text, i+2, "**")
+			if endIdx != -1 {
+				result.WriteByte('*') // Telegram uses single * for bold
+				// Process content recursively (to handle nested formatting)
+				content := MarkdownToTelegramV2(text[i+2 : endIdx])
+				result.WriteString(content)
+				result.WriteByte('*')
+				i = endIdx + 2
+				continue
+			}
+		}
+		// Handle __bold__ (underscore variant)
+		if i < n-1 && text[i:i+2] == "__" {
+			endIdx := findClosing(text, i+2, "__")
+			if endIdx != -1 {
+				result.WriteByte('*') // Telegram uses single * for bold
+				// Process content recursively (to handle nested formatting)
+				content := MarkdownToTelegramV2(text[i+2 : endIdx])
+				result.WriteString(content)
+				result.WriteByte('*')
+				i = endIdx + 2
+				continue
+			}
+		}
+
+		// Handle italic (*text*)
+		if ch == '*' && (i == 0 || text[i-1] != '*') && (i+1 >= n || text[i+1] != '*') {
+			// Check for word boundary before *
+			hasBoundaryBefore := i == 0 || isBoundaryChar(text[i-1])
+			if hasBoundaryBefore {
+				endIdx := findClosing(text, i+1, "*")
+				if endIdx != -1 {
+					// Check for word boundary after *
+					hasBoundaryAfter := endIdx+1 >= n || isBoundaryChar(text[endIdx+1])
+					if hasBoundaryAfter {
+						result.WriteByte('_') // Telegram uses _ for italic
+						// Process content recursively
+						content := MarkdownToTelegramV2(text[i+1 : endIdx])
+						result.WriteString(content)
+						result.WriteByte('_')
+						i = endIdx + 1
+						continue
+					}
+				}
+			}
+		}
+		// Handle _italic_ (underscore variant)
+		if ch == '_' && (i == 0 || text[i-1] != '_') && (i+1 >= n || text[i+1] != '_') {
+			// Check for word boundary before _
+			hasBoundaryBefore := i == 0 || isBoundaryChar(text[i-1])
+			if hasBoundaryBefore {
+				endIdx := findClosing(text, i+1, "_")
+				if endIdx != -1 {
+					// Check for word boundary after _
+					hasBoundaryAfter := endIdx+1 >= n || isBoundaryChar(text[endIdx+1])
+					if hasBoundaryAfter {
+						result.WriteByte('_') // Telegram uses _ for italic
+						// Process content recursively
+						content := MarkdownToTelegramV2(text[i+1 : endIdx])
+						result.WriteString(content)
+						result.WriteByte('_')
+						i = endIdx + 1
+						continue
+					}
+				}
+			}
+		}
+
+		// Handle links [text](url)
+		if ch == '[' {
+			endIdx := strings.Index(text[i:], "](")
+			if endIdx != -1 {
+				endIdx += i
+				// Find the closing ), accounting for nested parens in URLs
+				urlStart := endIdx + 2
+				parensDepth := 0
+				urlEndIdx := -1
+				for j := urlStart; j < n; j++ {
+					if text[j] == '(' {
+						parensDepth++
+					} else if text[j] == ')' {
+						if parensDepth == 0 {
+							urlEndIdx = j
+							break
+						}
+						parensDepth--
+					}
+				}
+				if urlEndIdx != -1 {
+					// Process link text recursively (to handle **bold** inside links)
+					linkText := text[i+1 : endIdx]
+					processedLinkText := MarkdownToTelegramV2(linkText)
+					result.WriteByte('[')
+					result.WriteString(processedLinkText)
+					result.WriteString("](")
+					// Escape special characters in URL
+					url := text[urlStart:urlEndIdx]
+					result.WriteString(escapeURL(url))
+					result.WriteByte(')')
+					i = urlEndIdx + 1
+					continue
+				}
+			}
+		}
+
+		// Handle headings (# at start of line)
+		if ch == '#' && (i == 0 || text[i-1] == '\n') {
+			// Count #s
+			count := 0
+			for i+count < n && text[i+count] == '#' {
+				count++
+			}
+			// Check if there's whitespace after the #s (required for a valid heading)
+			if i+count < n && (text[i+count] == ' ' || text[i+count] == '\t') {
+				// Skip whitespace after #
+				start := i + count
+				for start < n && (text[start] == ' ' || text[start] == '\t') {
+					start++
+				}
+				// Find end of line
+				endLine := strings.Index(text[start:], "\n")
+				if endLine == -1 {
+					endLine = n
+				} else {
+					endLine += start
+				}
+				// Convert heading to bold, escaping all special characters
+				result.WriteByte('*')
+				headingText := text[start:endLine]
+				// Escape all special characters in heading text
+				for _, ch := range headingText {
+				if isSpecialChar(byte(ch)) {
+					result.WriteByte('\\')
+				}
+				result.WriteRune(ch)
+			}
+			result.WriteByte('*')
+				// Only add newline if original had one
+				if endLine < n && text[endLine] == '\n' {
+					result.WriteByte('\n')
+				}
+				i = endLine
+				if endLine < n && text[endLine] == '\n' {
+					i++
+				}
+				continue
+			}
+		}
+
+		// Handle blockquotes (> at start of line)
+		if ch == '>' && (i == 0 || text[i-1] == '\n') {
+			// Skip > and optional space
+			start := i + 1
+			if start < n && text[start] == ' ' {
+				start++
+			}
+			// Find end of line
+			endLine := strings.Index(text[start:], "\n")
+			if endLine == -1 {
+				endLine = n
+			} else {
+				endLine += start
+			}
+			// Strip quote prefix, just output the text with escaping
+			quoteText := text[start:endLine]
+			// Process the quoted text to escape special chars
+			for _, ch := range quoteText {
+				if isSpecialChar(byte(ch)) {
+					result.WriteByte('\\')
+				}
+				result.WriteRune(ch)
+			}
+			result.WriteByte('\n')
+			i = endLine
+			if endLine < n && text[endLine] == '\n' {
+				i++
+			}
+			continue
+		}
+
+		// Handle unordered lists (- at start of line)
+		if ch == '-' && (i == 0 || text[i-1] == '\n') {
+			result.WriteString("\\-") // Escape the bullet
+			i++
+			continue
+		}
+
+		// Handle ordered lists (digit. at start of line)
+		if ch >= '0' && ch <= '9' && (i == 0 || text[i-1] == '\n') {
+			if i+1 < n && text[i+1] == '.' {
+				result.WriteByte(ch)
+				result.WriteString("\\.") // Escape the dot
+				i += 2
+				continue
+			}
+		}
+
+		// Handle horizontal rules (--- or ***)
+		if i < n-2 && (text[i:i+3] == "---" || text[i:i+3] == "***") {
+			if (i == 0 || text[i-1] == '\n') && (i+3 >= n || text[i+3] == '\n') {
+				// Escape dashes for MarkdownV2
+				if text[i:i+3] == "---" {
+					result.WriteString("\\-\\-\\-")
+				} else {
+					// For ***, escape the asterisks
+					result.WriteString("\\*\\*\\*")
+				}
+				i += 3
+				continue
+			}
+		}
+
+		// Default: escape special characters
+		if isSpecialChar(ch) {
+			result.WriteByte('\\')
+		}
+		result.WriteByte(ch)
+		i++
+	}
+
+	return result.String()
+}
+
+// escapeTextOnly escapes special characters but preserves Markdown syntax
+func escapeTextOnly(text string) string {
+	var result strings.Builder
+	for _, ch := range text {
+		// Escape special characters that aren't part of Markdown syntax
+		// We preserve: * [ ] ( ) ` as they might be formatting
+		// We escape: _ . ! + = | { } ~ - # < >
+		switch ch {
+		case '_', '.', '!', '+', '=', '|', '{', '}', '~', '-', '#', '<', '>':
+			result.WriteByte('\\')
+		}
+		result.WriteRune(ch)
+	}
+	return result.String()
+}
+
+// isSpecialChar checks if a character needs escaping in MarkdownV2
+func isSpecialChar(ch byte) bool {
+	return ch == '_' || ch == '*' || ch == '[' || ch == ']' || ch == '(' || ch == ')' ||
+		ch == '`' || ch == '>' || ch == '#' || ch == '+' || ch == '-' || ch == '=' ||
+		ch == '|' || ch == '{' || ch == '}' || ch == '.' || ch == '!' || ch == '~' || ch == '\\'
+}
+
+// findClosing finds the closing delimiter for bold/italic
+func findClosing(text string, start int, delim string) int {
+	i := start
+	delimLen := len(delim)
+
+	for i < len(text) {
+		// Skip code blocks
+		if i < len(text)-2 && text[i:i+3] == "```" {
+			end := strings.Index(text[i+3:], "```")
+			if end != -1 {
+				i += end + 6
+				continue
+			}
+		}
+
+		// Skip inline code
+		if text[i] == '`' {
+			end := strings.Index(text[i+1:], "`")
+			if end != -1 {
+				i += end + 2
+				continue
+			}
+		}
+
+		// Check for closing delimiter
+		if i <= len(text)-delimLen && text[i:i+delimLen] == delim {
+			return i
+		}
+
+		i++
+	}
+
+	return -1
+}
+
+// isHTMLTag checks if the given text is a valid HTML tag
+// It distinguishes between real HTML tags like <div> and comparisons like 1 < 2 > 1
+func isHTMLTag(tag string) bool {
+	if len(tag) < 3 {
+		return false // Minimum valid tag is <a>
+	}
+
+	// Tags start with < and end with >
+	if tag[0] != '<' || tag[len(tag)-1] != '>' {
+		return false
+	}
+
+	// Get content between < and >
+	content := tag[1 : len(tag)-1]
+	if len(content) == 0 {
+		return false
+	}
+
+	// Check if it starts with valid tag character
+	// Valid: letters (a-z, A-Z), / (for closing tags), ! (for comments/DOCTYPE)
+	firstChar := content[0]
+	if !((firstChar >= 'a' && firstChar <= 'z') ||
+		(firstChar >= 'A' && firstChar <= 'Z') ||
+		firstChar == '/' || firstChar == '!') {
+		return false
+	}
+
+	// Check if the tag name contains only valid characters
+	// Valid tag characters: letters, digits, hyphen, underscore, slash, colon, dot
+	for _, ch := range content {
+		valid := (ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') ||
+			ch == '-' || ch == '_' || ch == '/' || ch == ':' || ch == '.' || ch == ' ' || ch == '=' || ch == '"' || ch == '\''
+		if !valid {
+			return false
+		}
+	}
+
+	return true
+}
+
+// escapeCodeContent escapes special characters within code blocks/inline code for Telegram MarkdownV2
+// Within code entities, backslashes and backticks need to be escaped
+func escapeCodeContent(content string) string {
+	var result strings.Builder
+	for _, ch := range content {
+		if ch == '\\' || ch == '`' {
+			result.WriteByte('\\')
+		}
+		result.WriteRune(ch)
+	}
+	return result.String()
+}
+
 func sendMessage(config *Config, chatID int64, threadID int64, text string) error {
 	_, err := sendMessageGetID(config, chatID, threadID, text)
 	return err
 }
 
 // sendMessageGetID sends a message and returns the message ID for later editing
+// Converts standard Markdown to Telegram MarkdownV2 format
 func sendMessageGetID(config *Config, chatID int64, threadID int64, text string) (int64, error) {
-	return sendMessageWithMode(config, chatID, threadID, text, "Markdown")
+	converted := MarkdownToTelegramV2(text)
+	return sendMessageWithMode(config, chatID, threadID, converted, "MarkdownV2", false)
 }
 
-// sendMessageHTMLGetID sends a message with HTML parse mode and returns the message ID
+// sendMessageHTMLGetID sends a message with HTML parse mode (for system messages)
 func sendMessageHTMLGetID(config *Config, chatID int64, threadID int64, text string) (int64, error) {
-	return sendMessageWithMode(config, chatID, threadID, text, "HTML")
+	return sendMessageWithMode(config, chatID, threadID, text, "HTML", false)
 }
 
-func sendMessageWithMode(config *Config, chatID int64, threadID int64, text string, parseMode string) (int64, error) {
+func sendMessageWithMode(config *Config, chatID int64, threadID int64, text string, parseMode string, escape bool) (int64, error) {
 	const maxLen = 4000
+
+	// Escape text if using MarkdownV2
+	if escape && parseMode == "MarkdownV2" {
+		text = EscapeMarkdownV2(text)
+	}
 
 	// Split long messages
 	messages := splitMessage(text, maxLen)
+
+	// For MarkdownV2, ensure no chunk ends with a backslash (broken escape sequence)
+	if parseMode == "MarkdownV2" {
+		messages = fixMarkdownV2Splits(messages)
+	}
+
 	var lastMsgID int64
 
 	for _, msg := range messages {
@@ -190,7 +697,14 @@ func sendMessageWithMode(config *Config, chatID int64, threadID int64, text stri
 			// If Markdown/HTML parsing fails, retry as plain text
 			if strings.Contains(result.Description, "parse entities") && parseMode != "" {
 				params.Del("parse_mode")
-				params.Set("text", "⚠️\n[this message displayed as plain text, since markdown parse failed]\n\n"+msg)
+				// Remove escape sequences for MarkdownV2 fallback only
+				var plainText string
+				if parseMode == "MarkdownV2" {
+					plainText = unescapeMarkdownV2(msg)
+				} else {
+					plainText = msg
+				}
+				params.Set("text", "⚠️\n[this message displayed as plain text, since markdown parse failed]\n\n"+plainText)
 				result, err = telegramAPI(config, "sendMessage", params)
 				if err != nil {
 					return 0, err
@@ -221,21 +735,91 @@ func sendMessageWithMode(config *Config, chatID int64, threadID int64, text stri
 	return lastMsgID, nil
 }
 
-// editMessage edits an existing message, sending overflow as new messages
-func editMessage(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
-	return editMessageWithMode(config, chatID, messageID, threadID, text, "Markdown")
-}
+// fixMarkdownV2Splits ensures no chunk ends with a backslash (which would break escape sequences)
+func fixMarkdownV2Splits(messages []string) []string {
+	if len(messages) <= 1 {
+		return messages
+	}
 
-// editMessageHTML edits a message using HTML parse mode
-func editMessageHTML(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
-	return editMessageWithMode(config, chatID, messageID, threadID, text, "HTML")
-}
-
-func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID int64, text string, parseMode string) error {
 	const maxLen = 4000
+	const telegramLimit = 4096 // Actual Telegram API limit
+	fixed := make([]string, 0, len(messages))
+	for i, msg := range messages {
+		// If this is not the last message and ends with backslash, handle it
+		if i < len(messages)-1 && strings.HasSuffix(msg, "\\") {
+			// Count trailing backslashes
+			trailingBackslashes := 0
+			for j := len(msg) - 1; j >= 0 && msg[j] == '\\'; j-- {
+				trailingBackslashes++
+			}
+			// Only move if odd number of backslashes (single \, not escaped \\)
+			if trailingBackslashes%2 == 1 {
+				// Remove trailing backslash from current message
+				msg = msg[:len(msg)-1]
+				// Prepend backslash to next message FIRST (to preserve order)
+				if i+1 < len(messages) {
+					messages[i+1] = "\\" + messages[i+1]
+					// Check if prepending made next chunk too long
+					if len(messages[i+1]) > maxLen {
+						// Move excess characters from next chunk to current chunk
+						excess := len(messages[i+1]) - maxLen
+						// But we must keep the prepended backslash in next chunk!
+						// If excess is 1, we'd move just the backslash back, reintroducing the problem
+						if excess == 1 && len(messages[i+1]) > 1 {
+							// Move the backslash PLUS one more character to preserve it
+							// But only if current chunk won't exceed Telegram's limit
+							if len(msg)+2 <= telegramLimit {
+								excess = 2
+							} else {
+								// Current chunk would be too long, move even more to balance
+								excess = 3
+							}
+						}
+						if excess > 0 && excess <= len(messages[i+1]) && len(msg)+excess <= telegramLimit {
+							// Move characters from beginning of next chunk to end of current
+							msg += messages[i+1][:excess]
+							messages[i+1] = messages[i+1][excess:]
+						} else if len(msg)+excess > telegramLimit {
+							// Can't move characters without exceeding limit
+							// This is a rare edge case where we can't fix the split perfectly
+							// In practice, this is unlikely with the 96-char buffer we have
+						}
+					}
+				}
+			}
+		}
+		fixed = append(fixed, msg)
+	}
+	return fixed
+}
+
+// editMessage edits an existing message, sending overflow as new messages
+// Converts standard Markdown to Telegram MarkdownV2 format
+func editMessage(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
+	converted := MarkdownToTelegramV2(text)
+	return editMessageWithMode(config, chatID, messageID, threadID, converted, "MarkdownV2", false)
+}
+
+// editMessageHTML edits a message using HTML parse mode (for system messages)
+func editMessageHTML(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
+	return editMessageWithMode(config, chatID, messageID, threadID, text, "HTML", false)
+}
+
+func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID int64, text string, parseMode string, escape bool) error {
+	const maxLen = 4000
+
+	// Escape text BEFORE splitting to avoid first chunk becoming too long after escaping
+	if escape && parseMode == "MarkdownV2" {
+		text = EscapeMarkdownV2(text)
+	}
 
 	// Split message - first part goes to edit, rest as new messages
 	messages := splitMessage(text, maxLen)
+
+	// For MarkdownV2, ensure no chunk ends with a backslash (broken escape sequence)
+	if parseMode == "MarkdownV2" {
+		messages = fixMarkdownV2Splits(messages)
+	}
 
 	// Edit existing message with first part
 	params := url.Values{
@@ -255,9 +839,11 @@ func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID
 	}
 
 	// Send remaining parts as new messages
+	// Note: Text is already escaped, so we send without re-escaping
 	for i := 1; i < len(messages); i++ {
 		time.Sleep(100 * time.Millisecond)
-		sendMessage(config, chatID, threadID, messages[i])
+		// Send already-escaped text without re-escaping
+		sendMessageWithMode(config, chatID, threadID, messages[i], parseMode, false)
 	}
 
 	return nil
@@ -266,16 +852,22 @@ func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID
 func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text string, buttons [][]InlineKeyboardButton) error {
 	const maxLen = 4000
 
+	// Convert Markdown to MarkdownV2 first (before splitting)
+	converted := MarkdownToTelegramV2(text)
+
 	// Split long messages - send all but last as regular messages, last with keyboard
-	messages := splitMessage(text, maxLen)
+	messages := splitMessage(converted, maxLen)
+
+	// Fix split boundaries to avoid breaking escape sequences
+	messages = fixMarkdownV2Splits(messages)
 
 	// Send all but the last message as regular messages
 	for i := 0; i < len(messages)-1; i++ {
-		sendMessage(config, chatID, threadID, messages[i])
+		sendMessageWithMode(config, chatID, threadID, messages[i], "MarkdownV2", false)
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Send the last message with keyboard
+	// Send the last message with keyboard - use MarkdownV2 for consistency
 	keyboard := map[string]interface{}{
 		"inline_keyboard": buttons,
 	}
@@ -284,6 +876,7 @@ func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text 
 	params := url.Values{
 		"chat_id":      {fmt.Sprintf("%d", chatID)},
 		"text":         {messages[len(messages)-1]},
+		"parse_mode":   {"MarkdownV2"},
 		"reply_markup": {string(keyboardJSON)},
 	}
 	if threadID > 0 {
@@ -295,7 +888,22 @@ func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text 
 		return err
 	}
 	if !result.OK {
-		return fmt.Errorf("telegram error: %s", result.Description)
+		// If MarkdownV2 parsing fails, retry as plain text
+		if strings.Contains(result.Description, "parse entities") {
+			params.Del("parse_mode")
+			// Unescape MarkdownV2 sequences for plain text fallback
+			plainText := unescapeMarkdownV2(params.Get("text"))
+			params.Set("text", plainText)
+			result, err = telegramAPI(config, "sendMessage", params)
+			if err != nil {
+				return err
+			}
+			if !result.OK {
+				return fmt.Errorf("telegram error: %s", result.Description)
+			}
+		} else {
+			return fmt.Errorf("telegram error: %s", result.Description)
+		}
 	}
 	return nil
 }
@@ -313,6 +921,7 @@ func editMessageRemoveKeyboard(config *Config, chatID int64, messageID int, newT
 		newText = newText[:maxLen-3] + "..."
 	}
 
+	// Send as plain text to avoid parse errors with arbitrary content
 	params := url.Values{
 		"chat_id":    {fmt.Sprintf("%d", chatID)},
 		"message_id": {fmt.Sprintf("%d", messageID)},
