@@ -258,15 +258,6 @@ func killSession(config *Config, name string) error {
 	return nil
 }
 
-func getSessionByTopic(config *Config, topicID int64) string {
-	for name, info := range config.Sessions {
-		if info != nil && info.TopicID == topicID {
-			return name
-		}
-	}
-	return ""
-}
-
 // startSession creates/attaches to a tmux window with Telegram topic
 func startSession(continueSession bool) error {
 	// Get current directory name as session name
