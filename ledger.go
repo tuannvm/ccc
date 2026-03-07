@@ -11,22 +11,6 @@ import (
 	"time"
 )
 
-// MessageRecord tracks the delivery state of a single message
-type MessageRecord struct {
-	ID                string `json:"id"`                        // unique: "{requestId}:{hash}" or "tg:{update_id}"
-	Session           string `json:"session"`                   // session name
-	Type              string `json:"type"`                      // user_prompt / tool_call / assistant_text / notification
-	Text              string `json:"text"`                      // message content
-	Origin            string `json:"origin"`                    // terminal / telegram / claude
-	TerminalDelivered bool   `json:"terminal_delivered"`        // whether terminal received it
-	TelegramDelivered bool   `json:"telegram_delivered"`        // whether Telegram received it
-	TelegramMsgID     int64  `json:"telegram_msg_id,omitempty"` // Telegram message ID (for editing)
-	Timestamp         int64  `json:"timestamp"`                 // unix timestamp
-	Update            string `json:"update,omitempty"`          // if set, this is an update record for the given ID
-	UpdateField       string `json:"update_field,omitempty"`    // field name to update
-	UpdateValue       any    `json:"update_value,omitempty"`    // new value
-}
-
 var ledgerMu sync.Mutex
 
 func ledgerPath(session string) string {
