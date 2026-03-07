@@ -163,6 +163,14 @@ type HookToolInput struct {
 	URL         string `json:"url,omitempty"`         // For WebFetch
 	Prompt      string `json:"prompt,omitempty"`      // For Task/WebFetch
 	OldString   string `json:"old_string,omitempty"`  // For Edit
+	// Task-specific fields
+	Subject      string `json:"subject,omitempty"`       // For TaskCreate
+	ActiveForm   string `json:"active_form,omitempty"`   // For TaskCreate
+	Status       string `json:"status,omitempty"`        // For TaskUpdate
+	TaskID       string `json:"task_id,omitempty"`       // For TaskUpdate/TaskGet
+	AddBlocks    any    `json:"add_blocks,omitempty"`    // For TaskUpdate
+	AddBlockedBy any    `json:"add_blocked_by,omitempty"` // For TaskUpdate
+	Metadata     any    `json:"metadata,omitempty"`      // For TaskCreate/TaskUpdate
 }
 
 // parseHookData unmarshals raw JSON and populates ToolInput

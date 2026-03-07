@@ -121,6 +121,7 @@ No need to open your laptop
 | 📤 **File Transfer** | Send files to your phone (large files via streaming) |
 | 🎤 **Voice Messages** | Send voice notes, auto-transcribed |
 | 🖼️ **Image Support** | Send images for Claude to analyze |
+| 📋 **Task Tracking** | Sync with Claude's task list, see progress in Telegram |
 | 🔒 **100% Self-Hosted** | Runs on your machine, no cloud servers |
 | 🏢 **Multiple Providers** | Anthropic, Zai, OpenAI, and more |
 

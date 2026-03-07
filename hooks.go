@@ -117,6 +117,117 @@ func addTextToToolState(sessName string, text string, ts int64) {
 func collapseToolMessage(config *Config, sessName string, topicID int64) {
 }
 
+// updateTaskListMessage updates the task list message in Telegram
+func updateTaskListMessage(config *Config, sessName string, topicID int64) {
+	if topicID == 0 {
+		return
+	}
+
+	state := loadTaskState(sessName)
+	taskListHTML := formatTaskListHTML(sessName, state)
+
+	// Check if we already have a task list message
+	msgID := state.MsgID
+	if msgID == 0 {
+		// Create new message
+		newMsgID, err := sendMessageHTMLGetID(config, config.GroupID, topicID, taskListHTML)
+		if err != nil {
+			hookLog("update-task-list: failed to send message: %v", err)
+			return
+		}
+		setTaskListMsgID(sessName, newMsgID)
+		hookLog("update-task-list: created new message msg_id=%d for session=%s", newMsgID, sessName)
+	} else {
+		// Update existing message
+		if err := editMessageHTML(config, config.GroupID, msgID, topicID, taskListHTML); err != nil {
+			hookLog("update-task-list: failed to edit message: %v", err)
+			// If edit fails, try creating a new message
+			newMsgID, err2 := sendMessageHTMLGetID(config, config.GroupID, topicID, taskListHTML)
+			if err2 == nil {
+				setTaskListMsgID(sessName, newMsgID)
+			}
+		} else {
+			hookLog("update-task-list: updated message msg_id=%d for session=%s", msgID, sessName)
+		}
+	}
+}
+
+// handleTaskTool processes TaskCreate, TaskUpdate, and TaskDelete tool calls
+func handleTaskTool(sessName string, hookData HookData) bool {
+	switch hookData.ToolName {
+	case "TaskCreate":
+		// Note: Claude's TaskCreate actually generates the task_id internally
+		// We generate one here for tracking purposes
+		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
+		subject := hookData.ToolInput.Subject
+		if subject == "" {
+			subject = hookData.ToolInput.Description
+		}
+		if subject == "" {
+			subject = "Untitled task"
+		}
+
+		task := &Task{
+			TaskID:      taskID,
+			Subject:     subject,
+			Description: hookData.ToolInput.Description,
+			Status:      TaskStatusPending,
+			ActiveForm:  hookData.ToolInput.ActiveForm,
+			Metadata:    hookData.ToolInput.Metadata,
+		}
+		addTask(sessName, task)
+		return true
+
+	case "TaskUpdate":
+		taskID := hookData.ToolInput.TaskID
+		if taskID == "" {
+			hookLog("handle-task-tool: TaskUpdate missing task_id")
+			return false
+		}
+
+		updates := make(map[string]interface{})
+		if hookData.ToolInput.Subject != "" {
+			updates["subject"] = hookData.ToolInput.Subject
+		}
+		if hookData.ToolInput.Description != "" {
+			updates["description"] = hookData.ToolInput.Description
+		}
+		if hookData.ToolInput.Status != "" {
+			updates["status"] = hookData.ToolInput.Status
+		}
+		if hookData.ToolInput.ActiveForm != "" {
+			updates["active_form"] = hookData.ToolInput.ActiveForm
+		}
+		if hookData.ToolInput.Metadata != nil {
+			updates["metadata"] = hookData.ToolInput.Metadata
+		}
+
+		updateTask(sessName, taskID, updates)
+		return true
+
+	case "TaskDelete":
+		taskID := hookData.ToolInput.TaskID
+		if taskID == "" {
+			hookLog("handle-task-tool: TaskDelete missing task_id")
+			return false
+		}
+		removeTask(sessName, taskID)
+		return true
+
+	case "TaskList":
+		// TaskList doesn't change state, just triggers an update
+		return true
+
+	case "TaskGet":
+		// TaskGet is read-only, doesn't change the list
+		// But we should still update the display in case something changed
+		return true
+
+	default:
+		return false
+	}
+}
+
 // htmlEscape escapes special HTML characters
 func htmlEscape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
@@ -575,6 +686,16 @@ func handlePermissionHook() error {
 	// Deliver any unsent assistant text before showing tool calls
 	if topicID != 0 && hookData.TranscriptPath != "" {
 		deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, true)
+	}
+
+	// Handle TaskCreate/TaskUpdate tools - update task state and Telegram message
+	if strings.HasPrefix(hookData.ToolName, "Task") {
+		handleTaskTool(sessName, hookData)
+		updateTaskListMessage(config, sessName, topicID)
+
+		// Task tools don't need permission approval, auto-allow
+		outputPermissionDecision("allow", "Task tool")
+		return nil
 	}
 
 	// Update tool call display
