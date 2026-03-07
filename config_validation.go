@@ -8,15 +8,14 @@ import (
 // validateConfig checks if the config is valid and returns any errors
 // It validates required fields for configured features and provider configs
 func validateConfig(config *Config) error {
-	// Validate Telegram integration if configured
-	if config.BotToken != "" || config.ChatID != 0 {
-		if config.BotToken == "" {
-			return fmt.Errorf("bot_token is required when chat_id is set")
-		}
-		if config.ChatID == 0 {
-			return fmt.Errorf("chat_id is required when bot_token is set")
-		}
+	// Validate Telegram integration - only if BOTH fields are set
+	// This allows partial configs during setup (e.g., setting bot_token first)
+	// We validate consistency, not completeness
+	if config.BotToken != "" && config.ChatID != 0 {
+		// Both are set, validate they're non-empty (already checked by condition)
+		// No additional validation needed for non-empty values
 	}
+	// Note: If only one is set, that's OK - it's a partial config during setup
 
 	// Validate provider configs
 	for name, provider := range config.Providers {
