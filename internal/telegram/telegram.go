@@ -1,4 +1,4 @@
-package main
+package telegram
 
 import (
 	"bytes"
@@ -14,9 +14,11 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/kidandcat/ccc/internal/config"
 )
 
-const maxResponseSize = 10 * 1024 * 1024 // 10MB
+const TelegramMaxResponseSize = 10 * 1024 * 1024 // 10MB
 
 // redactTokenError replaces the bot token in error messages with "***"
 func redactTokenError(err error, token string) error {
@@ -27,7 +29,7 @@ func redactTokenError(err error, token string) error {
 }
 
 // telegramGet performs an HTTP GET and redacts the bot token from any errors
-func telegramGet(token string, url string) (*http.Response, error) {
+func TelegramGet(token string, url string) (*http.Response, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, redactTokenError(err, token)
@@ -36,7 +38,7 @@ func telegramGet(token string, url string) (*http.Response, error) {
 }
 
 // telegramClientGet performs an HTTP GET with a custom client and redacts the bot token from any errors
-func telegramClientGet(client *http.Client, token string, url string) (*http.Response, error) {
+func TelegramClientGet(client *http.Client, token string, url string) (*http.Response, error) {
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, redactTokenError(err, token)
@@ -45,28 +47,35 @@ func telegramClientGet(client *http.Client, token string, url string) (*http.Res
 }
 
 // updateCCC downloads the latest ccc binary from GitHub releases and restarts
-func updateCCC(config *Config, chatID, threadID int64, offset int) {
-	sendMessage(config, chatID, threadID, "🔄 Updating ccc...")
+func UpdateCCC(cfg *config.Config, chatID, threadID int64, offset int) {
+	SendMessage(cfg, chatID, threadID, "🔄 Updating ccc...")
 
 	binaryName := fmt.Sprintf("ccc-%s-%s", runtime.GOOS, runtime.GOARCH)
 	downloadURL := fmt.Sprintf("https://github.com/kidandcat/ccc/releases/latest/download/%s", binaryName)
 
 	resp, err := http.Get(downloadURL)
 	if err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Download failed: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Download failed: %v", err))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Download failed: HTTP %d (no release for %s?)", resp.StatusCode, binaryName))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Download failed: HTTP %d (no release for %s?)", resp.StatusCode, binaryName))
+		return
+	}
+
+	// Get current executable path
+	cccPath, err := os.Executable()
+	if err != nil {
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to get current binary path: %v", err))
 		return
 	}
 
 	tmpPath := cccPath + ".new"
 	f, err := os.Create(tmpPath)
 	if err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create temp file: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to create temp file: %v", err))
 		return
 	}
 
@@ -74,20 +83,20 @@ func updateCCC(config *Config, chatID, threadID int64, offset int) {
 	f.Close()
 	if err != nil {
 		os.Remove(tmpPath)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to write binary: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to write binary: %v", err))
 		return
 	}
 
 	// Validate downloaded binary size (ccc should be > 1MB)
 	if written < 1000000 {
 		os.Remove(tmpPath)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Downloaded file too small (%d bytes), aborting", written))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Downloaded file too small (%d bytes), aborting", written))
 		return
 	}
 
 	if err := os.Chmod(tmpPath, 0755); err != nil {
 		os.Remove(tmpPath)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to chmod: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to chmod: %v", err))
 		return
 	}
 
@@ -95,7 +104,7 @@ func updateCCC(config *Config, chatID, threadID int64, offset int) {
 	testCmd := exec.Command(tmpPath, "version")
 	if err := testCmd.Run(); err != nil {
 		os.Remove(tmpPath)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ New binary failed validation: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ New binary failed validation: %v", err))
 		return
 	}
 
@@ -104,7 +113,7 @@ func updateCCC(config *Config, chatID, threadID int64, offset int) {
 	os.Remove(backupPath) // Remove old backup if exists
 	if err := os.Rename(cccPath, backupPath); err != nil {
 		os.Remove(tmpPath)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to backup old binary: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to backup old binary: %v", err))
 		return
 	}
 
@@ -112,7 +121,7 @@ func updateCCC(config *Config, chatID, threadID int64, offset int) {
 	if err := os.Rename(tmpPath, cccPath); err != nil {
 		// Restore backup
 		os.Rename(backupPath, cccPath)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to replace binary: %v", err))
+		SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to replace binary: %v", err))
 		return
 	}
 
@@ -122,7 +131,7 @@ func updateCCC(config *Config, chatID, threadID int64, offset int) {
 			// Restore backup if codesign fails
 			os.Remove(cccPath)
 			os.Rename(backupPath, cccPath)
-			sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Codesign failed: %v", err))
+			SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Codesign failed: %v", err))
 			return
 		}
 	}
@@ -130,13 +139,13 @@ func updateCCC(config *Config, chatID, threadID int64, offset int) {
 	// Success - remove backup
 	os.Remove(backupPath)
 
-	sendMessage(config, chatID, threadID, "✅ Updated. Restarting...")
+	SendMessage(cfg, chatID, threadID, "✅ Updated. Restarting...")
 	// Confirm offset so the /update message is not reprocessed after restart
-	http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=1", config.BotToken, offset))
+	http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=1", cfg.BotToken, offset))
 	os.Exit(0)
 }
 
-func telegramAPI(config *Config, method string, params url.Values) (*TelegramResponse, error) {
+func telegramAPI(config *config.Config, method string, params url.Values) (*TelegramResponse, error) {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", config.BotToken, method)
 	resp, err := http.PostForm(apiURL, params)
 	if err != nil {
@@ -144,28 +153,28 @@ func telegramAPI(config *Config, method string, params url.Values) (*TelegramRes
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, TelegramMaxResponseSize))
 	var result TelegramResponse
 	json.Unmarshal(body, &result)
 	return &result, nil
 }
 
-func sendMessage(config *Config, chatID int64, threadID int64, text string) error {
-	_, err := sendMessageGetID(config, chatID, threadID, text)
+func SendMessage(cfg *config.Config, chatID int64, threadID int64, text string) error {
+	_, err := SendMessageGetID(cfg, chatID, threadID, text)
 	return err
 }
 
-// sendMessageGetID sends a message and returns the message ID for later editing
-func sendMessageGetID(config *Config, chatID int64, threadID int64, text string) (int64, error) {
-	return sendMessageWithMode(config, chatID, threadID, text, "Markdown")
+// SendMessageGetID sends a message and returns the message ID for later editing
+func SendMessageGetID(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
+	return sendMessageWithMode(cfg, chatID, threadID, text, "Markdown")
 }
 
-// sendMessageHTMLGetID sends a message with HTML parse mode and returns the message ID
-func sendMessageHTMLGetID(config *Config, chatID int64, threadID int64, text string) (int64, error) {
-	return sendMessageWithMode(config, chatID, threadID, text, "HTML")
+// SendMessageHTMLGetID sends a message with HTML parse mode and returns the message ID
+func SendMessageHTMLGetID(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
+	return sendMessageWithMode(cfg, chatID, threadID, text, "HTML")
 }
 
-func sendMessageWithMode(config *Config, chatID int64, threadID int64, text string, parseMode string) (int64, error) {
+func sendMessageWithMode(config *config.Config, chatID int64, threadID int64, text string, parseMode string) (int64, error) {
 	const maxLen = 4000
 
 	// Split long messages
@@ -222,16 +231,16 @@ func sendMessageWithMode(config *Config, chatID int64, threadID int64, text stri
 }
 
 // editMessage edits an existing message, sending overflow as new messages
-func editMessage(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
+func editMessage(config *config.Config, chatID int64, messageID int64, threadID int64, text string) error {
 	return editMessageWithMode(config, chatID, messageID, threadID, text, "Markdown")
 }
 
-// editMessageHTML edits a message using HTML parse mode
-func editMessageHTML(config *Config, chatID int64, messageID int64, threadID int64, text string) error {
-	return editMessageWithMode(config, chatID, messageID, threadID, text, "HTML")
+// EditMessageHTML edits a message using HTML parse mode
+func EditMessageHTML(cfg *config.Config, chatID int64, messageID int64, threadID int64, text string) error {
+	return editMessageWithMode(cfg, chatID, messageID, threadID, text, "HTML")
 }
 
-func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID int64, text string, parseMode string) error {
+func editMessageWithMode(config *config.Config, chatID int64, messageID int64, threadID int64, text string, parseMode string) error {
 	const maxLen = 4000
 
 	// Split message - first part goes to edit, rest as new messages
@@ -257,13 +266,14 @@ func editMessageWithMode(config *Config, chatID int64, messageID int64, threadID
 	// Send remaining parts as new messages
 	for i := 1; i < len(messages); i++ {
 		time.Sleep(100 * time.Millisecond)
-		sendMessage(config, chatID, threadID, messages[i])
+		SendMessage(config, chatID, threadID, messages[i])
 	}
 
 	return nil
 }
 
-func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text string, buttons [][]InlineKeyboardButton) error {
+// SendMessageWithKeyboard sends a message with inline keyboard buttons
+func SendMessageWithKeyboard(cfg *config.Config, chatID int64, threadID int64, text string, buttons [][]InlineKeyboardButton) error {
 	const maxLen = 4000
 
 	// Split long messages - send all but last as regular messages, last with keyboard
@@ -271,7 +281,7 @@ func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text 
 
 	// Send all but the last message as regular messages
 	for i := 0; i < len(messages)-1; i++ {
-		sendMessage(config, chatID, threadID, messages[i])
+		SendMessage(cfg, chatID, threadID, messages[i])
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -290,7 +300,7 @@ func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text 
 		params.Set("message_thread_id", fmt.Sprintf("%d", threadID))
 	}
 
-	result, err := telegramAPI(config, "sendMessage", params)
+	result, err := telegramAPI(cfg, "sendMessage", params)
 	if err != nil {
 		return err
 	}
@@ -300,14 +310,14 @@ func sendMessageWithKeyboard(config *Config, chatID int64, threadID int64, text 
 	return nil
 }
 
-func answerCallbackQuery(config *Config, callbackID string) {
+func AnswerCallbackQuery(cfg *config.Config, callbackID string) {
 	params := url.Values{
 		"callback_query_id": {callbackID},
 	}
-	telegramAPI(config, "answerCallbackQuery", params)
+	telegramAPI(cfg, "answerCallbackQuery", params)
 }
 
-func editMessageRemoveKeyboard(config *Config, chatID int64, messageID int, newText string) {
+func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int, newText string) {
 	const maxLen = 4000
 	if len(newText) > maxLen {
 		newText = newText[:maxLen-3] + "..."
@@ -318,10 +328,10 @@ func editMessageRemoveKeyboard(config *Config, chatID int64, messageID int, newT
 		"message_id": {fmt.Sprintf("%d", messageID)},
 		"text":       {newText},
 	}
-	telegramAPI(config, "editMessageText", params)
+	telegramAPI(cfg, "editMessageText", params)
 }
 
-func sendTypingAction(config *Config, chatID int64, threadID int64) {
+func SendTypingAction(cfg *config.Config, chatID int64, threadID int64) {
 	params := url.Values{
 		"chat_id": {fmt.Sprintf("%d", chatID)},
 		"action":  {"typing"},
@@ -329,7 +339,7 @@ func sendTypingAction(config *Config, chatID int64, threadID int64) {
 	if threadID > 0 {
 		params.Set("message_thread_id", fmt.Sprintf("%d", threadID))
 	}
-	telegramAPI(config, "sendChatAction", params)
+	telegramAPI(cfg, "sendChatAction", params)
 }
 
 func splitMessage(text string, maxLen int) []string {
@@ -365,7 +375,7 @@ func splitMessage(text string, maxLen int) []string {
 }
 
 // sendFile sends a file to Telegram (max 50MB)
-func sendFile(config *Config, chatID int64, threadID int64, filePath string, caption string) error {
+func SendFile(config *config.Config, chatID int64, threadID int64, filePath string, caption string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return err
@@ -410,10 +420,10 @@ func sendFile(config *Config, chatID int64, threadID int64, filePath string, cap
 	return nil
 }
 
-// downloadTelegramFile downloads a file from Telegram
-func downloadTelegramFile(config *Config, fileID string, destPath string) error {
+// DownloadTelegramFile downloads a file from Telegram
+func DownloadTelegramFile(cfg *config.Config, fileID string, destPath string) error {
 	// Get file path from Telegram
-	resp, err := telegramGet(config.BotToken, fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s", config.BotToken, fileID))
+	resp, err := TelegramGet(cfg.BotToken, fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s", cfg.BotToken, fileID))
 	if err != nil {
 		return err
 	}
@@ -433,8 +443,8 @@ func downloadTelegramFile(config *Config, fileID string, destPath string) error 
 	}
 
 	// Download the file
-	fileURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", config.BotToken, result.Result.FilePath)
-	fileResp, err := telegramGet(config.BotToken, fileURL)
+	fileURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", cfg.BotToken, result.Result.FilePath)
+	fileResp, err := TelegramGet(cfg.BotToken, fileURL)
 	if err != nil {
 		return err
 	}
@@ -450,7 +460,7 @@ func downloadTelegramFile(config *Config, fileID string, destPath string) error 
 	return err
 }
 
-func createForumTopic(config *Config, name string, providerName string) (int64, error) {
+func CreateForumTopic(config *config.Config, name string, providerName string) (int64, error) {
 	if config.GroupID == 0 {
 		return 0, fmt.Errorf("no group configured. Add bot to a group with topics enabled and run: ccc setgroup")
 	}
@@ -483,17 +493,17 @@ func createForumTopic(config *Config, name string, providerName string) (int64, 
 	return topic.MessageThreadID, nil
 }
 
-func deleteForumTopic(config *Config, topicID int64) error {
-	if config.GroupID == 0 {
+func DeleteForumTopic(cfg *config.Config, topicID int64) error {
+	if cfg.GroupID == 0 {
 		return fmt.Errorf("no group configured")
 	}
 
 	params := url.Values{
-		"chat_id":           {fmt.Sprintf("%d", config.GroupID)},
+		"chat_id":           {fmt.Sprintf("%d", cfg.GroupID)},
 		"message_thread_id": {fmt.Sprintf("%d", topicID)},
 	}
 
-	result, err := telegramAPI(config, "deleteForumTopic", params)
+	result, err := telegramAPI(cfg, "deleteForumTopic", params)
 	if err != nil {
 		return err
 	}
@@ -505,7 +515,7 @@ func deleteForumTopic(config *Config, topicID int64) error {
 }
 
 // setBotCommands sets the bot commands in Telegram
-func setBotCommands(botToken string) {
+func SetBotCommands(botToken string) {
 	commands := []map[string]string{
 		{"command": "new", "description": "Create/restart session: /new <name>"},
 		{"command": "continue", "description": "Restart session with history"},

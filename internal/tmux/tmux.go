@@ -1,4 +1,4 @@
-package main
+package tmux
 
 import (
 	"bufio"
@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kidandcat/ccc/internal/config"
 )
 
 const (
@@ -20,20 +21,33 @@ const (
 )
 
 var (
-	tmuxPath   string
-	cccPath    string
-	claudePath string
+	// TmuxPath is the path to the tmux binary
+	TmuxPath   string
+	// CccPath is the path to the ccc binary
+	CccPath    string
+	// ClaudePath is the path to the claude binary
+	ClaudePath string
 )
 
-func initPaths() {
+// TmuxSafeName converts a session name to a tmux-safe window name
+// (dots are interpreted as window/pane separators in tmux)
+// We replace dots with "__" (double underscore) to avoid name collisions
+// while keeping the name readable and avoiding conflicts with natural underscores
+func TmuxSafeName(name string) string {
+	return strings.ReplaceAll(name, ".", "__")
+}
+
+// InitPaths initializes the paths to tmux, ccc, and claude binaries
+// InitPaths initializes paths for tmux, claude, and other binaries
+func InitPaths() {
 	// Find tmux binary
 	if path, err := exec.LookPath("tmux"); err == nil {
-		tmuxPath = path
+		TmuxPath = path
 	} else {
 		// Fallback paths for common installations
 		for _, p := range []string{"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"} {
 			if _, err := os.Stat(p); err == nil {
-				tmuxPath = p
+				TmuxPath = p
 				break
 			}
 		}
@@ -44,25 +58,25 @@ func initPaths() {
 	home, _ := os.UserHomeDir()
 	binCcc := home + "/bin/ccc"
 	if _, err := os.Stat(binCcc); err == nil {
-		cccPath = binCcc
+		CccPath = binCcc
 	} else if path, err := exec.LookPath("ccc"); err == nil {
-		cccPath = path
+		CccPath = path
 	} else if exe, err := os.Executable(); err == nil {
-		cccPath = exe
+		CccPath = exe
 	}
 
 	// Find claude binary - first try PATH, then fallback paths
 	if path, err := exec.LookPath("claude"); err == nil {
-		claudePath = path
+		ClaudePath = path
 	} else {
 		home, _ := os.UserHomeDir()
-		claudePaths := []string{
+		ClaudePaths := []string{
 			home + "/.local/bin/claude",
 			"/usr/local/bin/claude",
 		}
-		for _, p := range claudePaths {
+		for _, p := range ClaudePaths {
 			if _, err := os.Stat(p); err == nil {
-				claudePath = p
+				ClaudePath = p
 				break
 			}
 		}
@@ -72,7 +86,7 @@ func initPaths() {
 // getTargetSession returns an existing tmux session name, or creates one if none exist
 func getTargetSession() (string, error) {
 	// Try to find any existing session
-	cmd := exec.Command(tmuxPath, "list-sessions", "-F", "#{session_name}")
+	cmd := exec.Command(TmuxPath, "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 	if err == nil {
 		scanner := bufio.NewScanner(bytes.NewReader(out))
@@ -84,11 +98,11 @@ func getTargetSession() (string, error) {
 		}
 	}
 	// No sessions exist, create one
-	c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
+	c := exec.Command(TmuxPath, "new-session", "-d", "-s", cccSessionName)
 	if err := c.Run(); err != nil {
 		return "", err
 	}
-	exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
+	exec.Command(TmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
 	return cccSessionName, nil
 }
 
@@ -102,7 +116,7 @@ func tmuxTargetByID(windowID string, windowName string) string {
 
 // tmuxTargetByName finds a window target by name (fallback)
 func tmuxTargetByName(windowName string) string {
-	cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_id}\t#{window_name}")
+	cmd := exec.Command(TmuxPath, "list-windows", "-a", "-F", "#{window_id}\t#{window_name}")
 	out, err := cmd.Output()
 	if err == nil {
 		scanner := bufio.NewScanner(bytes.NewReader(out))
@@ -124,7 +138,7 @@ func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 	// First find the window
 	target := tmuxTargetByID(windowID, windowName)
 	if target == "" {
-		listenLog("tmuxWindowHasClaudeRunning: no target found for windowID=%s name=%s", windowID, windowName)
+		fmt.Printf("tmuxWindowHasClaudeRunning: no target found for windowID=%s name=%s", windowID, windowName)
 		return false
 	}
 	return tmuxTargetHasClaudeRunning(target)
@@ -136,10 +150,10 @@ func tmuxWindowHasClaudeRunning(windowID string, windowName string) bool {
 func tmuxTargetHasClaudeRunning(target string) bool {
 
 	// Get pane IDs, active flag, and commands together to check only the active pane
-	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}\t#{pane_current_command}")
+	cmd := exec.Command(TmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}\t#{pane_current_command}")
 	out, err := cmd.Output()
 	if err != nil {
-		listenLog("tmuxTargetHasClaudeRunning: list-panes failed for target=%s: %v", target, err)
+		fmt.Printf("tmuxTargetHasClaudeRunning: list-panes failed for target=%s: %v", target, err)
 		return false
 	}
 
@@ -168,38 +182,38 @@ func tmuxTargetHasClaudeRunning(target string) bool {
 
 		// Process-based detection: check if this pane has claude running
 		if strings.HasPrefix(paneCmd, "claude") {
-			listenLog("tmuxTargetHasClaudeRunning: Claude IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
+			fmt.Printf("tmuxTargetHasClaudeRunning: Claude IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 			return true
 		}
 		// Check for npm-installed Claude (shows as 'node' or 'nodejs')
 		if paneCmd == "node" || paneCmd == "nodejs" {
 			// Verify it's actually Claude by examining the process command line
 			if tmuxPaneIsClaudeProcess(paneID) {
-				listenLog("tmuxTargetHasClaudeRunning: Claude (npm) IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
+				fmt.Printf("tmuxTargetHasClaudeRunning: Claude (npm) IS running (cmd=%s) in active pane=%s target=%s", paneCmd, paneID, target)
 				return true
 			}
-			listenLog("tmuxTargetHasClaudeRunning: node found but not Claude process in pane=%s target=%s", paneID, target)
+			fmt.Printf("tmuxTargetHasClaudeRunning: node found but not Claude process in pane=%s target=%s", paneID, target)
 		}
 		// Special case: "ccc" process means the wrapper is running
 		// This could mean Claude is starting OR it's already running
 		// We need prompt-based detection to tell the difference
 		if paneCmd == "ccc" || paneCmd == "ccc run" {
-			listenLog("tmuxTargetHasClaudeRunning: ccc process detected, checking active prompt in pane=%s target=%s", paneID, target)
+			fmt.Printf("tmuxTargetHasClaudeRunning: ccc process detected, checking active prompt in pane=%s target=%s", paneID, target)
 			// Check if Claude prompt is present at the END of the buffer - means Claude is actually running
 			if tmuxPaneHasActiveClaudePrompt(paneID) {
-				listenLog("tmuxTargetHasClaudeRunning: Claude IS running (ccc+active prompt detected) in active pane=%s target=%s", paneID, target)
+				fmt.Printf("tmuxTargetHasClaudeRunning: Claude IS running (ccc+active prompt detected) in active pane=%s target=%s", paneID, target)
 				return true
 			}
 			// ccc without active prompt means it's still starting up
-			listenLog("tmuxTargetHasClaudeRunning: ccc running but no active Claude prompt yet in pane=%s target=%s", paneID, target)
+			fmt.Printf("tmuxTargetHasClaudeRunning: ccc running but no active Claude prompt yet in pane=%s target=%s", paneID, target)
 		}
 		// Special case: shell process (zsh/bash) - check if it has Claude as a child process
 		// This handles cases where pane_current_command shows the shell but Claude is running under it
 		if shells[paneCmd] {
-			listenLog("tmuxTargetHasClaudeRunning: shell detected (cmd=%s) in pane=%s target=%s, checking for Claude children", paneCmd, paneID, target)
+			fmt.Printf("tmuxTargetHasClaudeRunning: shell detected (cmd=%s) in pane=%s target=%s, checking for Claude children", paneCmd, paneID, target)
 			// Check if this shell has Claude/node children
 			if tmuxPaneHasClaudeChild(paneID) {
-				listenLog("tmuxTargetHasClaudeRunning: Claude IS running as child of shell in pane=%s target=%s", paneID, target)
+				fmt.Printf("tmuxTargetHasClaudeRunning: Claude IS running as child of shell in pane=%s target=%s", paneID, target)
 				return true
 			}
 		}
@@ -209,12 +223,12 @@ func tmuxTargetHasClaudeRunning(target string) bool {
 	// We use strict detection here to avoid false positives from shell prompts
 	// Only accept the prompt if we have Claude-specific context (via tmuxPaneHasActiveClaudePrompt)
 	if activePaneID != "" && tmuxPaneHasActiveClaudePrompt(activePaneID) {
-		listenLog("tmuxTargetHasClaudeRunning: Claude IS running (prompt fallback detected) in active pane=%s target=%s", activePaneID, target)
+		fmt.Printf("tmuxTargetHasClaudeRunning: Claude IS running (prompt fallback detected) in active pane=%s target=%s", activePaneID, target)
 		return true
 	}
 
 	// If we reach here, the active pane doesn't have Claude running
-	listenLog("tmuxTargetHasClaudeRunning: Claude NOT running in active pane (cmd=%s) in target=%s - will auto-restart", activePaneCmd, target)
+	fmt.Printf("tmuxTargetHasClaudeRunning: Claude NOT running in active pane (cmd=%s) in target=%s - will auto-restart", activePaneCmd, target)
 	return false
 }
 
@@ -227,7 +241,7 @@ func tmuxPaneHasClaudePrompt(paneTarget string) bool {
 	// Capture the pane buffer and check for Claude's prompt
 	// Use -e for escape sequences and -J to join wrapped lines
 	// Do NOT use -C as it escapes non-ASCII bytes, breaking Unicode prompt detection
-	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J")
+	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -247,7 +261,7 @@ func tmuxPaneHasActiveClaudePrompt(paneTarget string) bool {
 	// Capture the last few lines of the pane buffer to check for active prompt
 	// Use -e for escape sequences and -J to join wrapped lines
 	// -S -15 captures last 15 lines (enough to see prompt + recent context)
-	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J", "-S", "-15")
+	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J", "-S", "-15")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -283,11 +297,11 @@ func tmuxPaneHasActiveClaudePrompt(paneTarget string) bool {
 				// Only accept the prompt if we have Claude-specific context
 				// This avoids false positives from shell prompts that use ❯
 				if hasClaudeContext {
-					listenLog("tmuxPaneHasActiveClaudePrompt: found Claude prompt with context in pane=%s: %q", paneTarget, line)
+					fmt.Printf("tmuxPaneHasActiveClaudePrompt: found Claude prompt with context in pane=%s: %q", paneTarget, line)
 					return true
 				}
 				// Has ❯ but no Claude context - likely a shell prompt
-				listenLog("tmuxPaneHasActiveClaudePrompt: found ❯ but no Claude context in pane=%s: %q", paneTarget, line)
+				fmt.Printf("tmuxPaneHasActiveClaudePrompt: found ❯ but no Claude context in pane=%s: %q", paneTarget, line)
 			}
 			// If we found a non-empty line without the prompt, Claude is not active
 			break
@@ -301,7 +315,7 @@ func tmuxPaneHasActiveClaudePrompt(paneTarget string) bool {
 // Returns true if the pane has a child process that is Claude (claude binary or node with claude/cli)
 func tmuxPaneHasClaudeChild(paneID string) bool {
 	// Get the pane's PID using tmux
-	cmd := exec.Command(tmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	cmd := exec.Command(TmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -344,13 +358,13 @@ func tmuxPaneHasClaudeChild(paneID string) bool {
 
 		// Check for claude binary
 		if strings.Contains(cmdline, "claude") && !strings.Contains(cmdline, "ccc") {
-			listenLog("tmuxPaneHasClaudeChild: found claude child in pane=%s: %q", paneID, cmdline)
+			fmt.Printf("tmuxPaneHasClaudeChild: found claude child in pane=%s: %q", paneID, cmdline)
 			return true
 		}
 		// Check for node process with claude/cli
 		if (strings.HasPrefix(cmdline, "node ") || strings.HasPrefix(cmdline, "nodejs ")) &&
 			(strings.Contains(cmdline, "/claude") || strings.Contains(cmdline, "/@anthropic-ai/")) {
-			listenLog("tmuxPaneHasClaudeChild: found node/claude child in pane=%s: %q", paneID, cmdline)
+			fmt.Printf("tmuxPaneHasClaudeChild: found node/claude child in pane=%s: %q", paneID, cmdline)
 			return true
 		}
 	}
@@ -363,7 +377,7 @@ func tmuxPaneHasClaudeChild(paneID string) bool {
 // Returns true if the pane is running a node process with claude/cli in its command line
 func tmuxPaneIsClaudeProcess(paneID string) bool {
 	// Get the pane's PID (shell PID) using tmux
-	cmd := exec.Command(tmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	cmd := exec.Command(TmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -382,7 +396,7 @@ func tmuxPaneIsClaudeProcess(paneID string) bool {
 		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
 		if psErr != nil {
 			// ps completely failed, fall back to prompt check
-			listenLog("tmuxPaneIsClaudeProcess: ps failed for shellPid=%s, falling back to prompt check", shellPid)
+			fmt.Printf("tmuxPaneIsClaudeProcess: ps failed for shellPid=%s, falling back to prompt check", shellPid)
 			return tmuxPaneHasClaudePrompt(paneID)
 		}
 
@@ -434,13 +448,13 @@ func tmuxPaneIsClaudeProcess(paneID string) bool {
 			strings.HasSuffix(cmdline, "/claude.js"))          // ends with /claude.js
 
 		if isClaude {
-			listenLog("tmuxPaneIsClaudeProcess: paneID=%s shellPid=%s nodePid=%s cmdline=%q isClaude=true", paneID, shellPid, pid, cmdline)
+			fmt.Printf("tmuxPaneIsClaudeProcess: paneID=%s shellPid=%s nodePid=%s cmdline=%q isClaude=true", paneID, shellPid, pid, cmdline)
 			return true
 		}
 	}
 
 	// No node process found as child of shell, or not Claude
-	listenLog("tmuxPaneIsClaudeProcess: paneID=%s shellPid=%s no Claude node process found", paneID, shellPid)
+	fmt.Printf("tmuxPaneIsClaudeProcess: paneID=%s shellPid=%s no Claude node process found", paneID, shellPid)
 	return false
 }
 
@@ -493,7 +507,7 @@ func tmuxWindowHasShellRunning(windowID string, windowName string) bool {
 
 	// Get only the ACTIVE pane's current command
 	// Using -t target without -F format gets us the active pane by default
-	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_current_command}")
+	cmd := exec.Command(TmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_current_command}")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -530,7 +544,7 @@ func tmuxWindowHasShellRunning(windowID string, windowName string) bool {
 func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	if windowID != "" {
 		// Check by ID directly
-		cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_id}")
+		cmd := exec.Command(TmuxPath, "list-windows", "-a", "-F", "#{window_id}")
 		out, err := cmd.Output()
 		if err != nil {
 			return false
@@ -544,7 +558,7 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 		return false
 	}
 	// Fallback: search by name
-	cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_name}")
+	cmd := exec.Command(TmuxPath, "list-windows", "-a", "-F", "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -562,15 +576,15 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 // Returns the session name "ccc"
 func ensureCccSession() (string, error) {
 	// Check if the ccc session exists
-	cmd := exec.Command(tmuxPath, "list-sessions", "-F", "#{session_name}")
+	cmd := exec.Command(TmuxPath, "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		// No sessions at all, create ccc session
-		c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
+		c := exec.Command(TmuxPath, "new-session", "-d", "-s", cccSessionName)
 		if err := c.Run(); err != nil {
 			return "", err
 		}
-		exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
+		exec.Command(TmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
 		return cccSessionName, nil
 	}
 
@@ -586,11 +600,11 @@ func ensureCccSession() (string, error) {
 
 	// Create ccc session if it doesn't exist
 	if !hasCccSession {
-		c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
+		c := exec.Command(TmuxPath, "new-session", "-d", "-s", cccSessionName)
 		if err := c.Run(); err != nil {
 			return "", err
 		}
-		exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
+		exec.Command(TmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
 	}
 
 	return cccSessionName, nil
@@ -605,10 +619,10 @@ func ensureProjectWindow(sessionName string) (string, error) {
 	}
 
 	// Make the session name tmux-safe (dots are interpreted as separators)
-	windowName := tmuxSafeName(sessionName)
+	windowName := TmuxSafeName(sessionName)
 
 	// Check if a window with this name already exists in the ccc session
-	cmd := exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
+	cmd := exec.Command(TmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
 	out, err := cmd.Output()
 	if err == nil {
 		scanner := bufio.NewScanner(bytes.NewReader(out))
@@ -623,7 +637,7 @@ func ensureProjectWindow(sessionName string) (string, error) {
 	// Window doesn't exist, create it
 	// Note: We use sess + ":" to target the session for window creation
 	// Without the colon, tmux interprets it as a window target which can cause conflicts
-	cmd = exec.Command(tmuxPath, "new-window", "-t", sess + ":", "-n", windowName)
+	cmd = exec.Command(TmuxPath, "new-window", "-t", sess + ":", "-n", windowName)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("failed to create window: %w", err)
 	}
@@ -640,10 +654,10 @@ func findExistingWindow(sessionName string) (string, error) {
 	}
 
 	// Make the session name tmux-safe (dots are interpreted as separators)
-	windowName := tmuxSafeName(sessionName)
+	windowName := TmuxSafeName(sessionName)
 
 	// Check if a window with this name already exists in the ccc session
-	cmd := exec.Command(tmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
+	cmd := exec.Command(TmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -661,22 +675,22 @@ func findExistingWindow(sessionName string) (string, error) {
 	return "", nil
 }
 
-// getCccWindowTarget returns the target for a project's window in the ccc session
+// GetCccWindowTarget returns the target for a project's window in the ccc session
 // Takes a session name (e.g., "TommyClaw") and returns "ccc:TommyClaw"
-func getCccWindowTarget(sessionName string) (string, error) {
+func GetCccWindowTarget(sessionName string) (string, error) {
 	return ensureProjectWindow(sessionName)
 }
 
-// getCurrentSessionName returns the session name currently displayed in the ccc session
+// GetCurrentSessionName returns the session name currently displayed in the ccc session
 // Returns empty string if unable to determine
-func getCurrentSessionName() string {
+func GetCurrentSessionName() string {
 	sess, err := ensureCccSession()
 	if err != nil {
 		return ""
 	}
 
 	// Get the current window name in the ccc session
-	cmd := exec.Command(tmuxPath, "display-message", "-t", sess, "-p", "#{window_name}")
+	cmd := exec.Command(TmuxPath, "display-message", "-t", sess, "-p", "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -687,10 +701,10 @@ func getCurrentSessionName() string {
 	return strings.TrimSpace(string(out))
 }
 
-// switchSessionInWindow switches the context to the project's window in the ccc session
+// SwitchSessionInWindow switches the context to the project's window in the ccc session
 // Each project gets its own named window within the main "ccc" session
 // If skipRestart is true and the requested session is already active, it will skip restarting
-func switchSessionInWindow(sessionName string, workDir string, providerName string, sessionID string, worktreeName string, continueSession bool, skipRestart bool) error {
+func SwitchSessionInWindow(sessionName string, workDir string, providerName string, sessionID string, worktreeName string, continueSession bool, skipRestart bool) error {
 	// Ensure the project window exists in the ccc session (e.g., "ccc:TommyClaw")
 	target, err := ensureProjectWindow(sessionName)
 	if err != nil {
@@ -712,7 +726,7 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 			// This handles false negatives in detection where Claude is actually running
 			// Check for Claude prompt in the pane content as a fallback
 			if tmuxPaneHasActiveClaudePrompt(target) {
-				listenLog("skipRestart=true: Claude prompt detected in pane content (fallback detection)")
+				fmt.Printf("skipRestart=true: Claude prompt detected in pane content (fallback detection)")
 				shouldRestart = false
 			}
 		}
@@ -720,7 +734,7 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 
 	// Build the ccc run command with all flags
 	// Use ccc run instead of claude directly to ensure provider env setup
-	runCmd := cccPath + " run"
+	runCmd := CccPath + " run"
 
 	// Determine if we should continue an existing session
 	// Only add -c flag if Claude is actually running OR we have a specific session ID
@@ -732,9 +746,9 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 		// Check if Claude is actually running before adding -c flag
 		if tmuxWindowHasClaudeRunning(target, "") {
 			runCmd += " -c"
-			listenLog("Claude is running, will continue existing session")
+			fmt.Printf("Claude is running, will continue existing session")
 		} else {
-			listenLog("continueSession=true but Claude not running, will start new session instead")
+			fmt.Printf("continueSession=true but Claude not running, will start new session instead")
 		}
 	}
 	// If no sessionID and not continueSession (or Claude not running), start fresh (no flags)
@@ -755,8 +769,8 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 		// (Claude, vim, less, or any other foreground process)
 		// respawn-pane kills the process and restarts the shell atomically
 
-		listenLog("Respawning pane for clean session restart")
-		if err := exec.Command(tmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
+		fmt.Printf("Respawning pane for clean session restart")
+		if err := exec.Command(TmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
 			return fmt.Errorf("failed to respawn pane: %w", err)
 		}
 
@@ -768,7 +782,7 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 			time.Sleep(200 * time.Millisecond)
 			if !tmuxWindowHasClaudeRunning(target, "") {
 				respawnComplete = true
-				listenLog("Pane respawn complete, shell is ready")
+				fmt.Printf("Pane respawn complete, shell is ready")
 				break
 			}
 		}
@@ -784,7 +798,7 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 
 		// Change to work directory and start claude via ccc run (as one command)
 		fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 			return fmt.Errorf("failed to send command: %w", err)
 		}
 	} else {
@@ -792,18 +806,18 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 		if tmuxWindowHasClaudeRunning(target, "") {
 			// Claude is already running in this window - don't send any command
 			// The user can continue their existing session
-			listenLog("Claude already running in target window, skipping command send")
+			fmt.Printf("Claude already running in target window, skipping command send")
 		} else if tmuxWindowHasShellRunning(target, "") {
 			// Shell is running - decide whether to start Claude
 			// When skipRestart=true, the caller indicates the session should already be usable
 			// This means Claude might be running but not properly detected (false negative)
 			// In this case, we should NOT send a restart command to avoid disrupting the session
 			if skipRestart {
-				listenLog("Shell detected with skipRestart=true - not sending restart command to preserve session state")
+				fmt.Printf("Shell detected with skipRestart=true - not sending restart command to preserve session state")
 			} else {
 				// Shell is running but no Claude - start Claude
 				fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
-				if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+				if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 					return fmt.Errorf("failed to send command: %w", err)
 				}
 			}
@@ -812,18 +826,18 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 			// When skipRestart=true, be conservative and don't respawn
 			// The session might be in a transient state (Claude starting, tool running)
 			if skipRestart {
-				listenLog("Pane has unknown state but skipRestart=true - not respawning to preserve session state")
+				fmt.Printf("Pane has unknown state but skipRestart=true - not respawning to preserve session state")
 			} else {
 				// Respawn to get clean state
-				listenLog("Pane has unknown state, respawning for clean start")
-				if err := exec.Command(tmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
+				fmt.Printf("Pane has unknown state, respawning for clean start")
+				if err := exec.Command(TmuxPath, "respawn-pane", "-t", target, "-k").Run(); err != nil {
 					return fmt.Errorf("failed to respawn pane: %w", err)
 				}
 
 				// Wait for respawn and send command
 				time.Sleep(500 * time.Millisecond)
 				fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
-				if err := exec.Command(tmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
+				if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 					return fmt.Errorf("failed to send command: %w", err)
 				}
 			}
@@ -832,7 +846,7 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 
 	// Select the window to make it active (this is important when switching between projects)
 	// Only attempt selection if there might be an attached client - ignore errors in headless mode
-	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+	exec.Command(TmuxPath, "select-window", "-t", target).Run()
 	// We ignore the error from select-window because:
 	// 1. In headless/non-interactive mode, there's no client to switch
 	// 2. The window is still created and commands are sent successfully
@@ -844,7 +858,7 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 	if providerName != "" && len(providerName) > 0 {
 		// Store provider info in a user option for display purposes
 		prefix := strings.ToUpper(string(providerName[0]))
-		exec.Command(tmuxPath, "set-window-option", "-t", target, "@ccc-provider", prefix).Run()
+		exec.Command(TmuxPath, "set-window-option", "-t", target, "@ccc-provider", prefix).Run()
 	}
 
 	return nil
@@ -858,7 +872,7 @@ func shellQuote(s string) string {
 
 func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string, sessionID string, worktreeName string) (string, error) {
 	// Build the command to run inside the window
-	cccCmd := cccPath + " run"
+	cccCmd := CccPath + " run"
 	if sessionID != "" {
 		// Resume specific session by ID
 		cccCmd += " --resume " + shellQuote(sessionID)
@@ -880,7 +894,7 @@ func createTmuxWindow(windowName string, workDir string, continueSession bool, p
 
 	// Create new window, -P -F prints the window ID
 	args := []string{"new-window", "-P", "-F", "#{window_id}", "-t", sess + ":", "-n", windowName, "-c", workDir}
-	cmd := exec.Command(tmuxPath, args...)
+	cmd := exec.Command(TmuxPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -889,7 +903,7 @@ func createTmuxWindow(windowName string, workDir string, continueSession bool, p
 
 	// Send the command to the window via send-keys using window ID
 	time.Sleep(200 * time.Millisecond)
-	exec.Command(tmuxPath, "send-keys", "-t", windowID, cccCmd, "C-m").Run()
+	exec.Command(TmuxPath, "send-keys", "-t", windowID, cccCmd, "C-m").Run()
 
 	return windowID, nil
 }
@@ -897,7 +911,7 @@ func createTmuxWindow(windowName string, workDir string, continueSession bool, p
 // applyProviderEnv applies provider-specific environment variables to cmd.Env
 // Returns the modified environment slice
 // This version uses the Provider interface for provider-agnostic design
-func applyProviderEnv(baseEnv []string, provider Provider, config *Config) []string {
+func ApplyProviderEnv(baseEnv []string, provider config.Provider, cfg *config.Config) []string {
 	if provider == nil {
 		return baseEnv
 	}
@@ -905,7 +919,7 @@ func applyProviderEnv(baseEnv []string, provider Provider, config *Config) []str
 	env := baseEnv
 
 	// Get provider variables and track which ones we'll actually set
-	providerVars := provider.EnvVars(config)
+	providerVars := provider.EnvVars(cfg)
 
 	// For ConfiguredProvider with auth, we need to check if auth_env_var expands to non-empty
 	// If it expands to empty, we should preserve ambient credentials instead
@@ -976,7 +990,7 @@ func applyProviderEnv(baseEnv []string, provider Provider, config *Config) []str
 
 // applyProviderEnvLegacy applies provider-specific environment variables using the old ProviderConfig struct
 // This is a transitional function for backward compatibility
-func applyProviderEnvLegacy(baseEnv []string, provider *ProviderConfig, config *Config) []string {
+func applyProviderEnvLegacy(baseEnv []string, provider *config.ProviderConfig, cfg *config.Config) []string {
 	if provider == nil {
 		return baseEnv
 	}
@@ -1089,20 +1103,21 @@ func unsetEnvVars(env []string, keys []string) []string {
 }
 
 // runClaudeRaw runs claude directly (used inside tmux sessions)
+// RunClaudeRaw runs claude directly with optional session resume and provider override
 // providerOverride, if non-empty, specifies which provider to use instead of active_provider
 // resumeSessionID, if non-empty, resumes a specific session by ID
 // worktreeName, if non-empty, creates/uses a git worktree session
-func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string, worktreeName string) error {
-	if claudePath == "" {
+func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string, worktreeName string) error {
+	if ClaudePath == "" {
 		return fmt.Errorf("claude binary not found")
 	}
 
 	// Clean stale Telegram flag from previous sessions.
 	// Use window_name to identify the session
-	if winName, err := exec.Command(tmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
+	if winName, err := exec.Command(TmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
 		name := strings.TrimSpace(string(winName))
 		if name != "" {
-			os.Remove(telegramActiveFlag(name))
+			os.Remove(config.TelegramActiveFlag(name))
 		}
 	}
 
@@ -1118,7 +1133,7 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 
 	// Build the claude command with all args
 	// Execute claude directly to ensure provider env vars are not overridden by shell rc files
-	cmd := exec.Command(claudePath, args...)
+	cmd := exec.Command(ClaudePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1131,32 +1146,33 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	configDirCode := os.Getenv("CLAUDE_CODE_CONFIG_DIR")
 	configDirZai := os.Getenv("CLAUDE_CONFIG_DIR")
 	homeDir := os.Getenv("HOME")
-	listenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", claudePath, args, cwd, configDirCode, configDirZai, homeDir)
+	fmt.Printf("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", ClaudePath, args, cwd, configDirCode, configDirZai, homeDir)
 
 	// Load config and apply provider settings
-	config, err := loadConfig()
+	cfg, err := config.LoadConfig()
 	if err == nil {
 		// CRITICAL: Ensure hooks are installed in the current project directory
 		// Hooks are essential for ccc functionality (Telegram, OTP, tool tracking)
 		// We use cwd (current working directory) as the project path
-		sessionName := filepath.Base(cwd)
-		sessionInfo := &SessionInfo{Path: cwd}
-		if config.Sessions != nil {
-			if existing := config.Sessions[sessionName]; existing != nil {
-				sessionInfo = existing
-			}
-		}
-		if err := ensureHooksForSession(config, sessionName, sessionInfo); err != nil {
-			listenLog("Warning: Failed to ensure hooks in %s: %v", cwd, err)
-		}
+		// TODO: EnsureHooksForSession - temporarily disabled to break circular import
+		// sessionName := filepath.Base(cwd)
+		// sessionInfo := &config.SessionInfo{Path: cwd}
+		// if cfg.Sessions != nil {
+		// 	if existing := cfg.Sessions[sessionName]; existing != nil {
+		// 		sessionInfo = existing
+		// 	}
+		// }
+		// if err := session.EnsureHooksForSession(cfg, sessionName, sessionInfo); err != nil {
+		// 	fmt.Printf("Warning: Failed to ensure hooks in %s: %v", cwd, err)
+		// }
 
 		// Determine which provider to use using the Provider interface
 		// getProvider returns nil only for unknown providers
-		provider := getProvider(config, providerOverride)
+		provider := config.GetProvider(cfg, providerOverride)
 
 		// Validate provider - getProvider returns nil for unknown providers
 		if providerOverride != "" && provider == nil {
-			return fmt.Errorf("unknown provider: %s (available providers: %v)", providerOverride, getProviderNames(config))
+			return fmt.Errorf("unknown provider: %s (available providers: %v)", providerOverride, config.GetProviderNames(cfg))
 		}
 
 		// Apply provider env in the following cases:
@@ -1168,28 +1184,28 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		// Ensure provider settings have trusted directories configured
 		// This prevents "Do you trust the files in this folder?" prompts
 		// Works with both BuiltinProvider and ConfiguredProvider
-		if err := ensureProviderSettings(provider); err != nil {
-			listenLog("Failed to update provider settings: %v", err)
+		if err := config.EnsureProviderSettings(provider); err != nil {
+			fmt.Printf("Failed to update provider settings: %v", err)
 		}
 
 		if shouldApplyProviderEnv {
-			cmd.Env = applyProviderEnv(cmd.Env, provider, config)
-			listenLog("Applying provider env: providerOverride=%q resumeSessionID=%q provider=%q", providerOverride, resumeSessionID, provider.Name())
+			cmd.Env = ApplyProviderEnv(cmd.Env, provider, cfg)
+			fmt.Printf("Applying provider env: providerOverride=%q resumeSessionID=%q provider=%q", providerOverride, resumeSessionID, provider.Name())
 		} else {
-			listenLog("Preserving original session environment for resumeSessionID=%q", resumeSessionID)
+			fmt.Printf("Preserving original session environment for resumeSessionID=%q", resumeSessionID)
 		}
 
 		// Ensure OAuth token is available from config if not already in environment
-		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && config.OAuthToken != "" {
-			cmd.Env = append(cmd.Env, "CLAUDE_CODE_OAUTH_TOKEN="+config.OAuthToken)
+		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && cfg.OAuthToken != "" {
+			cmd.Env = append(cmd.Env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.OAuthToken)
 		}
 	}
 
 	return cmd.Run()
 }
 
-// waitForClaude polls the tmux pane until Claude Code's input prompt appears
-func waitForClaude(target string, timeout time.Duration) error {
+// WaitForClaude polls the tmux pane until Claude Code's input prompt appears
+func WaitForClaude(target string, timeout time.Duration) error {
 	// Poll faster for short timeouts (message sending), slower for startup
 	interval := 100 * time.Millisecond
 	if timeout > 10*time.Second {
@@ -1197,7 +1213,7 @@ func waitForClaude(target string, timeout time.Duration) error {
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
+		cmd := exec.Command(TmuxPath, "capture-pane", "-t", target, "-p")
 		out, err := cmd.Output()
 		if err == nil {
 			content := string(out)
@@ -1221,17 +1237,18 @@ func windowNameFromTarget(target string) string {
 	return target
 }
 
-func sendToTmuxFromTelegram(target string, windowName string, text string) error {
-	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
-	return sendToTmux(target, text)
+func SendToTmuxFromTelegram(target string, windowName string, text string) error {
+	os.WriteFile(config.TelegramActiveFlag(windowName), []byte("1"), 0600)
+	return SendToTmux(target, text)
 }
 
-func sendToTmuxFromTelegramWithDelay(target string, windowName string, text string, delay time.Duration) error {
-	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
+func SendToTmuxFromTelegramWithDelay(target string, windowName string, text string, delay time.Duration) error {
+	os.WriteFile(config.TelegramActiveFlag(windowName), []byte("1"), 0600)
 	return sendToTmuxWithDelay(target, text, delay)
 }
 
-func sendToTmux(target string, text string) error {
+// SendToTmux sends text to a tmux pane with automatic delay calculation
+func SendToTmux(target string, text string) error {
 	// Calculate delay based on text length
 	// Base: 50ms + 0.5ms per character, capped at 5 seconds
 	baseDelay := 50 * time.Millisecond
@@ -1249,7 +1266,7 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 
 	// Handle empty or whitespace-only text - nothing to send
 	if strings.TrimSpace(text) == "" {
-		listenLog("sendToTmuxWithDelay: empty or whitespace-only text, skipping")
+		fmt.Printf("sendToTmuxWithDelay: empty or whitespace-only text, skipping")
 		return nil
 	}
 
@@ -1261,7 +1278,7 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		// Use bracketed paste mode for multi-line text
 		// This wraps the text in escape sequences that tell the terminal
 		// the content is a paste operation, so newlines should not execute
-		listenLog("sendToTmuxWithDelay: using bracketed paste for multi-line text (%d chars)", len(text))
+		fmt.Printf("sendToTmuxWithDelay: using bracketed paste for multi-line text (%d chars)", len(text))
 
 		// Calculate adaptive delay based on text length
 		// More text needs more time for the terminal to process
@@ -1274,13 +1291,13 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		}
 
 		// Send bracketed paste start sequence: ESC [ 2 0 0 ~
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", "\x1b[200~").Run(); err != nil {
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "-l", "\x1b[200~").Run(); err != nil {
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)
 
 		// Send the actual text content
-		cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
+		cmd := exec.Command(TmuxPath, "send-keys", "-t", target, "-l", text)
 		if err := cmd.Run(); err != nil {
 			return err
 		}
@@ -1288,15 +1305,15 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		time.Sleep(pasteDelay)
 
 		// Send bracketed paste end sequence: ESC [ 2 0 1 ~
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", "\x1b[201~").Run(); err != nil {
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "-l", "\x1b[201~").Run(); err != nil {
 			return err
 		}
 		// Brief delay before checking buffer
 		time.Sleep(20 * time.Millisecond)
 	} else {
 		// Single-line text: use original simple approach
-		listenLog("sendToTmuxWithDelay: single-line text (%d chars)", len(text))
-		cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
+		fmt.Printf("sendToTmuxWithDelay: single-line text (%d chars)", len(text))
+		cmd := exec.Command(TmuxPath, "send-keys", "-t", target, "-l", text)
 		if err := cmd.Run(); err != nil {
 			return err
 		}
@@ -1314,13 +1331,13 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 	// We poll the pane buffer to verify the text appears, with a bounded timeout
 	textAppeared := waitForTextInPane(target, text, 5*time.Second)
 	if !textAppeared {
-		listenLog("sendToTmuxWithDelay: text did not appear in pane after timeout, sending Enter anyway")
+		fmt.Printf("sendToTmuxWithDelay: text did not appear in pane after timeout, sending Enter anyway")
 	}
 
 	// Send Enter to execute the prompt
 	// Single Enter is sufficient for normal prompt execution
 	// The TUI will process the command and display results
-	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-m").Run(); err != nil {
+	if err := exec.Command(TmuxPath, "send-keys", "-t", target, "C-m").Run(); err != nil {
 		return err
 	}
 
@@ -1357,7 +1374,7 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 		// Handle edge case: all lines are empty (only whitespace/newlines)
 		if strings.TrimSpace(searchText) == "" {
 			// For empty-only text, just check for any newlines appearing after prompt
-			listenLog("waitForTextInPane: all lines empty, searching for any content")
+			fmt.Printf("waitForTextInPane: all lines empty, searching for any content")
 			searchText = "\n"
 		} else if len(searchText) < 5 {
 			// Last line is very short (e.g., "}", ")") - could cause false positives
@@ -1368,12 +1385,12 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 				// Use full text if it's not long enough
 				searchText = expectedText
 			}
-			listenLog("waitForTextInPane: last line too short, using tail of text: %q", searchText)
+			fmt.Printf("waitForTextInPane: last line too short, using tail of text: %q", searchText)
 		} else if searchText == expectedText && len(searchText) > 100 {
 			// Fallback: couldn't find non-empty line and text is long
 			searchText = searchText[len(searchText)-100:]
 		}
-		listenLog("waitForTextInPane: multi-line text, using search text: %q", searchText)
+		fmt.Printf("waitForTextInPane: multi-line text, using search text: %q", searchText)
 		// For multi-line text, keep the search strategy - don't override with full expectedText
 	} else if len(searchText) > 100 {
 		// Single-line: take last 100 chars for verification (more reliable than full text)
@@ -1390,7 +1407,7 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 	for time.Now().Before(deadline) {
 		// Use -e for escape sequences and -J to join wrapped lines
 		// Do NOT use -C as it escapes non-ASCII bytes, breaking Unicode prompt detection
-		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p", "-e", "-J")
+		cmd := exec.Command(TmuxPath, "capture-pane", "-t", target, "-p", "-e", "-J")
 		out, err := cmd.Output()
 		if err == nil {
 			content := string(out)
@@ -1417,12 +1434,12 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 
 func killTmuxWindow(windowID string, windowName string) error {
 	target := tmuxTargetByID(windowID, windowName)
-	cmd := exec.Command(tmuxPath, "kill-window", "-t", target)
+	cmd := exec.Command(TmuxPath, "kill-window", "-t", target)
 	return cmd.Run()
 }
 
 func listTmuxWindows() ([]string, error) {
-	cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_name}")
+	cmd := exec.Command(TmuxPath, "list-windows", "-a", "-F", "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -1437,8 +1454,8 @@ func listTmuxWindows() ([]string, error) {
 	return windows, nil
 }
 
-// killTmuxSession kills an entire tmux session (used for temporary sessions like auth)
-func killTmuxSession(name string) error {
-	cmd := exec.Command(tmuxPath, "kill-session", "-t", name)
+// KillTmuxSession kills an entire tmux session (used for temporary sessions like auth)
+func KillTmuxSession(name string) error {
+	cmd := exec.Command(TmuxPath, "kill-session", "-t", name)
 	return cmd.Run()
 }

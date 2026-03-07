@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-func installService() error {
+func InstallService() error {
 	home, _ := os.UserHomeDir()
 
 	// Detect OS and install appropriate service
@@ -26,7 +26,15 @@ func installLaunchdService(home string) error {
 	}
 
 	plistPath := filepath.Join(plistDir, "com.ccc.plist")
-	logPath := filepath.Join(cacheDir(), "ccc.log")
+	logPath := filepath.Join(CacheDir(), "ccc.log")
+	cccPath, err := os.Executable()
+	if err != nil {
+		// Fallback to PATH lookup
+		cccPath, _ = exec.LookPath("ccc")
+		if cccPath == "" {
+			cccPath = "/usr/local/bin/ccc"
+		}
+	}
 
 	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -72,6 +80,15 @@ func installSystemdService(home string) error {
 	}
 
 	servicePath := filepath.Join(serviceDir, "ccc.service")
+	cccPath, err := os.Executable()
+	if err != nil {
+		// Fallback to PATH lookup
+		cccPath, _ = exec.LookPath("ccc")
+		if cccPath == "" {
+			cccPath = "/usr/local/bin/ccc"
+		}
+	}
+
 	service := fmt.Sprintf(`[Unit]
 Description=Claude Code Companion
 After=network.target

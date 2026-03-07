@@ -1,4 +1,4 @@
-package main
+package otp
 
 import (
 	"encoding/json"
@@ -9,17 +9,18 @@ import (
 	"time"
 
 	qrterminal "github.com/mdp/qrterminal/v3"
+	"github.com/kidandcat/ccc/internal/config"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
 
 // OTP permission request/response files
-var otpRequestPrefix = filepath.Join(cacheDir(), "otp-request-")
-var otpResponsePrefix = filepath.Join(cacheDir(), "otp-response-")
-var otpGrantPrefix = filepath.Join(cacheDir(), "otp-grant-")
+var OTPRequestPrefix = filepath.Join(config.CacheDir(), "otp-request-")
+var otpResponsePrefix = filepath.Join(config.CacheDir(), "otp-response-")
+var otpGrantPrefix = filepath.Join(config.CacheDir(), "otp-grant-")
 
-const otpGrantDuration = 5 * time.Minute
-const otpPermissionTimeout = 5 * time.Minute
+const OTPGrantDuration = 5 * time.Minute
+const OTPPermissionTimeout = 5 * time.Minute
 
 // OTPPermissionRequest is written by the hook to request OTP approval
 type OTPPermissionRequest struct {
@@ -50,26 +51,26 @@ func generateOTPSecret() (secret string, provisioningURI string, err error) {
 	return key.Secret(), key.URL(), nil
 }
 
-// validateOTP checks if a TOTP code is valid for the configured secret
-func validateOTP(secret, code string) bool {
+// ValidateOTP checks if a TOTP code is valid for the configured secret
+func ValidateOTP(secret, code string) bool {
 	code = strings.TrimSpace(code)
 	return totp.Validate(code, secret)
 }
 
 // isOTPEnabled checks if OTP is configured
-func isOTPEnabled(config *Config) bool {
+func IsOTPEnabled(config *config.Config) bool {
 	return config.OTPSecret != ""
 }
 
 // setupOTP generates a new OTP secret, saves it, and returns instructions
-func setupOTP(config *Config) (string, error) {
+func SetupOTP(cfg *config.Config) (string, error) {
 	secret, uri, err := generateOTPSecret()
 	if err != nil {
 		return "", err
 	}
 
-	config.OTPSecret = secret
-	if err := saveConfig(config); err != nil {
+	cfg.OTPSecret = secret
+	if err := config.SaveConfig(cfg); err != nil {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
@@ -83,16 +84,16 @@ func setupOTP(config *Config) (string, error) {
 }
 
 // writeOTPRequest writes a permission request file for the listener to pick up
-func writeOTPRequest(sessionID string, req *OTPPermissionRequest) error {
+func WriteOTPRequest(sessionID string, req *OTPPermissionRequest) error {
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(otpRequestPrefix+sessionID, data, 0600)
+	return os.WriteFile(OTPRequestPrefix+sessionID, data, 0600)
 }
 
-// writeOTPResponse writes a permission response file for the hook to read
-func writeOTPResponse(sessionID string, approved bool) error {
+// WriteOTPResponse writes a permission response file for the hook to read
+func WriteOTPResponse(sessionID string, approved bool) error {
 	resp := OTPPermissionResponse{
 		Approved:  approved,
 		Timestamp: time.Now().Unix(),
@@ -106,14 +107,14 @@ func writeOTPResponse(sessionID string, approved bool) error {
 
 // waitForOTPResponse waits for the listener to write a response file.
 // It also checks for a valid grant (written by another parallel hook that was approved first).
-func waitForOTPResponse(sessionID, tmuxName string, timeout time.Duration) (bool, error) {
+func WaitForOTPResponse(sessionID, tmuxName string, timeout time.Duration) (bool, error) {
 	responsePath := otpResponsePrefix + sessionID
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
 		// Check if another parallel hook already got approved and wrote a grant
-		if hasValidOTPGrant(tmuxName) {
-			os.Remove(otpRequestPrefix + sessionID)
+		if HasValidOTPGrant(tmuxName) {
+			os.Remove(OTPRequestPrefix + sessionID)
 			return true, nil
 		}
 
@@ -121,7 +122,7 @@ func waitForOTPResponse(sessionID, tmuxName string, timeout time.Duration) (bool
 		if err == nil {
 			// Clean up files
 			os.Remove(responsePath)
-			os.Remove(otpRequestPrefix + sessionID)
+			os.Remove(OTPRequestPrefix + sessionID)
 
 			var resp OTPPermissionResponse
 			if err := json.Unmarshal(data, &resp); err != nil {
@@ -133,13 +134,13 @@ func waitForOTPResponse(sessionID, tmuxName string, timeout time.Duration) (bool
 	}
 
 	// Clean up on timeout
-	os.Remove(otpRequestPrefix + sessionID)
+	os.Remove(OTPRequestPrefix + sessionID)
 	return false, fmt.Errorf("OTP timeout")
 }
 
 // getPendingOTPRequest reads a pending OTP request for a session
 func getPendingOTPRequest(sessionID string) (*OTPPermissionRequest, error) {
-	data, err := os.ReadFile(otpRequestPrefix + sessionID)
+	data, err := os.ReadFile(OTPRequestPrefix + sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,29 +151,29 @@ func getPendingOTPRequest(sessionID string) (*OTPPermissionRequest, error) {
 	return &req, nil
 }
 
-// findPendingOTPSession finds which session has a pending OTP request
-func findPendingOTPSession() string {
-	matches, err := filepath.Glob(otpRequestPrefix + "*")
+// FindPendingOTPSession finds which session has a pending OTP request
+func FindPendingOTPSession() string {
+	matches, err := filepath.Glob(OTPRequestPrefix + "*")
 	if err != nil || len(matches) == 0 {
 		return ""
 	}
 	for _, match := range matches {
-		sessionID := strings.TrimPrefix(match, otpRequestPrefix)
+		sessionID := strings.TrimPrefix(match, OTPRequestPrefix)
 		return sessionID
 	}
 	return ""
 }
 
 // hasValidOTPGrant checks if there's a valid (non-expired) OTP grant for a tmux session
-func hasValidOTPGrant(tmuxName string) bool {
+func HasValidOTPGrant(tmuxName string) bool {
 	info, err := os.Stat(otpGrantPrefix + tmuxName)
 	if err != nil {
 		return false
 	}
-	return time.Since(info.ModTime()) < otpGrantDuration
+	return time.Since(info.ModTime()) < OTPGrantDuration
 }
 
 // writeOTPGrant creates/refreshes a grant file for a tmux session
-func writeOTPGrant(tmuxName string) {
+func WriteOTPGrant(tmuxName string) {
 	os.WriteFile(otpGrantPrefix+tmuxName, []byte("1"), 0600)
 }

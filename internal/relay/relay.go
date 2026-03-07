@@ -1,4 +1,4 @@
-package main
+package relay
 
 import (
 	"crypto/rand"
@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kidandcat/ccc/internal/config"
+	"github.com/kidandcat/ccc/internal/telegram"
 )
 
 const maxTelegramFileSize = 50 * 1024 * 1024 // 50MB
@@ -19,7 +22,7 @@ const defaultRelayURL = "https://ccc-relay.fly.dev"
 
 // handleSendFile sends a file to the current session's Telegram topic
 func handleSendFile(filePath string) error {
-	config, err := loadConfig()
+	config, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("no config found: %w", err)
 	}
@@ -61,7 +64,7 @@ func handleSendFile(filePath string) error {
 	// Small file: send directly via Telegram
 	if fileSize < maxTelegramFileSize {
 		fmt.Printf("📤 Sending %s (%d MB) via Telegram...\n", fileName, fileSize/(1024*1024))
-		return sendFile(config, config.GroupID, topicID, filePath, "")
+		return telegram.SendFile(config, config.GroupID, topicID, filePath, "")
 	}
 
 	// Large file: use streaming relay
@@ -95,7 +98,7 @@ func handleSendFile(filePath string) error {
 	msg := fmt.Sprintf("📦 %s (%d MB)\n\n🔗 Download:\n%s", fileName, fileSize/(1024*1024), downloadURL)
 
 	fmt.Printf("📤 Sending link to %s...\n", sessionName)
-	if err := sendMessage(config, config.GroupID, topicID, msg); err != nil {
+	if err := telegram.SendMessage(config, config.GroupID, topicID, msg); err != nil {
 		return err
 	}
 
@@ -126,7 +129,7 @@ func streamFileToRelay(relayURL, token, filePath, fileName string, fileSize int6
 			if err != nil {
 				continue
 			}
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, telegram.TelegramMaxResponseSize))
 			resp.Body.Close()
 
 			status := string(body)
@@ -183,6 +186,11 @@ type relayTransfer struct {
 	Created  time.Time
 	DataChan chan []byte
 	DoneChan chan struct{}
+}
+
+// RunServer starts the streaming relay server
+func RunServer(port string) {
+	runRelayServer(port)
 }
 
 func runRelayServer(port string) {

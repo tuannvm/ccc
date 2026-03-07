@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"bufio"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/kidandcat/ccc/internal/config"
 )
 
 // MessageRecord tracks the delivery state of a single message
@@ -30,11 +32,11 @@ type MessageRecord struct {
 var ledgerMu sync.Mutex
 
 func ledgerPath(session string) string {
-	return filepath.Join(cacheDir(), "ledger-"+session+".jsonl")
+	return filepath.Join(config.CacheDir(), "ledger-"+session+".jsonl")
 }
 
 // appendMessage writes a new message record to the session's ledger
-func appendMessage(rec *MessageRecord) error {
+func AppendMessage(rec *MessageRecord) error {
 	if rec.Timestamp == 0 {
 		rec.Timestamp = time.Now().Unix()
 	}
@@ -56,7 +58,7 @@ func appendMessage(rec *MessageRecord) error {
 }
 
 // updateDelivery appends an update record to the ledger
-func updateDelivery(session, msgID, field string, value any) error {
+func UpdateDelivery(session, msgID, field string, value any) error {
 	rec := &MessageRecord{
 		Update:      msgID,
 		Session:     session,
@@ -147,7 +149,7 @@ func applyUpdate(rec *MessageRecord, field string, value any) {
 }
 
 // isDelivered checks if a message ID has already been delivered to the given target
-func isDelivered(session, msgID, target string) bool {
+func IsDelivered(session, msgID, target string) bool {
 	records := readLedger(session)
 	for _, r := range records {
 		if r.ID == msgID {
@@ -162,8 +164,8 @@ func isDelivered(session, msgID, target string) bool {
 	return false
 }
 
-// findUndelivered returns messages not yet delivered to the given target ("telegram" or "terminal")
-func findUndelivered(session, target string) []*MessageRecord {
+// FindUndelivered returns messages not yet delivered to the given target ("telegram" or "terminal")
+func FindUndelivered(session, target string) []*MessageRecord {
 	records := readLedger(session)
 	var result []*MessageRecord
 	for _, r := range records {
@@ -182,7 +184,7 @@ func findUndelivered(session, target string) []*MessageRecord {
 }
 
 // contentHash returns a short hash of content for dedup IDs
-func contentHash(s string) string {
+func ContentHash(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h[:4])
 }

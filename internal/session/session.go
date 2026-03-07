@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"fmt"
@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kidandcat/ccc/internal/config"
+	"github.com/kidandcat/ccc/internal/telegram"
+	"github.com/kidandcat/ccc/internal/tmux"
 )
 
 // Session matching priority constants
@@ -21,25 +25,17 @@ const tmuxAttachDelay = 100 * time.Millisecond
 // sessionMatch represents a potential session match with its priority
 type sessionMatch struct {
 	name     string
-	info     *SessionInfo
+	info     *config.SessionInfo
 	priority int
-}
-
-// tmuxSafeName converts a session name to a tmux-safe window name
-// (dots are interpreted as window/pane separators in tmux)
-// We replace dots with "__" (double underscore) to avoid name collisions
-// while keeping the name readable and avoiding conflicts with natural underscores
-func tmuxSafeName(name string) string {
-	return strings.ReplaceAll(name, ".", "__")
 }
 
 // getWindowID safely looks up the tmux WindowID from config for a session name.
 // Returns empty string if the session or WindowID is not set.
-func getWindowID(config *Config, sessionName string) string {
-	if config == nil || config.Sessions == nil {
+func getWindowID(cfg *config.Config, sessionName string) string {
+	if cfg == nil || cfg.Sessions == nil {
 		return ""
 	}
-	info, exists := config.Sessions[sessionName]
+	info, exists := cfg.Sessions[sessionName]
 	if !exists || info == nil {
 		return ""
 	}
@@ -49,20 +45,20 @@ func getWindowID(config *Config, sessionName string) string {
 // getSessionWorkDir returns the correct working directory for a session.
 // For worktree sessions, this returns the base repository path (not the .claude/worktrees path).
 // For regular sessions, this returns the session's stored Path.
-func getSessionWorkDir(config *Config, sessionName string, sessionInfo *SessionInfo) string {
+func GetSessionWorkDir(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo) string {
 	if sessionInfo == nil {
-		if config != nil && config.Sessions != nil {
-			sessionInfo = config.Sessions[sessionName]
+		if cfg != nil && cfg.Sessions != nil {
+			sessionInfo = cfg.Sessions[sessionName]
 		}
 		if sessionInfo == nil {
-			return resolveProjectPath(config, sessionName)
+			return config.ResolveProjectPath(cfg, sessionName)
 		}
 	}
 
 	// For worktree sessions, use the base session's path
 	if sessionInfo.IsWorktree && sessionInfo.BaseSession != "" {
-		if config != nil && config.Sessions != nil {
-			if baseInfo := config.Sessions[sessionInfo.BaseSession]; baseInfo != nil && baseInfo.Path != "" {
+		if cfg != nil && cfg.Sessions != nil {
+			if baseInfo := cfg.Sessions[sessionInfo.BaseSession]; baseInfo != nil && baseInfo.Path != "" {
 				return baseInfo.Path
 			}
 		}
@@ -77,20 +73,20 @@ func getSessionWorkDir(config *Config, sessionName string, sessionInfo *SessionI
 	if sessionInfo.Path != "" {
 		return sessionInfo.Path
 	}
-	return resolveProjectPath(config, sessionName)
+	return config.ResolveProjectPath(cfg, sessionName)
 }
 
 // attachToTmuxSession attaches the user's terminal to the tmux session for a given session name.
 // If already inside tmux, it selects the window. Otherwise, it attaches to the session.
 func attachToTmuxSession(sessionName string) error {
-	target, err := getCccWindowTarget(sessionName)
+	target, err := tmux.GetCccWindowTarget(sessionName)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
 	if os.Getenv("TMUX") != "" {
 		// Inside tmux: just select the window
-		cmd := exec.Command(tmuxPath, "select-window", "-t", target)
+		cmd := exec.Command(tmux.TmuxPath, "select-window", "-t", target)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -99,7 +95,7 @@ func attachToTmuxSession(sessionName string) error {
 
 	// Outside tmux: need to attach to the session and select the window
 	sessName := strings.SplitN(target, ":", 2)[0]
-	cmd := exec.Command(tmuxPath, "attach-session", "-t", sessName)
+	cmd := exec.Command(tmux.TmuxPath, "attach-session", "-t", sessName)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -111,7 +107,7 @@ func attachToTmuxSession(sessionName string) error {
 
 	// Wait for attach to complete, then select the window
 	time.Sleep(tmuxAttachDelay)
-	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+	exec.Command(tmux.TmuxPath, "select-window", "-t", target).Run()
 
 	return cmd.Wait()
 }
@@ -119,14 +115,14 @@ func attachToTmuxSession(sessionName string) error {
 // findSessionForPath finds the best matching session for a given directory path.
 // Uses deterministic selection: exact path match first, then longest prefix match.
 // Returns the session name and info, or empty strings if no match found.
-func findSessionForPath(config *Config, cwd string) (string, *SessionInfo) {
-	if config == nil || config.Sessions == nil {
+func findSessionForPath(cfg *config.Config, cwd string) (string, *config.SessionInfo) {
+	if cfg == nil || cfg.Sessions == nil {
 		return "", nil
 	}
 
 	var matches []sessionMatch
 
-	for name, info := range config.Sessions {
+	for name, info := range cfg.Sessions {
 		if info == nil {
 			continue
 		}
@@ -164,16 +160,16 @@ func findSessionForPath(config *Config, cwd string) (string, *SessionInfo) {
 // generateUniqueSessionName creates a unique session name based on the current directory.
 // If the basename collides with an existing session, it uses the parent directory as prefix.
 // If that also collides, it appends a counter.
-func generateUniqueSessionName(config *Config, cwd string, basename string) string {
+func generateUniqueSessionName(cfg *config.Config, cwd string, basename string) string {
 	sessionName := basename
 
 	// Check for collision
-	if _, exists := config.Sessions[sessionName]; !exists {
+	if _, exists := cfg.Sessions[sessionName]; !exists {
 		return sessionName
 	}
 
 	// Check if the collision is with the same path (not a real collision)
-	if info, ok := config.Sessions[sessionName]; ok && info != nil && info.Path == cwd {
+	if info, ok := cfg.Sessions[sessionName]; ok && info != nil && info.Path == cwd {
 		return sessionName
 	}
 
@@ -182,7 +178,7 @@ func generateUniqueSessionName(config *Config, cwd string, basename string) stri
 	sessionName = parentDir + "-" + sessionName
 
 	// Check again for collision
-	if _, exists := config.Sessions[sessionName]; !exists {
+	if _, exists := cfg.Sessions[sessionName]; !exists {
 		return sessionName
 	}
 
@@ -190,76 +186,76 @@ func generateUniqueSessionName(config *Config, cwd string, basename string) stri
 	counter := 1
 	for {
 		candidateName := fmt.Sprintf("%s-%d", sessionName, counter)
-		if _, exists := config.Sessions[candidateName]; !exists {
+		if _, exists := cfg.Sessions[candidateName]; !exists {
 			return candidateName
 		}
 		counter++
 	}
 }
 
-func createSession(config *Config, name string) error {
+func createSession(cfg *config.Config, name string) error {
 	// Check if session already exists
-	if _, exists := config.Sessions[name]; exists {
+	if _, exists := cfg.Sessions[name]; exists {
 		return fmt.Errorf("session '%s' already exists", name)
 	}
 
 	// Get the provider to use for this session
-	provider := getActiveProvider(config)
+	provider := config.GetActiveProvider(cfg)
 	providerName := ""
-	if provider != nil && config.ActiveProvider != "" {
-		providerName = config.ActiveProvider
+	if provider != nil && cfg.ActiveProvider != "" {
+		providerName = cfg.ActiveProvider
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName)
+	topicID, err := telegram.CreateForumTopic(cfg, name, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
 	// Create work directory
-	workDir := resolveProjectPath(config, name)
+	workDir := config.ResolveProjectPath(cfg, name)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		// Create project directory
 		os.MkdirAll(workDir, 0755)
 	}
 
-	// Save session info first (needed for ensureHooksForSession)
-	config.Sessions[name] = &SessionInfo{
+	// Save session info first
+	cfg.Sessions[name] = &config.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	if err := saveConfig(config); err != nil {
+	if err := config.SaveConfig(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Ensure hooks are installed in the project directory
-	if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
-		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
-	}
+	// TODO: Ensure hooks are installed in the project directory
+	// if err := ensureHooksForSession(cfg, name, cfg.Sessions[name]); err != nil {
+	// 	fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
+	// }
 
 	// Switch to the new session in the single ccc window
-	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
 	return nil
 }
 
-func killSession(config *Config, name string) error {
-	if _, exists := config.Sessions[name]; !exists {
+func killSession(cfg *config.Config, name string) error {
+	if _, exists := cfg.Sessions[name]; !exists {
 		return fmt.Errorf("session '%s' not found", name)
 	}
 
 	// Remove from config (no need to kill tmux window with single window approach)
-	delete(config.Sessions, name)
-	saveConfig(config)
+	delete(cfg.Sessions, name)
+	config.SaveConfig(cfg)
 
 	return nil
 }
 
-func getSessionByTopic(config *Config, topicID int64) string {
-	for name, info := range config.Sessions {
+func GetSessionByTopic(cfg *config.Config, topicID int64) string {
+	for name, info := range cfg.Sessions {
 		if info != nil && info.TopicID == topicID {
 			return name
 		}
@@ -267,8 +263,8 @@ func getSessionByTopic(config *Config, topicID int64) string {
 	return ""
 }
 
-// startSession creates/attaches to a tmux window with Telegram topic
-func startSession(continueSession bool) error {
+// Start creates/attaches to a tmux window with Telegram topic
+func Start(continueSession bool) error {
 	// Get current directory name as session name
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -277,44 +273,44 @@ func startSession(continueSession bool) error {
 	name := filepath.Base(cwd)
 
 	// Load config to check/create topic
-	config, err := loadConfig()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		// No config, just run claude directly with default provider
-		return runClaudeRaw(continueSession, "", "", "")
+		return tmux.RunClaudeRaw(continueSession, "", "", "")
 	}
 
 	// Get the provider to use for this session
 	providerName := ""
-	if config.Sessions[name] != nil && config.Sessions[name].ProviderName != "" {
+	if cfg.Sessions[name] != nil && cfg.Sessions[name].ProviderName != "" {
 		// Use the session's saved provider
-		providerName = config.Sessions[name].ProviderName
-	} else if config.ActiveProvider != "" {
+		providerName = cfg.Sessions[name].ProviderName
+	} else if cfg.ActiveProvider != "" {
 		// Use the active provider
-		providerName = config.ActiveProvider
+		providerName = cfg.ActiveProvider
 	}
 
 	// Get stored session ID if continuing
 	resumeSessionID := ""
-	if continueSession && config.Sessions[name] != nil {
-		resumeSessionID = config.Sessions[name].ClaudeSessionID
+	if continueSession && cfg.Sessions[name] != nil {
+		resumeSessionID = cfg.Sessions[name].ClaudeSessionID
 	}
 
 	// Create topic if it doesn't exist and we have a group configured
-	if config.GroupID != 0 {
-		if _, exists := config.Sessions[name]; !exists {
-			topicID, err := createForumTopic(config, name, providerName)
+	if cfg.GroupID != 0 {
+		if _, exists := cfg.Sessions[name]; !exists {
+			topicID, err := telegram.CreateForumTopic(cfg, name, providerName)
 			if err == nil {
-				config.Sessions[name] = &SessionInfo{
+				cfg.Sessions[name] = &config.SessionInfo{
 					TopicID:      topicID,
 					Path:         cwd,
 					ProviderName: providerName,
 				}
-				saveConfig(config)
+				config.SaveConfig(cfg)
 
-				// Ensure hooks are installed in the project directory
-				if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
-					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
-				}
+				// TODO: Ensure hooks are installed in the project directory
+				// if err := ensureHooksForSession(cfg, name, cfg.Sessions[name]); err != nil {
+				// 	fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
+				// }
 
 				fmt.Printf("📱 Created Telegram topic: %s\n", name)
 			}
@@ -322,11 +318,12 @@ func startSession(continueSession bool) error {
 	}
 
 	// For existing sessions, ensure hooks are present (both for new and existing sessions)
-	if config.Sessions[name] != nil {
-		if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
-			fmt.Printf("⚠️ Failed to verify/install hooks: %v\n", err)
-		}
-	}
+	// TODO: Re-enable when ensureHooksForSession is implemented
+	// if cfg.Sessions[name] != nil {
+	// 	if err := ensureHooksForSession(cfg, name, cfg.Sessions[name]); err != nil {
+	// 		fmt.Printf("⚠️ Failed to verify/install hooks: %v\n", err)
+	// 	}
+	// }
 
 	// Switch to the session in the single ccc window
 	workDir := cwd
@@ -336,23 +333,23 @@ func startSession(continueSession bool) error {
 
 	// Check if this is a worktree session
 	worktreeName := ""
-	if config.Sessions[name] != nil && config.Sessions[name].IsWorktree {
-		worktreeName = config.Sessions[name].WorktreeName
+	if cfg.Sessions[name] != nil && cfg.Sessions[name].IsWorktree {
+		worktreeName = cfg.Sessions[name].WorktreeName
 	}
 
-	if err := switchSessionInWindow(name, workDir, providerName, resumeSessionID, worktreeName, continueSession, true); err != nil {
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, resumeSessionID, worktreeName, continueSession, true); err != nil {
 		return fmt.Errorf("failed to switch session: %w", err)
 	}
 
 	// Get the ccc window target for attaching
-	target, err := getCccWindowTarget(name)
+	target, err := tmux.GetCccWindowTarget(name)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
 	if os.Getenv("TMUX") != "" {
 		// Inside tmux: just select the window
-		cmd := exec.Command(tmuxPath, "select-window", "-t", target)
+		cmd := exec.Command(tmux.TmuxPath, "select-window", "-t", target)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -362,7 +359,7 @@ func startSession(continueSession bool) error {
 	// Outside tmux: need to attach to the session and select the window
 	// First attach to the session, then select the specific window
 	sessName := strings.SplitN(target, ":", 2)[0]
-	cmd := exec.Command(tmuxPath, "attach-session", "-t", sessName)
+	cmd := exec.Command(tmux.TmuxPath, "attach-session", "-t", sessName)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -374,69 +371,69 @@ func startSession(continueSession bool) error {
 
 	// Wait a moment for attach to complete, then select the window
 	time.Sleep(100 * time.Millisecond)
-	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+	exec.Command(tmux.TmuxPath, "select-window", "-t", target).Run()
 
 	// Wait for attach command to complete
 	return cmd.Wait()
 }
 
-// startDetached creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach)
-func startDetached(name string, workDir string, prompt string) error {
-	config, err := loadConfig()
+// StartDetached creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach)
+func StartDetached(name string, workDir string, prompt string) error {
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if config.Sessions == nil {
-		config.Sessions = make(map[string]*SessionInfo)
+	if cfg.Sessions == nil {
+		cfg.Sessions = make(map[string]*config.SessionInfo)
 	}
 
 	// Get the provider to use for this session
-	provider := getActiveProvider(config)
+	provider := config.GetActiveProvider(cfg)
 	providerName := ""
-	if provider != nil && config.ActiveProvider != "" {
-		providerName = config.ActiveProvider
+	if provider != nil && cfg.ActiveProvider != "" {
+		providerName = cfg.ActiveProvider
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName)
+	topicID, err := telegram.CreateForumTopic(cfg, name, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
 	// Switch to the new session in the single ccc window
-	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
 	// Save session info (no WindowID needed for single window)
-	config.Sessions[name] = &SessionInfo{
+	cfg.Sessions[name] = &config.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	if err := saveConfig(config); err != nil {
+	if err := config.SaveConfig(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Ensure hooks are installed in the project directory
-	if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
-		return fmt.Errorf("failed to install hooks: %w", err)
-	}
+	// TODO: Ensure hooks are installed in the project directory
+	// if err := ensureHooksForSession(cfg, name, cfg.Sessions[name]); err != nil {
+	// 	return fmt.Errorf("failed to install hooks: %w", err)
+	// }
 
 	// Get the ccc window target
-	target, err := getCccWindowTarget(name)
+	target, err := tmux.GetCccWindowTarget(name)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
 	// Wait for Claude to be ready before sending prompt
-	if err := waitForClaude(target, 30*time.Second); err != nil {
+	if err := tmux.WaitForClaude(target, 30*time.Second); err != nil {
 		return fmt.Errorf("claude did not start in time: %w", err)
 	}
 
 	// Send the prompt to the tmux window
-	if err := sendToTmux(target, prompt); err != nil {
+	if err := tmux.SendToTmux(target, prompt); err != nil {
 		return fmt.Errorf("failed to send prompt: %w", err)
 	}
 
@@ -444,12 +441,12 @@ func startDetached(name string, workDir string, prompt string) error {
 	return nil
 }
 
-// startSessionInCurrentDir starts a session for the current working directory.
+// StartInCurrentDir starts a session for the current working directory.
 // If a session already exists for this directory, it attaches to it.
 // If not, it creates a new session with topic, hooks, and starts Claude.
 // This is the default behavior when running "ccc" from terminal.
-func startSessionInCurrentDir(message string) error {
-	config, err := loadConfig()
+func StartInCurrentDir(message string) error {
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config. Run: ccc setup <bot_token>")
 	}
@@ -460,25 +457,25 @@ func startSessionInCurrentDir(message string) error {
 	}
 
 	// Check for existing session
-	existingSession, existingInfo := findSessionForPath(config, cwd)
+	existingSession, existingInfo := findSessionForPath(cfg, cwd)
 	if existingSession != "" && existingInfo != nil {
-		return attachToExistingSession(config, existingSession, existingInfo, message)
+		return attachToExistingSession(cfg, existingSession, existingInfo, message)
 	}
 
 	// Create new session
 	basename := filepath.Base(cwd)
-	sessionName := generateUniqueSessionName(config, cwd, basename)
+	sessionName := generateUniqueSessionName(cfg, cwd, basename)
 
-	if config.GroupID == 0 {
-		return startLocalSession(config, sessionName, cwd, message)
+	if cfg.GroupID == 0 {
+		return startLocalSession(cfg, sessionName, cwd, message)
 	}
 
-	return startTelegramSession(config, sessionName, cwd, message)
+	return startTelegramSession(cfg, sessionName, cwd, message)
 }
 
 // attachToExistingSession attaches to an existing session and sends a message if provided.
-func attachToExistingSession(config *Config, sessionName string, sessionInfo *SessionInfo, message string) error {
-	workDir := getSessionWorkDir(config, sessionName, sessionInfo)
+func attachToExistingSession(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo, message string) error {
+	workDir := GetSessionWorkDir(cfg, sessionName, sessionInfo)
 	resumeSessionID := sessionInfo.ClaudeSessionID
 
 	// Preserve worktree context
@@ -487,16 +484,16 @@ func attachToExistingSession(config *Config, sessionName string, sessionInfo *Se
 		worktreeName = sessionInfo.WorktreeName
 	}
 
-	// Ensure hooks are installed
-	if err := ensureHooksForSession(config, sessionName, sessionInfo); err != nil {
-		fmt.Printf("Warning: failed to verify hooks: %v\n", err)
-	}
+	// TODO: Ensure hooks are installed
+	// if err := ensureHooksForSession(cfg, sessionName, sessionInfo); err != nil {
+	// 	fmt.Printf("Warning: failed to verify hooks: %v\n", err)
+	// }
 
 	// Send Telegram message before attaching (tmux attach blocks)
 	// Local message is sent after session restart to avoid pane respawn losing it
-	if message != "" && config.GroupID != 0 {
+	if message != "" && cfg.GroupID != 0 {
 		// Telegram mode: send to topic
-		if err := sendMessage(config, config.GroupID, sessionInfo.TopicID, message); err != nil {
+		if err := telegram.SendMessage(cfg, cfg.GroupID, sessionInfo.TopicID, message); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -506,17 +503,17 @@ func attachToExistingSession(config *Config, sessionName string, sessionInfo *Se
 	// Use skipRestart=false to force Claude to start if not running
 	// (skipRestart=true is too conservative and prevents new sessions from starting)
 	continueSession := resumeSessionID != ""
-	if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, continueSession, false); err != nil {
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, continueSession, false); err != nil {
 		return fmt.Errorf("failed to attach to session '%s': %w", sessionName, err)
 	}
 
 	// Send local message after session restart (before attaching)
 	// This ensures the message reaches the restarted Claude process
-	if message != "" && config.GroupID == 0 {
-		target, err := getCccWindowTarget(sessionName)
+	if message != "" && cfg.GroupID == 0 {
+		target, err := tmux.GetCccWindowTarget(sessionName)
 		if err != nil {
 			fmt.Printf("Warning: failed to get window for message: %v\n", err)
-		} else if err := sendToTmux(target, message); err != nil {
+		} else if err := tmux.SendToTmux(target, message); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -527,39 +524,39 @@ func attachToExistingSession(config *Config, sessionName string, sessionInfo *Se
 
 // startLocalSession starts a session without Telegram integration (local-only mode).
 // If a message is provided, it will be sent to the session after starting.
-func startLocalSession(config *Config, sessionName, workDir, message string) error {
-	providerName := config.ActiveProvider
+func startLocalSession(cfg *config.Config, sessionName, workDir, message string) error {
+	providerName := cfg.ActiveProvider
 
 	// Initialize sessions map if needed
-	if config.Sessions == nil {
-		config.Sessions = make(map[string]*SessionInfo)
+	if cfg.Sessions == nil {
+		cfg.Sessions = make(map[string]*config.SessionInfo)
 	}
 
 	// Create session info
-	config.Sessions[sessionName] = &SessionInfo{
+	cfg.Sessions[sessionName] = &config.SessionInfo{
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	if err := saveConfig(config); err != nil {
+	if err := config.SaveConfig(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Ensure hooks are installed
-	if err := ensureHooksForSession(config, sessionName, config.Sessions[sessionName]); err != nil {
-		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
-	}
+	// TODO: Ensure hooks are installed
+	// if err := ensureHooksForSession(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+	// 	fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
+	// }
 
 	// Start the session
-	if err := switchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
 	// Send message to session if provided
 	if message != "" {
-		target, err := getCccWindowTarget(sessionName)
+		target, err := tmux.GetCccWindowTarget(sessionName)
 		if err != nil {
 			fmt.Printf("Warning: failed to get window for message: %v\n", err)
-		} else if err := sendToTmux(target, message); err != nil {
+		} else if err := tmux.SendToTmux(target, message); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -569,40 +566,40 @@ func startLocalSession(config *Config, sessionName, workDir, message string) err
 }
 
 // startTelegramSession starts a session with Telegram integration.
-func startTelegramSession(config *Config, sessionName, workDir, message string) error {
+func startTelegramSession(cfg *config.Config, sessionName, workDir, message string) error {
 	// Get provider
-	provider := getActiveProvider(config)
+	provider := config.GetActiveProvider(cfg)
 	providerName := ""
-	if provider != nil && config.ActiveProvider != "" {
-		providerName = config.ActiveProvider
+	if provider != nil && cfg.ActiveProvider != "" {
+		providerName = cfg.ActiveProvider
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, sessionName, providerName)
+	topicID, err := telegram.CreateForumTopic(cfg, sessionName, providerName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
 	// Save session info
-	if config.Sessions == nil {
-		config.Sessions = make(map[string]*SessionInfo)
+	if cfg.Sessions == nil {
+		cfg.Sessions = make(map[string]*config.SessionInfo)
 	}
-	config.Sessions[sessionName] = &SessionInfo{
+	cfg.Sessions[sessionName] = &config.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	if err := saveConfig(config); err != nil {
+	if err := config.SaveConfig(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Ensure hooks are installed
-	if err := ensureHooksForSession(config, sessionName, config.Sessions[sessionName]); err != nil {
-		fmt.Printf("Warning: failed to install hooks: %v\n", err)
-	}
+	// TODO: Ensure hooks are installed
+	// if err := ensureHooksForSession(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+	// 	fmt.Printf("Warning: failed to install hooks: %v\n", err)
+	// }
 
 	// Start the session
-	if err := switchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
@@ -614,7 +611,7 @@ func startTelegramSession(config *Config, sessionName, workDir, message string) 
 
 	// Send message before attaching
 	if message != "" {
-		if err := sendMessage(config, config.GroupID, topicID, message); err != nil {
+		if err := telegram.SendMessage(cfg, cfg.GroupID, topicID, message); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}

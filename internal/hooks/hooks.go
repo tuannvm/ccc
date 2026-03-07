@@ -1,4 +1,4 @@
-package main
+package hooks
 
 import (
 	"bytes"
@@ -11,32 +11,32 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-// telegramActiveFlag returns the path of the flag file that indicates
-// a Telegram message is being processed by a tmux session.
-func telegramActiveFlag(tmuxName string) string {
-	return filepath.Join(cacheDir(), "telegram-active-"+tmuxName)
-}
+	"github.com/kidandcat/ccc/internal/config"
+	"github.com/kidandcat/ccc/internal/otp"
+	"github.com/kidandcat/ccc/internal/session"
+	"github.com/kidandcat/ccc/internal/telegram"
+	"github.com/kidandcat/ccc/internal/tmux"
+)
 
 // thinkingFlag returns the path of the flag file that indicates
 // Claude is actively processing in a session (for typing indicator).
-func thinkingFlag(sessionName string) string {
-	return filepath.Join(cacheDir(), "thinking-"+sessionName)
+func ThinkingFlag(sessionName string) string {
+	return filepath.Join(config.CacheDir(), "thinking-"+sessionName)
 }
 
 func setThinking(sessionName string) {
-	os.WriteFile(thinkingFlag(sessionName), []byte("1"), 0600)
+	os.WriteFile(ThinkingFlag(sessionName), []byte("1"), 0600)
 }
 
-func clearThinking(sessionName string) {
-	os.Remove(thinkingFlag(sessionName))
+func ClearThinking(sessionName string) {
+	os.Remove(ThinkingFlag(sessionName))
 }
 
 // promptAckPath returns the path of the ack file that confirms
 // Claude received a prompt sent from Telegram via tmux send-keys.
 func promptAckPath(sessionName string) string {
-	return filepath.Join(cacheDir(), "prompt-ack-"+sessionName)
+	return filepath.Join(config.CacheDir(), "prompt-ack-"+sessionName)
 }
 
 func writePromptAck(sessionName string) {
@@ -62,7 +62,7 @@ func waitPromptAck(sessionName string, timeout time.Duration) bool {
 
 // toolStatePath returns the path for tool call display state
 func toolStatePath(sessionName string) string {
-	return filepath.Join(cacheDir(), "tools-"+sessionName+".json")
+	return filepath.Join(config.CacheDir(), "tools-"+sessionName+".json")
 }
 
 // ToolState tracks tool calls and the Telegram message ID for live updates
@@ -114,7 +114,7 @@ func addTextToToolState(sessName string, text string, ts int64) {
 }
 
 // collapseToolMessage is a no-op now (no folding).
-func collapseToolMessage(config *Config, sessName string, topicID int64) {
+func collapseToolMessage(cfg *config.Config, sessName string, topicID int64) {
 }
 
 // htmlEscape escapes special HTML characters
@@ -219,11 +219,11 @@ func readHookStdin() ([]byte, error) {
 }
 
 // findSessionByClaudeID matches a claude session ID to a configured session
-func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int64) {
+func findSessionByClaudeID(cfg *config.Config, claudeSessionID string) (string, int64) {
 	if claudeSessionID == "" {
 		return "", 0
 	}
-	for name, info := range config.Sessions {
+	for name, info := range cfg.Sessions {
 		if name == "" || info == nil {
 			continue
 		}
@@ -235,8 +235,8 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 }
 
 // findSessionByCwd matches a hook's cwd to a configured session (fallback)
-func findSessionByCwd(config *Config, cwd string) (string, int64) {
-	for name, info := range config.Sessions {
+func findSessionByCwd(cfg *config.Config, cwd string) (string, int64) {
+	for name, info := range cfg.Sessions {
 		if name == "" || info == nil {
 			continue
 		}
@@ -248,30 +248,31 @@ func findSessionByCwd(config *Config, cwd string) (string, int64) {
 }
 
 // findSession matches by claude_session_id first, then falls back to cwd
-func findSession(config *Config, cwd string, claudeSessionID string) (string, int64) {
-	if name, topicID := findSessionByClaudeID(config, claudeSessionID); name != "" {
+func findSession(cfg *config.Config, cwd string, claudeSessionID string) (string, int64) {
+	if name, topicID := findSessionByClaudeID(cfg, claudeSessionID); name != "" {
 		return name, topicID
 	}
-	return findSessionByCwd(config, cwd)
+	return findSessionByCwd(cfg, cwd)
 }
 
 // persistClaudeSessionID saves the claude session ID to config if changed
-func persistClaudeSessionID(config *Config, sessName string, claudeSessionID string) {
+func persistClaudeSessionID(cfg *config.Config, sessName string, claudeSessionID string) {
 	if claudeSessionID == "" || sessName == "" {
 		return
 	}
-	info, exists := config.Sessions[sessName]
+	info, exists := cfg.Sessions[sessName]
 	if !exists || info == nil {
 		return
 	}
 	if info.ClaudeSessionID != claudeSessionID {
 		info.ClaudeSessionID = claudeSessionID
-		saveConfig(config)
+		config.SaveConfig(cfg)
 		hookLog("persisted claude_session_id=%s for session=%s", claudeSessionID, sessName)
 	}
 }
 
-func handleStopHook() error {
+// HandleStopHook processes the stop-hook event
+func HandleStopHook() error {
 	defer func() { recover() }()
 
 	rawData, _ := readHookStdin()
@@ -279,42 +280,42 @@ func handleStopHook() error {
 		return nil
 	}
 
-	hookData, err := parseHookData(rawData)
+	hookData, err := ParseHookData(rawData)
 	if err != nil {
 		return nil
 	}
 
-	config, err := loadConfig()
-	if err != nil || config == nil {
+	cfg, err := config.LoadConfig()
+	if err != nil || cfg == nil {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
-	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+	sessName, topicID := findSession(cfg, hookData.Cwd, hookData.SessionID)
+	if sessName == "" || cfg.GroupID == 0 || topicID == 0 {
 		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s", hookData.Cwd, hookData.SessionID)
 		return nil
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(cfg, sessName, hookData.SessionID)
 
 	hookLog("stop-hook: session=%s claude_session_id=%s transcript=%s", sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	// Clear flags when Claude stops
-	tmuxName := tmuxSafeName(sessName)
-	os.Remove(telegramActiveFlag(tmuxName))
-	clearThinking(sessName)
+	tmuxName := tmux.TmuxSafeName(sessName)
+	os.Remove(config.TelegramActiveFlag(tmuxName))
+	ClearThinking(sessName)
 
 	// Deliver unsent texts as separate messages (these come after all tools)
 	hookLog("stop-hook: delivering unsent texts")
-	sent := deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, false)
+	sent := deliverUnsentTexts(cfg, sessName, topicID, hookData.TranscriptPath, false)
 	hookLog("stop-hook: sent=%d", sent)
 	clearToolState(sessName)
 
 	// Background retry: transcript may not be flushed yet when stop hook fires.
 	// Spawn a detached subprocess that retries 3 times at 2-second intervals.
 	// (goroutines die when the hook process exits, so we need a separate process)
-	cmd := exec.Command(cccPath, "hook-stop-retry", sessName, fmt.Sprintf("%d", topicID), hookData.TranscriptPath)
+	cmd := exec.Command(tmux.CccPath, "hook-stop-retry", sessName, fmt.Sprintf("%d", topicID), hookData.TranscriptPath)
 	cmd.Start()
 
 	return nil
@@ -325,7 +326,7 @@ func handleStopHook() error {
 // If insertIntoToolMsg is true and tool state has a message, texts are inserted
 // into the tool blockquote (for text before/between tools in PreToolUse).
 // If false, texts are sent as separate messages (for text after tools in Stop hook).
-func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool) int {
+func deliverUnsentTexts(cfg *config.Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool) int {
 	hookLog("deliver-unsent: sess=%s topic=%d transcript=%s", sessName, topicID, transcriptPath)
 	blocks := extractRecentAssistantTexts(transcriptPath, 80)
 	lastPreview := ""
@@ -336,8 +337,8 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 
 	sent := 0
 	for _, block := range blocks {
-		blockID := fmt.Sprintf("reply:%s:%s", block.requestID, contentHash(block.text))
-		if isDelivered(sessName, blockID, "telegram") {
+		blockID := fmt.Sprintf("reply:%s:%s", block.requestID, session.ContentHash(block.text))
+		if session.IsDelivered(sessName, blockID, "telegram") {
 			continue
 		}
 		hookLog("deliver-text: rid=%s len=%d insert=%v preview=%s", block.requestID, len(block.text), insertIntoToolMsg, truncate(block.text, 80))
@@ -348,8 +349,8 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 			addTextToToolState(sessName, block.text, time.Now().UnixMilli())
 			state = loadToolState(sessName)
 			text := formatToolMessage(state)
-			editMessageHTML(config, config.GroupID, state.MsgID, topicID, text)
-			appendMessage(&MessageRecord{
+			telegram.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text)
+			session.AppendMessage(&session.MessageRecord{
 				ID: blockID, Session: sessName, Type: "assistant_text",
 				Text: truncate(block.text, 500), Origin: "claude",
 				TerminalDelivered: true, TelegramDelivered: true, TelegramMsgID: state.MsgID,
@@ -357,20 +358,20 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 		} else {
 			// Send as separate message
 			msg := fmt.Sprintf("*%s:*\n%s", sessName, block.text)
-			tgMsgID, err := sendMessageGetID(config, config.GroupID, topicID, msg)
+			tgMsgID, err := telegram.SendMessageHTMLGetID(cfg, cfg.GroupID, topicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
 				if strings.Contains(err.Error(), "message thread not found") && topicID != 0 {
 					hookLog("deliver-text: thread not found, retrying without thread_id")
 					time.Sleep(500 * time.Millisecond)
-					tgMsgID, _ = sendMessageGetID(config, config.GroupID, 0, msg)
+					tgMsgID, _ = telegram.SendMessageHTMLGetID(cfg, cfg.GroupID, 0, msg)
 				} else {
 					hookLog("deliver-text: send failed, retrying: %v", err)
 					time.Sleep(500 * time.Millisecond)
-					tgMsgID, _ = sendMessageGetID(config, config.GroupID, topicID, msg)
+					tgMsgID, _ = telegram.SendMessageHTMLGetID(cfg, cfg.GroupID, topicID, msg)
 				}
 			}
-			appendMessage(&MessageRecord{
+			session.AppendMessage(&session.MessageRecord{
 				ID: blockID, Session: sessName, Type: "assistant_text",
 				Text: truncate(block.text, 500), Origin: "claude",
 				TerminalDelivered: true, TelegramDelivered: tgMsgID > 0, TelegramMsgID: tgMsgID,
@@ -528,23 +529,24 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 	return result
 }
 
-// handleStopRetry is a background process spawned by stop hook.
+// HandleStopRetry is a background process spawned by stop hook.
 // It retries transcript reading 3 times at 2-second intervals to catch
 // messages that weren't flushed when the stop hook first fired.
-func handleStopRetry(sessName string, topicID int64, transcriptPath string) error {
-	config, err := loadConfig()
-	if err != nil || config == nil {
+func HandleStopRetry(sessName string, topicID int64, transcriptPath string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil || cfg == nil {
 		return nil
 	}
 	for i := 0; i < 3; i++ {
 		time.Sleep(2 * time.Second)
-		n := deliverUnsentTexts(config, sessName, topicID, transcriptPath, false)
+		n := deliverUnsentTexts(cfg, sessName, topicID, transcriptPath, false)
 		hookLog("stop-retry: %d/3 sent=%d session=%s", i+1, n, sessName)
 	}
 	return nil
 }
 
-func handlePermissionHook() error {
+// HandlePermissionHook processes the permission-hook event
+func HandlePermissionHook() error {
 	defer func() { recover() }()
 
 	rawData, _ := readHookStdin()
@@ -552,29 +554,29 @@ func handlePermissionHook() error {
 		return nil
 	}
 
-	hookData, err := parseHookData(rawData)
+	hookData, err := ParseHookData(rawData)
 	if err != nil {
 		return nil
 	}
 
-	config, err := loadConfig()
-	if err != nil || config == nil {
+	cfg, err := config.LoadConfig()
+	if err != nil || cfg == nil {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
-	if sessName == "" || config.GroupID == 0 {
+	sessName, topicID := findSession(cfg, hookData.Cwd, hookData.SessionID)
+	if sessName == "" || cfg.GroupID == 0 {
 		return nil
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(cfg, sessName, hookData.SessionID)
 
 	hookLog("pre-tool: session=%s tool=%s", sessName, hookData.ToolName)
 
 	// Deliver any unsent assistant text before showing tool calls
 	if topicID != 0 && hookData.TranscriptPath != "" {
-		deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, true)
+		deliverUnsentTexts(cfg, sessName, topicID, hookData.TranscriptPath, true)
 	}
 
 	// Update tool call display
@@ -587,18 +589,18 @@ func handlePermissionHook() error {
 		})
 		text := formatToolMessage(state)
 		if state.MsgID == 0 {
-			msgID, err := sendMessageHTMLGetID(config, config.GroupID, topicID, text)
+			msgID, err := telegram.SendMessageHTMLGetID(cfg, cfg.GroupID, topicID, text)
 			if err == nil && msgID > 0 {
 				state.MsgID = msgID
 			}
 		} else {
-			editMessageHTML(config, config.GroupID, state.MsgID, topicID, text)
+			telegram.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text)
 		}
 		saveToolState(sessName, state)
 
 		// Record tool call in ledger
-		appendMessage(&MessageRecord{
-			ID:                fmt.Sprintf("tool:%s:%s:%d", hookData.SessionID, contentHash(hookData.ToolName+toolInputSummary(hookData)), time.Now().UnixNano()),
+		session.AppendMessage(&session.MessageRecord{
+			ID:                fmt.Sprintf("tool:%s:%s:%d", hookData.SessionID, session.ContentHash(hookData.ToolName+toolInputSummary(hookData)), time.Now().UnixNano()),
 			Session:           sessName,
 			Type:              "tool_call",
 			Text:              hookData.ToolName + ": " + toolInputSummary(hookData),
@@ -617,7 +619,7 @@ func handlePermissionHook() error {
 			}
 			msg := fmt.Sprintf("❓ %s\n\n%s", q.Header, q.Question)
 
-			var buttons [][]InlineKeyboardButton
+			var buttons [][]telegram.InlineKeyboardButton
 			for i, opt := range q.Options {
 				if opt.Label == "" {
 					continue
@@ -627,20 +629,20 @@ func handlePermissionHook() error {
 				if len(callbackData) > 64 {
 					callbackData = callbackData[:64]
 				}
-				buttons = append(buttons, []InlineKeyboardButton{
+				buttons = append(buttons, []telegram.InlineKeyboardButton{
 					{Text: opt.Label, CallbackData: callbackData},
 				})
 			}
 
 			if len(buttons) > 0 {
-				sendMessageWithKeyboard(config, config.GroupID, topicID, msg, buttons)
+				telegram.SendMessageWithKeyboard(cfg, cfg.GroupID, topicID, msg, buttons)
 			}
 		}
 		return nil
 	}
 
 	// OTP permission check for all other tools
-	if !isOTPEnabled(config) {
+	if !otp.IsOTPEnabled(cfg) {
 		// No OTP configured, auto-allow everything
 		outputPermissionDecision("allow", "OTP not configured")
 		return nil
@@ -649,14 +651,14 @@ func handlePermissionHook() error {
 	// OTP only applies when input came from Telegram (flag file exists and is recent).
 	// The listener sets this flag before forwarding Telegram messages to tmux.
 	// Flag auto-expires after 5 minutes to handle cases where stop hook didn't fire.
-	tmuxName := tmuxSafeName(sessName)
-	flagInfo, err := os.Stat(telegramActiveFlag(tmuxName))
-	if err != nil || time.Since(flagInfo.ModTime()) > otpGrantDuration {
+	tmuxName := tmux.TmuxSafeName(sessName)
+	flagInfo, err := os.Stat(config.TelegramActiveFlag(tmuxName))
+	if err != nil || time.Since(flagInfo.ModTime()) > otp.OTPGrantDuration {
 		return nil // no flag or expired, let Claude handle permissions normally
 	}
 
 	// Check for a valid OTP grant (approved within the last 5 minutes)
-	if hasValidOTPGrant(tmuxName) {
+	if otp.HasValidOTPGrant(tmuxName) {
 		outputPermissionDecision("allow", "OTP grant still valid")
 		return nil
 	}
@@ -694,37 +696,37 @@ func handlePermissionHook() error {
 	// Only the first parallel hook sends the Telegram message.
 	// If a request file already exists (from another parallel hook), just wait.
 	alreadyRequested := false
-	if info, err := os.Stat(otpRequestPrefix + sessionID); err == nil {
+	if info, err := os.Stat(otp.OTPRequestPrefix + sessionID); err == nil {
 		alreadyRequested = time.Since(info.ModTime()) < 30*time.Second
 	}
 
-	req := &OTPPermissionRequest{
+	req := &otp.OTPPermissionRequest{
 		SessionName: sessName,
 		ToolName:    hookData.ToolName,
 		ToolInput:   inputStr,
 		Timestamp:   time.Now().Unix(),
 	}
-	writeOTPRequest(sessionID, req)
+	otp.WriteOTPRequest(sessionID, req)
 
 	if !alreadyRequested {
 		msg := fmt.Sprintf("🔐 Permission request:\n\n🔧 %s\n📋 %s\n\nSend your OTP code to approve:", toolDesc, inputStr)
-		sendMessage(config, config.GroupID, topicID, msg)
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, msg)
 	}
 
 	hookLog("otp-request: waiting for OTP response for session=%s tool=%s already=%v", sessName, hookData.ToolName, alreadyRequested)
 
 	// Wait for OTP response from listener
-	approved, err := waitForOTPResponse(sessionID, tmuxName, otpPermissionTimeout)
+	approved, err := otp.WaitForOTPResponse(sessionID, tmuxName, otp.OTPPermissionTimeout)
 	if err != nil {
 		hookLog("otp-request: timeout or error: %v", err)
-		sendMessage(config, config.GroupID, topicID, "⏰ OTP timeout - permission denied")
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, "⏰ OTP timeout - permission denied")
 		outputPermissionDecision("deny", "OTP approval timed out")
 		return nil
 	}
 
 	if approved {
 		hookLog("otp-request: approved for session=%s tool=%s", sessName, hookData.ToolName)
-		writeOTPGrant(tmuxName)
+		otp.WriteOTPGrant(tmuxName)
 		outputPermissionDecision("allow", "Approved via OTP")
 	} else {
 		hookLog("otp-request: denied for session=%s tool=%s", sessName, hookData.ToolName)
@@ -747,7 +749,8 @@ func outputPermissionDecision(decision, reason string) {
 	fmt.Println(string(data))
 }
 
-func handleUserPromptHook() error {
+// HandleUserPromptHook processes the user-prompt-hook event
+func HandleUserPromptHook() error {
 	defer func() { recover() }()
 
 	rawData, _ := readHookStdin()
@@ -755,37 +758,37 @@ func handleUserPromptHook() error {
 		return nil
 	}
 
-	hookData, err := parseHookData(rawData)
+	hookData, err := ParseHookData(rawData)
 	if err != nil || hookData.Prompt == "" {
 		return nil
 	}
 
-	config, err := loadConfig()
-	if err != nil || config == nil {
+	cfg, err := config.LoadConfig()
+	if err != nil || cfg == nil {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
-	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+	sessName, topicID := findSession(cfg, hookData.Cwd, hookData.SessionID)
+	if sessName == "" || cfg.GroupID == 0 || topicID == 0 {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(cfg, sessName, hookData.SessionID)
 
 	// Collapse tool message from previous turn
-	collapseToolMessage(config, sessName, topicID)
+	collapseToolMessage(cfg, sessName, topicID)
 	clearToolState(sessName)
 
 	// Skip if this prompt came from Telegram (already visible in the chat).
 	// The flag is consumed (deleted) so subsequent TUI prompts are not skipped.
-	tmuxName := tmuxSafeName(sessName)
-	if flagInfo, err := os.Stat(telegramActiveFlag(tmuxName)); err == nil {
+	tmuxName := tmux.TmuxSafeName(sessName)
+	if flagInfo, err := os.Stat(config.TelegramActiveFlag(tmuxName)); err == nil {
 		if time.Since(flagInfo.ModTime()) < 30*time.Second {
-			os.Remove(telegramActiveFlag(tmuxName))
+			os.Remove(config.TelegramActiveFlag(tmuxName))
 			writePromptAck(sessName)
 			setThinking(sessName)
 			// Record: came from Telegram, both sides have it
-			appendMessage(&MessageRecord{
+			session.AppendMessage(&session.MessageRecord{
 				ID:                fmt.Sprintf("prompt:%s:%d", hookData.SessionID, time.Now().UnixNano()),
 				Session:           sessName,
 				Type:              "user_prompt",
@@ -802,7 +805,7 @@ func handleUserPromptHook() error {
 
 	// Record: came from terminal, Telegram not yet delivered
 	msgID := fmt.Sprintf("prompt:%s:%d", hookData.SessionID, time.Now().UnixNano())
-	appendMessage(&MessageRecord{
+	session.AppendMessage(&session.MessageRecord{
 		ID:                msgID,
 		Session:           sessName,
 		Type:              "user_prompt",
@@ -812,17 +815,19 @@ func handleUserPromptHook() error {
 		TelegramDelivered: false,
 	})
 
-	sendMessage(config, config.GroupID, topicID, fmt.Sprintf("💬 %s", hookData.Prompt))
-	updateDelivery(sessName, msgID, "telegram_delivered", true)
+	telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("💬 %s", hookData.Prompt))
+	session.UpdateDelivery(sessName, msgID, "telegram_delivered", true)
 	return nil
 }
 
-func handlePostToolHook() error {
+// HandlePostToolHook processes the post-tool-hook event
+func HandlePostToolHook() error {
 	// No-op: tool completion is implied by the next tool starting
 	return nil
 }
 
-func handleNotificationHook() error {
+// HandleNotificationHook processes the notification-hook event
+func HandleNotificationHook() error {
 	defer func() { recover() }()
 
 	rawData, _ := readHookStdin()
@@ -830,26 +835,26 @@ func handleNotificationHook() error {
 		return nil
 	}
 
-	hookData, err := parseHookData(rawData)
+	hookData, err := ParseHookData(rawData)
 	if err != nil {
 		return nil
 	}
 
-	config, err := loadConfig()
-	if err != nil || config == nil {
+	cfg, err := config.LoadConfig()
+	if err != nil || cfg == nil {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
-	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+	sessName, topicID := findSession(cfg, hookData.Cwd, hookData.SessionID)
+	if sessName == "" || cfg.GroupID == 0 || topicID == 0 {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(cfg, sessName, hookData.SessionID)
 
 	// idle_prompt means Claude is waiting for user input — clear typing indicator
 	if hookData.NotificationType == "idle_prompt" {
-		clearThinking(sessName)
+		ClearThinking(sessName)
 		return nil
 	}
 
@@ -865,7 +870,7 @@ func handleNotificationHook() error {
 
 	if msg != "" {
 		msgID := fmt.Sprintf("notif:%s:%d", hookData.SessionID, time.Now().UnixNano())
-		appendMessage(&MessageRecord{
+		session.AppendMessage(&session.MessageRecord{
 			ID:                msgID,
 			Session:           sessName,
 			Type:              "notification",
@@ -874,8 +879,8 @@ func handleNotificationHook() error {
 			TerminalDelivered: true,
 			TelegramDelivered: false,
 		})
-		sendMessage(config, config.GroupID, topicID, msg)
-		updateDelivery(sessName, msgID, "telegram_delivered", true)
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, msg)
+		session.UpdateDelivery(sessName, msgID, "telegram_delivered", true)
 	}
 
 	return nil
@@ -912,7 +917,7 @@ func removeCccHooks(hookArray []interface{}) []interface{} {
 	return result
 }
 
-func installHook() error {
+func InstallHook() error {
 	// NOTE: Hook installation is now done per-project via installHooksForProject()
 	// This global install function is kept for backward compatibility but does nothing
 	fmt.Println("⚠️ Global hook installation is deprecated. Hooks are now installed per-project automatically.")
@@ -1011,7 +1016,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 			map[string]interface{}{
 				"hooks": []interface{}{
 					map[string]interface{}{
-						"command": cccPath + " hook-permission",
+						"command": tmux.CccPath + " hook-permission",
 						"type":    "command",
 						"timeout": 300000,
 					},
@@ -1023,7 +1028,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 			map[string]interface{}{
 				"hooks": []interface{}{
 					map[string]interface{}{
-						"command": cccPath + " hook-stop",
+						"command": tmux.CccPath + " hook-stop",
 						"type":    "command",
 					},
 				},
@@ -1033,7 +1038,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 			map[string]interface{}{
 				"hooks": []interface{}{
 					map[string]interface{}{
-						"command": cccPath + " hook-post-tool",
+						"command": tmux.CccPath + " hook-post-tool",
 						"type":    "command",
 					},
 				},
@@ -1043,7 +1048,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 			map[string]interface{}{
 				"hooks": []interface{}{
 					map[string]interface{}{
-						"command": cccPath + " hook-user-prompt",
+						"command": tmux.CccPath + " hook-user-prompt",
 						"type":    "command",
 					},
 				},
@@ -1053,7 +1058,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 			map[string]interface{}{
 				"hooks": []interface{}{
 					map[string]interface{}{
-						"command": cccPath + " hook-notification",
+						"command": tmux.CccPath + " hook-notification",
 						"type":    "command",
 					},
 				},
@@ -1113,7 +1118,8 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 	return nil
 }
 
-func uninstallHook() error {
+// UninstallHook removes ccc hooks
+func UninstallHook() error {
 	// NOTE: Per-project hooks are managed via settings.local.json in each project
 	// This global uninstall function is kept for backward compatibility but does nothing
 	fmt.Println("⚠️ Global hook uninstallation is deprecated.")
@@ -1124,18 +1130,19 @@ func uninstallHook() error {
 
 // cleanupGlobalHooks removes ccc hooks from global config files
 // This is used to clean up old installations that installed hooks to global settings
-func cleanupGlobalHooks() error {
+// CleanupGlobalHooks removes all global ccc hooks
+func CleanupGlobalHooks() error {
 	home, _ := os.UserHomeDir()
 	defaultSettingsPath := filepath.Join(home, ".claude", "settings.json")
 
 	// Load config to get all provider config dirs
-	config, err := loadConfig()
+	cfg, err := config.LoadConfig()
 	cleanedCount := 0
 	configDirs := make(map[string]bool)
 
-	if err == nil && config.Providers != nil {
+	if err == nil && cfg.Providers != nil {
 		// Collect all unique config dirs
-		for _, provider := range config.Providers {
+		for _, provider := range cfg.Providers {
 			if provider.ConfigDir != "" {
 				// Expand ~
 				configDir := provider.ConfigDir
@@ -1237,7 +1244,7 @@ func uninstallHooksFromPath(settingsPath string) error {
 	return nil
 }
 
-func installSkill() error {
+func InstallSkill() error {
 	home, _ := os.UserHomeDir()
 	skillDir := filepath.Join(home, ".claude", "skills")
 	skillPath := filepath.Join(skillDir, "ccc-send.md")
@@ -1294,7 +1301,8 @@ ccc send ~/Downloads/large-file.zip
 	return nil
 }
 
-func uninstallSkill() error {
+// UninstallSkill removes ccc skill
+func UninstallSkill() error {
 	home, _ := os.UserHomeDir()
 	skillPath := filepath.Join(home, ".claude", "skills", "ccc-send.md")
 	os.Remove(skillPath)
@@ -1303,7 +1311,8 @@ func uninstallSkill() error {
 
 // installHooksToCurrentDir installs ccc hooks to the current directory's .claude/settings.local.json
 // This is used by the 'ccc install-hooks' command
-func installHooksToCurrentDir() error {
+// InstallHooksToCurrentDir installs hooks to the current directory
+func InstallHooksToCurrentDir() error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
@@ -1324,21 +1333,21 @@ func installHooksToCurrentDir() error {
 	return nil
 }
 
-// ensureHooksForSession ensures ccc hooks are installed in the session's project directory
+// EnsureHooksForSession ensures ccc hooks are installed in the session's project directory
 // This should be called when a session is created or resumed
-func ensureHooksForSession(config *Config, sessionName string, sessionInfo *SessionInfo) error {
+func EnsureHooksForSession(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo) error {
 	if sessionInfo == nil {
-		if config == nil || config.Sessions == nil {
+		if cfg == nil || cfg.Sessions == nil {
 			return nil
 		}
-		sessionInfo = config.Sessions[sessionName]
+		sessionInfo = cfg.Sessions[sessionName]
 		if sessionInfo == nil {
 			return nil
 		}
 	}
 
 	// Get the project path for this session
-	projectPath := getSessionWorkDir(config, sessionName, sessionInfo)
+	projectPath := session.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 	if projectPath == "" {
 		return fmt.Errorf("unable to determine project path for session '%s'", sessionName)
 	}
@@ -1369,7 +1378,7 @@ func truncate(s string, n int) string {
 
 // hookLog writes debug log entries
 func hookLog(format string, args ...interface{}) {
-	f, err := os.OpenFile(filepath.Join(cacheDir(), "hook-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filepath.Join(config.CacheDir(), "hook-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}

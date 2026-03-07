@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 )
 
 // configDir returns ~/.config/ccc (created if needed)
-func configDir() string {
+func ConfigDir() string {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".config", "ccc")
 	os.MkdirAll(dir, 0755)
@@ -17,18 +17,18 @@ func configDir() string {
 }
 
 // cacheDir returns ~/Library/Caches/ccc (created if needed)
-func cacheDir() string {
+func CacheDir() string {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, "Library", "Caches", "ccc")
 	os.MkdirAll(dir, 0755)
 	return dir
 }
 
-func getConfigPath() string {
+func ConfigPath() string {
 	// Migrate from old path if needed
 	home, _ := os.UserHomeDir()
 	oldPath := filepath.Join(home, ".ccc.json")
-	newPath := filepath.Join(configDir(), "config.json")
+	newPath := filepath.Join(ConfigDir(), "config.json")
 	if _, err := os.Stat(newPath); os.IsNotExist(err) {
 		if _, err := os.Stat(oldPath); err == nil {
 			data, _ := os.ReadFile(oldPath)
@@ -39,8 +39,8 @@ func getConfigPath() string {
 	return newPath
 }
 
-func loadConfig() (*Config, error) {
-	data, err := os.ReadFile(getConfigPath())
+func LoadConfig() (*Config, error) {
+	data, err := os.ReadFile(ConfigPath())
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func loadConfig() (*Config, error) {
 			}
 		}
 		// Save migrated config
-		saveConfig(&config)
+		SaveConfig(&config)
 	} else {
 		// Parse with new format
 		if err := json.Unmarshal(data, &config); err != nil {
@@ -129,7 +129,7 @@ func loadConfig() (*Config, error) {
 	return &config, nil
 }
 
-func saveConfig(config *Config) error {
+func SaveConfig(config *Config) error {
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
@@ -138,7 +138,7 @@ func saveConfig(config *Config) error {
 	// Multiple ccc processes (listener, hooks, CLI) may write config simultaneously
 	// Using unique temp filename prevents race conditions where multiple processes
 	// use the same .tmp file and one process's rename causes another to fail
-	configPath := getConfigPath()
+	configPath := ConfigPath()
 	tmpFile, err := os.CreateTemp(filepath.Dir(configPath), "config-*.json.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
@@ -155,7 +155,7 @@ func saveConfig(config *Config) error {
 }
 
 // getProjectsDir returns the base directory for projects
-func getProjectsDir(config *Config) string {
+func GetProjectsDir(config *Config) string {
 	if config.ProjectsDir != "" {
 		// Expand ~ to home directory
 		if strings.HasPrefix(config.ProjectsDir, "~/") {
@@ -171,7 +171,7 @@ func getProjectsDir(config *Config) string {
 // resolveProjectPath resolves the full path for a project
 // If name starts with / or ~/, it's treated as absolute/home-relative path
 // Otherwise, it's relative to projects_dir
-func resolveProjectPath(config *Config, name string) string {
+func ResolveProjectPath(config *Config, name string) string {
 	// Absolute path
 	if strings.HasPrefix(name, "/") {
 		return name
@@ -185,11 +185,11 @@ func resolveProjectPath(config *Config, name string) string {
 		return filepath.Join(home, name[2:])
 	}
 	// Relative to projects_dir
-	return filepath.Join(getProjectsDir(config), name)
+	return filepath.Join(GetProjectsDir(config), name)
 }
 
 // expandPath expands ~ to home directory
-func expandPath(path string) string {
+func ExpandPath(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, path[2:])
@@ -199,7 +199,7 @@ func expandPath(path string) string {
 
 // getActiveProvider returns the active provider config.
 // First checks providers map + active_provider, then falls back to legacy provider field.
-func getActiveProvider(config *Config) *ProviderConfig {
+func GetActiveProvider(config *Config) *ProviderConfig {
 	// New style: providers map with active_provider
 	if config.Providers != nil && config.ActiveProvider != "" {
 		if provider := config.Providers[config.ActiveProvider]; provider != nil {
@@ -210,9 +210,9 @@ func getActiveProvider(config *Config) *ProviderConfig {
 	return config.Provider
 }
 
-// getProviderNames returns a list of configured provider names
+// GetProviderNames returns a list of configured provider names
 // Includes the builtin 'anthropic' provider and all configured providers
-func getProviderNames(config *Config) []string {
+func GetProviderNames(config *Config) []string {
 	var names []string
 	// Always include anthropic as a built-in option
 	names = append(names, "anthropic")
@@ -230,7 +230,7 @@ func getProviderNames(config *Config) []string {
 // getProvider returns a Provider interface for the given provider name
 // If name is empty, returns the active provider (or builtin if none active)
 // Returns nil if provider name is specified but not found
-func getProvider(config *Config, name string) Provider {
+func GetProvider(config *Config, name string) Provider {
 	if name == "" {
 		// No specific name requested - use active provider or builtin
 		if config.ActiveProvider != "" && config.Providers != nil {
@@ -262,7 +262,7 @@ func getProvider(config *Config, name string) Provider {
 
 // ensureProviderSettings updates the provider's settings.json with trusted directories
 // This prevents the "Do you trust the files in this folder?" prompt
-func ensureProviderSettings(provider Provider) error {
+func EnsureProviderSettings(provider Provider) error {
 	if provider == nil || provider.ConfigDir() == "" {
 		return nil // No provider config dir, nothing to do
 	}
@@ -311,7 +311,7 @@ func ensureProviderSettings(provider Provider) error {
 	if err != nil {
 		// Can't resolve home directory, skip adding trusted directories
 		// but continue with the rest of the settings
-		listenLog("ensureProviderSettings: cannot resolve home directory for trusted paths: %v (skipping trusted directories)", err)
+		fmt.Printf("ensureProviderSettings: cannot resolve home directory for trusted paths: %v (skipping trusted directories)\n", err)
 		return nil
 	}
 
@@ -374,4 +374,22 @@ func ensureProviderSettings(provider Provider) error {
 	}
 
 	return nil
+}
+
+// TelegramActiveFlag returns the path of the flag file that indicates
+// a Telegram message is being processed by a tmux session.
+func TelegramActiveFlag(tmuxName string) string {
+	return filepath.Join(CacheDir(), "telegram-active-"+tmuxName)
+}
+
+// ThinkingFlag returns the path of the flag file that indicates
+// Claude is actively processing in a session (for typing indicator).
+func ThinkingFlag(sessionName string) string {
+	return filepath.Join(CacheDir(), "thinking-"+sessionName)
+}
+
+// PromptAckPath returns the path of the ack file that confirms
+// Claude received a prompt sent from Telegram via tmux send-keys.
+func PromptAckPath(sessionName string) string {
+	return filepath.Join(CacheDir(), "prompt-ack-"+sessionName)
 }
