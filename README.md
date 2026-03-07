@@ -176,6 +176,104 @@ That's it! Send your first prompt:
 "Help me add user authentication to this Express.js app"
 ```
 
+## Configuration
+
+ccc stores configuration in `~/.config/ccc/config.json`. Run `ccc config` to manage settings.
+
+### Quick Config Commands
+
+```bash
+# View current config
+ccc config show
+
+# Set bot token
+ccc config set bot-token YOUR_BOT_TOKEN
+
+# Set chat/group ID (automatically discovered during setup)
+ccc config set chat-id 123456789
+ccc config set group-id -1001234567890
+
+# Set active provider
+ccc config set active-provider my-provider
+
+# List available providers
+ccc config list-providers
+```
+
+### Provider Configuration
+
+ccc supports multiple AI providers through a flexible provider system. Configure custom providers in your config file:
+
+```json
+{
+  "active_provider": "my-custom-provider",
+  "providers": {
+    "my-custom-provider": {
+      "base_url": "https://api.example.com/v1",
+      "auth_env_var": "MY_API_KEY",
+      "opus_model": "claude-3-opus-20250214",
+      "sonnet_model": "claude-3-7-sonnet-20250214",
+      "haiku_model": "claude-3-5-haiku-20250214",
+      "subagent_model": "claude-3-5-haiku-20250214",
+      "config_dir": "~/.claude",
+      "api_timeout": 120000
+    }
+  }
+}
+```
+
+**Provider Options:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `base_url` | string | API base URL (e.g., `https://api.anthropic.com`) |
+| `auth_token` | string | API key (not recommended - use `auth_env_var`) |
+| `auth_env_var` | string | Environment variable name containing API key |
+| `opus_model` | string | Model name for Opus |
+| `sonnet_model` | string | Model name for Sonnet |
+| `haiku_model` | string | Model name for Haiku |
+| `subagent_model` | string | Model name for subagent |
+| `config_dir` | string | Provider config directory (supports `~`) |
+| `api_timeout` | int | API timeout in milliseconds |
+
+**Built-in Provider:**
+
+The `anthropic` provider is built-in and uses:
+- Environment variable: `ANTHROPIC_API_KEY`
+- Default models from Claude Code
+- Default config directory: `~/.claude`
+
+**Session-Level Provider:**
+
+Assign a specific provider to a session:
+
+```json
+{
+  "sessions": {
+    "myproject": {
+      "topic_id": 42,
+      "path": "/home/user/Projects/myproject",
+      "provider_name": "my-custom-provider"
+    }
+  }
+}
+```
+
+### Environment Variables
+
+Some settings can be overridden via environment variables:
+
+```bash
+# Anthropic API key (for builtin provider)
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Custom base URL
+export ANTHROPIC_BASE_URL="https://api.example.com"
+
+# Custom models
+export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-3-7-sonnet-20250214"
+```
+
 ## Session Organization
 
 ```
@@ -258,6 +356,16 @@ That's it! Send your first prompt:
 | [**Usage Guide**](docs/usage.md) | Complete command reference |
 | [**Troubleshooting**](docs/troubleshooting.md) | Common issues & solutions |
 | [**Changelog**](docs/changelog.md) | Version history |
+| [**Refactor Design**](docs/REFACTOR_DESIGN.md) | Config system architecture & design |
+
+**Project Structure:**
+- `types.go` - All struct definitions
+- `config_*.go` - Modular config system (load, save, paths, validation)
+- `session_*.go` - Session lookup and persistence
+- `provider.go` - Provider abstraction layer
+- `telegram.go` - Telegram Bot API integration
+- `hooks.go` - Claude Code hook system
+- `ledger.go` - Message delivery tracking
 
 ## Privacy & Security
 
