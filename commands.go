@@ -1209,26 +1209,13 @@ func listen() error {
 					continue
 				}
 
-				// Only send interrupt if Claude is actually running (avoid interrupting other work)
-				if !tmuxTargetHasClaudeRunning(target) {
-					sendMessage(config, chatID, threadID, "ℹ️ Claude is not running in this session.")
-					continue
-				}
-
-				// Send Esc (Escape key) for graceful cancellation - safer than Ctrl+C
+				// Send Esc (Escape key) for graceful cancellation
 				if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-[").Run(); err != nil {
 					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send interrupt: %v", err))
 					continue
 				}
 
-				// Wait for interrupt to be processed, then check status
-				time.Sleep(600 * time.Millisecond)
-
-				if tmuxTargetHasClaudeRunning(target) {
-					sendMessage(config, chatID, threadID, "⏹️ Interrupt sent. Claude may be finishing up...")
-				} else {
-					sendMessage(config, chatID, threadID, "✅ Claude session interrupted")
-				}
+				sendMessage(config, chatID, threadID, "⏹️ Interrupt sent")
 				continue
 			}
 
