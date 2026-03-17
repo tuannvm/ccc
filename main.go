@@ -249,12 +249,6 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "hook-worktree-create":
-		if err := handleWorktreeCreateHook(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
 	case "install":
 		if err := installHook(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

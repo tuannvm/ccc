@@ -218,9 +218,23 @@ func createSession(config *Config, name string) error {
 
 	// Create work directory
 	workDir := resolveProjectPath(config, name)
+	needsGitInit := false
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		// Create project directory
 		os.MkdirAll(workDir, 0755)
+		needsGitInit = true
+	}
+
+	// Initialize git repository if this is a new directory
+	if needsGitInit {
+		fmt.Printf("🔧 Initializing git repository in %s...\n", workDir)
+		cmd := exec.Command("git", "init")
+		cmd.Dir = workDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("⚠️  Git init failed: %v\n%s\n", err, string(output))
+		} else {
+			fmt.Printf("✅ Git repository initialized\n")
+		}
 	}
 
 	// Save session info first (needed for ensureHooksForSession)

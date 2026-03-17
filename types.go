@@ -160,7 +160,6 @@ type HookData struct {
 	Title            string          `json:"title"`             // For Notification hook
 	NotificationType string          `json:"notification_type"` // For Notification hook
 	StopHookActive   bool            `json:"stop_hook_active"`  // For Stop hook
-	WorktreePath     string          `json:"worktree_path"`     // For WorktreeCreate hook
 	ToolInputRaw     json.RawMessage `json:"tool_input"`        // Raw tool input JSON
 	ToolInput        HookToolInput   `json:"-"`                 // Parsed from ToolInputRaw
 }
