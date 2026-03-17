@@ -33,6 +33,11 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 | `/continue` | Restart keeping conversation history |
 | `/providers` | List available providers |
 | `/provider [name]` | Show/change provider for current session |
+| `/split <name>` | Create new pane in current session |
+| `/pane <ref> <prompt>` | Send prompt to specific pane |
+| `/panes` | List all panes with status |
+| `/remove-pane <ref>` | Remove a pane |
+| `/switch-pane <ref>` | Change active pane |
 | `/c <command>` | Execute shell command |
 | `/update` | Update ccc binary |
 | `/restart` | Restart ccc service |
@@ -189,6 +194,111 @@ Or edit `~/.config/ccc/config.json`:
 {
   "active_provider": "provider-name"
 }
+```
+
+## Multi-Pane Sessions
+
+Multi-pane sessions allow you to run multiple Claude instances in parallel within the same project window. Useful for:
+- **Coder + Reviewer**: One pane implements, another reviews
+- **Multiple Providers**: Compare responses from different AI models
+- **Parallel Tasks**: Run tests in one pane while writing code in another
+
+### Creating Panes
+
+**Create a new pane (horizontal split by default):**
+```
+/split reviewer
+```
+
+**Create with specific direction:**
+```
+/split coder --vertical
+/split reviewer --horizontal
+```
+
+This creates a new pane, starts Claude in it, and sets it as the active pane.
+
+### Listing Panes
+
+```
+/panes
+```
+
+Response:
+```
+myproject panes:
+* 0: coder (Opus 4.6)
+  1: reviewer (Haiku 4.5)
+```
+The `*` marks the active pane (default message target).
+
+### Sending to Specific Panes
+
+**Send prompt to a specific pane:**
+```
+/pane coder "Implement the auth feature"
+/pane reviewer "Review the changes in auth.go"
+```
+
+You can reference panes by:
+- Index: `0`, `1`, `2`
+- Friendly name: `coder`, `reviewer`
+
+### Switching Active Pane
+
+Change which pane receives default messages:
+
+```
+/switch-pane reviewer
+```
+
+Or use index:
+```
+/switch-pane 1
+```
+
+Now regular messages (without `/pane`) go to the reviewer pane.
+
+### Removing Panes
+
+```
+/remove-pane reviewer
+```
+
+Or by index:
+```
+/remove-pane 1
+```
+
+The last pane cannot be removed (protection enforced).
+
+### Pane State Synchronization
+
+Panes are automatically synchronized with tmux state:
+- On startup, `initSessionPanes()` syncs config with live tmux panes
+- Manually split panes in tmux are detected on next access
+- Killed panes are removed from config on next access
+
+### Multi-Pane Workflow Example
+
+```
+📱 Telegram: /new myproject
+💻 Creates session with pane 0
+
+📱 Telegram: /split reviewer
+💻 Creates pane 1, sets as active
+
+📱 Telegram: /pane 0 "Add user authentication"
+💻 Routes to coder pane (pane 0)
+
+📱 Telegram: /switch-pane reviewer
+💻 Changes active to pane 1
+
+📱 Telegram: "Check the auth implementation"
+💻 Routes to reviewer pane (active)
+
+📱 Telegram: /panes
+💻 Shows: *0: coder, 1: reviewer
 ```
 
 ## Worktree Sessions

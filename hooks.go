@@ -152,6 +152,29 @@ func formatToolMessageCollapsed(state *ToolState) string {
 	return "<blockquote expandable>" + formatToolLines(state) + "</blockquote>"
 }
 
+// getPanePrefix returns a formatted prefix with emoji for a pane
+// Uses different emojis based on pane index or friendly name
+func getPanePrefix(paneName string, paneIndex string) string {
+	// Pane emojis - distinctive emojis for different panes
+	paneEmojis := []string{"🔵", "🟢", "🟡", "🔴", "🟣", "🟠", "⚫", "⚪"}
+
+	// Try to use pane index for emoji selection
+	if paneIndex != "" {
+		// Parse pane index as integer
+		var idx int
+		if _, err := fmt.Sscanf(paneIndex, "%d", &idx); err == nil && idx < len(paneEmojis) {
+			return fmt.Sprintf("%s %s", paneEmojis[idx], paneName)
+		}
+	}
+
+	// Fallback: hash-based emoji for non-numeric or out-of-range indices
+	hash := 0
+	for _, c := range paneName {
+		hash += int(c)
+	}
+	return fmt.Sprintf("%s %s", paneEmojis[hash%len(paneEmojis)], paneName)
+}
+
 // toolInputSummary extracts a short description from tool input
 func toolInputSummary(hookData HookData) string {
 	truncAt := 80
@@ -236,16 +259,16 @@ func handleStopHook() error {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
+	sessName, paneIndex, topicID := findSessionWithPane(config, hookData.Cwd, hookData.SessionID)
 	if sessName == "" || config.GroupID == 0 || topicID == 0 {
 		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s", hookData.Cwd, hookData.SessionID)
 		return nil
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionIDForPane(config, sessName, paneIndex, hookData.SessionID)
 
-	hookLog("stop-hook: session=%s claude_session_id=%s transcript=%s", sessName, hookData.SessionID, hookData.TranscriptPath)
+	hookLog("stop-hook: session=%s pane=%s claude_session_id=%s transcript=%s", sessName, paneIndex, hookData.SessionID, hookData.TranscriptPath)
 
 	// Clear flags when Claude stops
 	tmuxName := tmuxSafeName(sessName)
@@ -254,14 +277,14 @@ func handleStopHook() error {
 
 	// Deliver unsent texts as separate messages (these come after all tools)
 	hookLog("stop-hook: delivering unsent texts")
-	sent := deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, false)
+	sent := deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, false, paneIndex)
 	hookLog("stop-hook: sent=%d", sent)
 	clearToolState(sessName)
 
 	// Background retry: transcript may not be flushed yet when stop hook fires.
 	// Spawn a detached subprocess that retries 3 times at 2-second intervals.
 	// (goroutines die when the hook process exits, so we need a separate process)
-	cmd := exec.Command(cccPath, "hook-stop-retry", sessName, fmt.Sprintf("%d", topicID), hookData.TranscriptPath)
+	cmd := exec.Command(cccPath, "hook-stop-retry", sessName, fmt.Sprintf("%d", topicID), hookData.TranscriptPath, paneIndex)
 	cmd.Start()
 
 	return nil
@@ -272,8 +295,8 @@ func handleStopHook() error {
 // If insertIntoToolMsg is true and tool state has a message, texts are inserted
 // into the tool blockquote (for text before/between tools in PreToolUse).
 // If false, texts are sent as separate messages (for text after tools in Stop hook).
-func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool) int {
-	hookLog("deliver-unsent: sess=%s topic=%d transcript=%s", sessName, topicID, transcriptPath)
+func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, paneIndex string) int {
+	hookLog("deliver-unsent: sess=%s pane=%s topic=%d transcript=%s", sessName, paneIndex, topicID, transcriptPath)
 	blocks := extractRecentAssistantTexts(transcriptPath, 80)
 	lastPreview := ""
 	if len(blocks) > 0 {
@@ -303,7 +326,11 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 			})
 		} else {
 			// Send as separate message
-			msg := fmt.Sprintf("*%s:*\n%s", sessName, block.text)
+			paneName := getPaneDisplayName(config, sessName, paneIndex)
+			msg := block.text
+			if paneName != "" {
+				msg = fmt.Sprintf("**%s**\n\n%s", getPanePrefix(paneName, paneIndex), block.text)
+			}
 			tgMsgID, err := sendMessageGetID(config, config.GroupID, topicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
@@ -478,15 +505,15 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 // handleStopRetry is a background process spawned by stop hook.
 // It retries transcript reading 3 times at 2-second intervals to catch
 // messages that weren't flushed when the stop hook first fired.
-func handleStopRetry(sessName string, topicID int64, transcriptPath string) error {
+func handleStopRetry(sessName string, topicID int64, transcriptPath string, paneIndex string) error {
 	config, err := loadConfig()
 	if err != nil || config == nil {
 		return nil
 	}
 	for i := 0; i < 3; i++ {
 		time.Sleep(2 * time.Second)
-		n := deliverUnsentTexts(config, sessName, topicID, transcriptPath, false)
-		hookLog("stop-retry: %d/3 sent=%d session=%s", i+1, n, sessName)
+		n := deliverUnsentTexts(config, sessName, topicID, transcriptPath, false, paneIndex)
+		hookLog("stop-retry: %d/3 sent=%d session=%s pane=%s", i+1, n, sessName, paneIndex)
 	}
 	return nil
 }
@@ -509,19 +536,19 @@ func handlePermissionHook() error {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
+	sessName, paneIndex, topicID := findSessionWithPane(config, hookData.Cwd, hookData.SessionID)
 	if sessName == "" || config.GroupID == 0 {
 		return nil
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionIDForPane(config, sessName, paneIndex, hookData.SessionID)
 
-	hookLog("pre-tool: session=%s tool=%s", sessName, hookData.ToolName)
+	hookLog("pre-tool: session=%s pane=%s tool=%s", sessName, paneIndex, hookData.ToolName)
 
 	// Deliver any unsent assistant text before showing tool calls
 	if topicID != 0 && hookData.TranscriptPath != "" {
-		deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, true)
+		deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, true, paneIndex)
 	}
 
 	// Update tool call display
@@ -712,12 +739,12 @@ func handleUserPromptHook() error {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
+	sessName, paneIndex, topicID := findSessionWithPane(config, hookData.Cwd, hookData.SessionID)
 	if sessName == "" || config.GroupID == 0 || topicID == 0 {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionIDForPane(config, sessName, paneIndex, hookData.SessionID)
 
 	// Collapse tool message from previous turn
 	collapseToolMessage(config, sessName, topicID)
@@ -759,7 +786,13 @@ func handleUserPromptHook() error {
 		TelegramDelivered: false,
 	})
 
-	sendMessage(config, config.GroupID, topicID, fmt.Sprintf("💬 %s", hookData.Prompt))
+	// Add pane prefix if this is from a specific pane
+	paneName := getPaneDisplayName(config, sessName, paneIndex)
+	promptMsg := fmt.Sprintf("💬 %s", hookData.Prompt)
+	if paneName != "" {
+		promptMsg = fmt.Sprintf("**%s**\n\n%s", getPanePrefix(paneName, paneIndex), promptMsg)
+	}
+	sendMessage(config, config.GroupID, topicID, promptMsg)
 	updateDelivery(sessName, msgID, "telegram_delivered", true)
 	return nil
 }
@@ -787,12 +820,12 @@ func handleNotificationHook() error {
 		return nil
 	}
 
-	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
+	sessName, paneIndex, topicID := findSessionWithPane(config, hookData.Cwd, hookData.SessionID)
 	if sessName == "" || config.GroupID == 0 || topicID == 0 {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionIDForPane(config, sessName, paneIndex, hookData.SessionID)
 
 	// idle_prompt means Claude is waiting for user input — clear typing indicator
 	if hookData.NotificationType == "idle_prompt" {
@@ -808,6 +841,12 @@ func handleNotificationHook() error {
 		msg = fmt.Sprintf("🔔 %s", hookData.Title)
 	} else if hookData.NotificationType != "" {
 		msg = fmt.Sprintf("🔔 %s", hookData.NotificationType)
+	}
+
+	// Add pane prefix if this is from a specific pane
+	paneName := getPaneDisplayName(config, sessName, paneIndex)
+	if paneName != "" {
+		msg = fmt.Sprintf("**%s**\n\n%s", getPanePrefix(paneName, paneIndex), msg)
 	}
 
 	if msg != "" {

@@ -52,10 +52,10 @@ LEGEND:
 | Component | File | Responsibility |
 |-----------|------|---------------|
 | **Telegram Listener** | `telegram.go`, `commands.go` | Polls Telegram for messages, handles commands, routes prompts to sessions |
-| **Tmux Manager** | `tmux.go` | Creates/manages tmux sessions, switches windows, detects Claude state |
-| **Session Manager** | `session.go`, `session_lookup.go`, `session_persist.go` | Manages session lifecycle, creates topics, persists state |
+| **Tmux Manager** | `tmux.go` | Creates/manages tmux sessions, pane lifecycle, detects Claude state |
+| **Session Manager** | `session.go`, `session_lookup.go`, `session_persist.go` | Session lifecycle, pane CRUD, creates topics, persists state |
 | **Config Manager** | `config_load.go`, `config_save.go`, `config_paths.go`, `config_validation.go`, `types.go` | Loads/saves config atomically, validates, manages providers and sessions |
-| **Hook System** | `hooks.go` | Installs Claude Code hooks, reads transcripts, sends notifications |
+| **Hook System** | `hooks.go` | Installs Claude Code hooks, reads transcripts, sends notifications (pane-aware routing) |
 | **Provider Abstraction** | `provider.go` | Provider-agnostic interface for AI providers |
 | **Message Ledger** | `ledger.go` | Tracks message delivery state between terminal and Telegram |
 
@@ -126,7 +126,38 @@ LEGEND:
    │◄────────────│              │            │          │        │     │
 ```
 
-### 3. Hook Notification Flow
+### 3. Multi-Pane Session Structure
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MULTI-PANE TMUX STRUCTURE                     │
+└─────────────────────────────────────────────────────────────────┘
+
+ccc (tmux session)
+│
+├── myproject (window)
+│   ├── pane 0: coder (Claude session: abc-123, provider: opus)
+│   │   └── ccc:myproject.0  ← target for /pane coder commands
+│   │
+│   └── pane 1: reviewer (Claude session: def-456, provider: haiku)
+│       └── ccc:myproject.1  ← target for /pane reviewer commands
+│
+├── experiment (window)
+│   └── pane 0: single-pane session
+│       └── ccc:experiment  ← target for regular messages
+│
+└── test (window)
+    └── pane 0: single-pane session
+        └── ccc:test
+
+Telegram Group:
+├── General topic (private chat)
+├── myproject topic ────── Routes to ccc:myproject.{ActivePane}
+├── experiment topic ──── Routes to ccc:experiment
+└── test topic ─────────── Routes to ccc:test
+```
+
+### 4. Hook Notification Flow (Pane-Aware)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -134,6 +165,7 @@ LEGEND:
 └─────────────────────────────────────────────────────────────────┘
 
   Claude Code    Transcript File    Hook System    Response Parser    Telegram    User
+(Pane 1: def-456)                    │                │             │         │
       │                 │                 │                │             │         │
       │ Write           │                 │                │             │         │
       ├────────────────►│                 │                │             │         │
@@ -142,8 +174,11 @@ LEGEND:
       │                 │◄────────────────┤                │             │         │
       │                 │                 │  New content    │             │         │
       │                 │                 ├───────────────►│             │         │
-      │                 │                 │                │ Extract     │         │
+      │                 │                 │                │ Extract claude_session_id
+      │                 │                 │                │          (def-456)     │
       │                 │                 │                ├──────────►│         │
+      │                 │                 │         findPaneByClaudeID       │
+      │                 │                 │                │         returns pane 1 │
       │                 │                 │                │          Send│        │
       │                 │                 │                ├──────────►│         │
       │                 │                 │                │             │ Notify  │
@@ -220,6 +255,45 @@ ccc (tmux session)
 ├── myproject (window)
 ├── experiment (window)
 └── test (window)
+```
+
+### Multi-Pane Architecture
+
+Sessions can have multiple panes, each running a separate Claude instance:
+
+```
+ccc:myproject (tmux window)
+├── pane 0: coder (Claude session: abc-123)    ← active pane
+└── pane 1: reviewer (Claude session: def-456)
+```
+
+**Pane Indexing:**
+- Pane indices are runtime values from tmux (`"0"`, `"1"`, `"2"`)
+- Queried via `tmux list-panes -F "#{pane_index}"`
+- When a pane is killed, higher indices shift down
+
+**Multi-Pane Message Routing:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MULTI-PANE MESSAGE FLOW                      │
+└─────────────────────────────────────────────────────────────────┘
+
+  Telegram Topic "myproject"
+         │
+         ├──► Regular message ──► ccc:myproject.{ActivePane}
+         │                            (defaults to pane 0)
+         │
+         └──► /pane reviewer "prompt" ──► ccc:myproject.1
+                                          (routes to reviewer pane)
+
+  Hook Event (from pane 1)
+         │
+         ├──► claude_session_id = "def-456"
+         │
+         └──► findPaneByClaudeID("def-456") ──► (myproject, "1", topic_id)
+                                                  └──► Response sent to
+                                                      Telegram topic
 ```
 
 ### Claude Detection
@@ -310,6 +384,103 @@ type Provider interface {
 │      Code         │
 └───────────────────┘
 ```
+
+## Multi-Pane System
+
+### Data Model
+
+Each session can have multiple panes, tracked in `SessionInfo.Panes`:
+
+```go
+type PaneInfo struct {
+    PaneIndex       string `json:"pane_index,omitempty"`       // Runtime pane index ("0", "1", "2"...)
+    ClaudeSessionID string `json:"claude_session_id,omitempty"` // Claude session ID in this pane
+    ProviderName    string `json:"provider_name,omitempty"`     // Provider for this pane
+    Name            string `json:"name,omitempty"`              // Friendly name (e.g., "reviewer")
+}
+
+type SessionInfo struct {
+    // ... existing fields ...
+    Panes      map[string]*PaneInfo `json:"panes,omitempty"`   // pane_index -> PaneInfo
+    ActivePane string              `json:"active_pane,omitempty"` // Currently active pane index
+}
+```
+
+**ActivePane Invariants:**
+- **New split**: active = new pane (user wants to interact with it)
+- **Kill active pane**: active = lowest remaining pane index (numeric comparison)
+- **Kill non-active pane**: ActivePane unchanged
+- **Startup**: active = pane `"0"` (first pane)
+
+### Pane Synchronization
+
+The `syncPanes()` function reconciles config state with actual tmux state:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PANE SYNCHRONIZATION                         │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Query tmux: list-panes -F "#{pane_index}"
+        │
+        ▼
+2. Compare with config.Sessions[name].Panes map
+        │
+        ▼
+3. Remove config entries for panes that no longer exist in tmux
+        │
+        ▼
+4. Add empty PaneInfo{} for panes that exist in tmux but not in config
+        │
+        ▼
+   ✅ Config synchronized
+```
+
+Called on:
+- Startup via `initSessionPanes()`
+- Lazily on first pane access in upgraded sessions
+
+### Hook Routing for Panes
+
+Hooks use `findSessionWithPane()` to route events to the correct pane:
+
+```
+Hook Event (handleStopHook, handlePermissionHook, etc.)
+        │
+        ▼
+findSessionWithPane(config, cwd, claudeSessionID)
+        │
+        ├──► findPaneByClaudeID(claudeSessionID)
+        │         │
+        │         ├──► Check panes map for exact match
+        │         │
+        │         ├──► Not found? Check ActivePane for uninitialized pane
+        │         │         (handles race condition on first hook)
+        │         │
+        │         └──► Fallback to legacy SessionInfo.ClaudeSessionID
+        │
+        └──► No match? Fallback to findSessionByCwd(cwd)
+                  (returns empty paneIndex = session-level routing)
+        │
+        ▼
+Return (sessionName, paneIndex, topicID)
+        │
+        ▼
+persistClaudeSessionIDForPane(sessionName, paneIndex, claudeSessionID)
+```
+
+**Race Condition Handling:**
+When a new pane starts Claude, the first hook may arrive before `ClaudeSessionID` is persisted. The system prefers `ActivePane` (set by `createPane` for the most recently created pane) before falling back to arbitrary uninitialized pane.
+
+### Target Format
+
+```
+Single pane (legacy):  ccc:my__project          (sends to active pane)
+Multi pane:            ccc:my__project.0         (pane index 0)
+                       ccc:my__project.1         (pane index 1)
+```
+
+Session names go through `tmuxSafeName()` (replaces `.` with `__`), so the `.0` suffix is unambiguous.
 
 ## Configuration System
 

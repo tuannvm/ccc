@@ -6,16 +6,26 @@ import (
 
 // ========== Session Types ==========
 
+// PaneInfo stores information about a pane within a session window
+type PaneInfo struct {
+	PaneIndex       string `json:"pane_index,omitempty"`       // runtime pane index ("0", "1", "2"...)
+	ClaudeSessionID string `json:"claude_session_id,omitempty"` // Claude session ID in this pane
+	ProviderName    string `json:"provider_name,omitempty"`     // Provider for this pane
+	Name            string `json:"name,omitempty"`              // Friendly name (e.g., "reviewer")
+}
+
 // SessionInfo stores information about a session
 type SessionInfo struct {
-	TopicID         int64  `json:"topic_id"`
-	Path            string `json:"path"`
-	ClaudeSessionID string `json:"claude_session_id,omitempty"`
-	WindowID        string `json:"window_id,omitempty"`     // tmux window ID (@N)
-	ProviderName    string `json:"provider_name,omitempty"` // Provider to use for this session
-	IsWorktree      bool   `json:"is_worktree,omitempty"`   // Whether this is a worktree session
-	WorktreeName    string `json:"worktree_name,omitempty"` // Name of the worktree
-	BaseSession     string `json:"base_session,omitempty"`  // Base session name for worktree
+	TopicID         int64               `json:"topic_id"`
+	Path            string              `json:"path"`
+	ClaudeSessionID string              `json:"claude_session_id,omitempty"` // Legacy: primary pane's session ID
+	WindowID        string              `json:"window_id,omitempty"`         // tmux window ID (@N)
+	ProviderName    string              `json:"provider_name,omitempty"`     // Legacy: primary pane's provider
+	IsWorktree      bool                `json:"is_worktree,omitempty"`       // Whether this is a worktree session
+	WorktreeName    string              `json:"worktree_name,omitempty"`     // Name of the worktree
+	BaseSession     string              `json:"base_session,omitempty"`      // Base session name for worktree
+	Panes           map[string]*PaneInfo `json:"panes,omitempty"`           // pane_index -> PaneInfo
+	ActivePane      string              `json:"active_pane,omitempty"`       // Currently active pane index
 }
 
 // ========== Provider Types ==========

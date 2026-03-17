@@ -223,13 +223,17 @@ func main() {
 
 	case "hook-stop-retry":
 		// Background process: retry transcript read 3x at 2s intervals
-		// Args: sessName topicID transcriptPath
+		// Args: sessName topicID transcriptPath paneIndex
 		if len(os.Args) < 5 {
 			os.Exit(1)
 		}
 		var tid int64
 		fmt.Sscan(os.Args[3], &tid)
-		handleStopRetry(os.Args[2], tid, os.Args[4])
+		paneIndex := ""
+		if len(os.Args) >= 6 {
+			paneIndex = os.Args[5]
+		}
+		handleStopRetry(os.Args[2], tid, os.Args[4], paneIndex)
 
 	case "hook-post-tool":
 		if err := handlePostToolHook(); err != nil {

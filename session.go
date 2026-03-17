@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -254,6 +255,203 @@ func killSession(config *Config, name string) error {
 	// Remove from config (no need to kill tmux window with single window approach)
 	delete(config.Sessions, name)
 	saveConfig(config)
+
+	return nil
+}
+
+// ========== Pane Management ==========
+
+// createPane adds a new pane to an existing session
+func createPane(config *Config, sessionName string, paneName string, direction string) (string, error) {
+	info, exists := config.Sessions[sessionName]
+	if !exists || info == nil {
+		return "", fmt.Errorf("session '%s' not found", sessionName)
+	}
+
+	// Sync panes with tmux state first
+	syncPanes(config, sessionName)
+
+	// Create the pane in tmux
+	paneIndex, err := splitPane(sessionName, direction)
+	if err != nil {
+		return "", fmt.Errorf("failed to create pane: %w", err)
+	}
+
+	// Initialize panes map if needed
+	if info.Panes == nil {
+		info.Panes = make(map[string]*PaneInfo)
+	}
+
+	// Get provider for this pane (inherit from session or active provider)
+	providerName := info.ProviderName
+	if providerName == "" {
+		providerName = config.ActiveProvider
+	}
+
+	// Store pane info
+	info.Panes[paneIndex] = &PaneInfo{
+		PaneIndex:    paneIndex,
+		ProviderName: providerName,
+		Name:         paneName,
+	}
+
+	// Set as active pane (new split → active = new pane)
+	info.ActivePane = paneIndex
+
+	if err := saveConfig(config); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Start Claude in the new pane
+	workDir := getSessionWorkDir(config, sessionName, info)
+	if err := switchToPane(sessionName, paneIndex, workDir, providerName, ""); err != nil {
+		return "", fmt.Errorf("failed to start Claude in pane: %w", err)
+	}
+
+	listenLog("createPane: created pane %s (%s) in session %s with Claude", paneIndex, paneName, sessionName)
+	return paneIndex, nil
+}
+
+// removePane removes a pane from a session
+func removePane(config *Config, sessionName string, paneIndex string) error {
+	info, exists := config.Sessions[sessionName]
+	if !exists || info == nil {
+		return fmt.Errorf("session '%s' not found", sessionName)
+	}
+	if info.Panes == nil || info.Panes[paneIndex] == nil {
+		return fmt.Errorf("pane %s not found in session %s", paneIndex, sessionName)
+	}
+
+	// Protect last pane
+	if len(info.Panes) <= 1 {
+		return fmt.Errorf("cannot remove the last pane in a session")
+	}
+
+	// Kill the pane in tmux
+	if err := killPane(sessionName, paneIndex); err != nil {
+		return fmt.Errorf("failed to kill pane: %w", err)
+	}
+
+	// Remove from config
+	delete(info.Panes, paneIndex)
+
+	// Reassign ActivePane if we killed the active one
+	if info.ActivePane == paneIndex {
+		// Find lowest remaining pane index (numeric comparison)
+		info.ActivePane = ""
+		minIndex := -1
+		for pi := range info.Panes {
+			// Parse pane index to integer for comparison
+			idx, err := strconv.Atoi(pi)
+			if err == nil {
+				if minIndex < 0 || idx < minIndex {
+					minIndex = idx
+					info.ActivePane = pi
+				}
+			}
+		}
+		listenLog("removePane: active pane killed, reassigned to %s", info.ActivePane)
+	}
+
+	if err := saveConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	listenLog("removePane: removed pane %s from session %s", paneIndex, sessionName)
+	return nil
+}
+
+// setActivePane sets the active pane for a session
+func setActivePane(config *Config, sessionName string, paneIndex string) error {
+	info, exists := config.Sessions[sessionName]
+	if !exists || info == nil {
+		return fmt.Errorf("session '%s' not found", sessionName)
+	}
+	if info.Panes == nil || info.Panes[paneIndex] == nil {
+		return fmt.Errorf("pane %s not found in session %s", paneIndex, sessionName)
+	}
+
+	info.ActivePane = paneIndex
+
+	if err := saveConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Select the pane in tmux
+	return selectPane(sessionName, paneIndex)
+}
+
+// listPanes returns formatted pane information for display
+func listPanes(config *Config, sessionName string) []string {
+	info := config.Sessions[sessionName]
+	if info == nil {
+		return []string{"session not found"}
+	}
+
+	if info.Panes == nil || len(info.Panes) == 0 {
+		return []string{fmt.Sprintf("  Pane 0: (primary)")}
+	}
+
+	var lines []string
+	for paneIndex, paneInfo := range info.Panes {
+		marker := " "
+		if info.ActivePane == paneIndex {
+			marker = "*"
+		}
+		name := paneInfo.Name
+		if name == "" {
+			name = "(unnamed)"
+		}
+		line := fmt.Sprintf("%s Pane %s: %s", marker, paneIndex, name)
+		if paneInfo.ProviderName != "" {
+			line += fmt.Sprintf(" [%s]", paneInfo.ProviderName)
+		}
+		if paneInfo.ClaudeSessionID != "" {
+			line += " (running)"
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// getPaneDisplayName returns a short display name for a pane, for use in message prefixes
+// Returns friendly name if set (e.g., "coder"), otherwise "Pane <index>" (e.g., "Pane 1")
+// Returns empty string if paneIndex is empty (single-pane session)
+func getPaneDisplayName(config *Config, sessionName string, paneIndex string) string {
+	if paneIndex == "" {
+		return ""
+	}
+	info := config.Sessions[sessionName]
+	if info == nil || info.Panes == nil {
+		return ""
+	}
+	paneInfo := info.Panes[paneIndex]
+	if paneInfo == nil {
+		return fmt.Sprintf("Pane %s", paneIndex)
+	}
+	if paneInfo.Name != "" {
+		return paneInfo.Name
+	}
+	return fmt.Sprintf("Pane %s", paneIndex)
+}
+
+// initSessionPanes syncs pane state and ensures ActivePane is valid
+// Called on session access to reconcile config with tmux state
+func initSessionPanes(config *Config, sessionName string) error {
+	info := config.Sessions[sessionName]
+	if info == nil {
+		return nil
+	}
+
+	// Sync panes with live tmux state
+	if err := syncPanes(config, sessionName); err != nil {
+		return err
+	}
+
+	// If we have panes but no active pane set, default to "0"
+	if info.Panes != nil && len(info.Panes) > 0 && info.ActivePane == "" {
+		info.ActivePane = "0"
+	}
 
 	return nil
 }

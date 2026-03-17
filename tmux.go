@@ -1437,6 +1437,222 @@ func listTmuxWindows() ([]string, error) {
 	return windows, nil
 }
 
+// ========== Pane Management ==========
+
+// splitPane creates a new pane in the specified session's window
+// Returns the new pane index string ("0", "1", etc.)
+func splitPane(sessionName string, direction string) (string, error) {
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return "", err
+	}
+
+	flag := "-h" // default horizontal (left/right)
+	if direction == "vertical" {
+		flag = "-v" // vertical (top/bottom)
+	}
+
+	// -P -F "#{pane_index}" prints the new pane index
+	cmd := exec.Command(tmuxPath, "split-window", "-P", "-F", "#{pane_index}", "-t", target, flag)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to split pane: %w", err)
+	}
+
+	paneIndex := strings.TrimSpace(string(out))
+	listenLog("splitPane: created pane %s in window %s (direction: %s)", paneIndex, target, direction)
+	return paneIndex, nil
+}
+
+// getPanesInWindow returns all pane indices in the specified session's window
+func getPanesInWindow(sessionName string) ([]string, error) {
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_index}")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var panes []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			panes = append(panes, line)
+		}
+	}
+	return panes, nil
+}
+
+// killPane closes the specified pane in a session's window
+func killPane(sessionName string, paneIndex string) error {
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return err
+	}
+
+	paneTarget := fmt.Sprintf("%s.%s", target, paneIndex)
+	if err := exec.Command(tmuxPath, "kill-pane", "-t", paneTarget).Run(); err != nil {
+		return fmt.Errorf("failed to kill pane %s: %w", paneIndex, err)
+	}
+
+	listenLog("killPane: closed pane %s in window %s", paneIndex, target)
+	return nil
+}
+
+// selectPane makes the specified pane active in the session's window
+func selectPane(sessionName string, paneIndex string) error {
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return err
+	}
+
+	paneTarget := fmt.Sprintf("%s.%s", target, paneIndex)
+	if err := exec.Command(tmuxPath, "select-pane", "-t", paneTarget).Run(); err != nil {
+		return fmt.Errorf("failed to select pane %s: %w", paneIndex, err)
+	}
+
+	listenLog("selectPane: activated pane %s in window %s", paneIndex, target)
+	return nil
+}
+
+// getActivePane returns the currently active pane index in the session's window
+func getActivePane(sessionName string) (string, error) {
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_index}")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && parts[0] == "1" {
+			return parts[1], nil
+		}
+	}
+	return "", fmt.Errorf("no active pane found in %s", target)
+}
+
+// switchToPane switches context to a specific pane — respawns it and starts Claude
+// Similar to switchSessionInWindow but targets a specific pane index
+func switchToPane(sessionName string, paneIndex string, workDir string, providerName string, sessionID string) error {
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return err
+	}
+
+	paneTarget := fmt.Sprintf("%s.%s", target, paneIndex)
+
+	// Check if Claude is already running in this pane
+	if tmuxTargetHasClaudeRunning(paneTarget) {
+		listenLog("switchToPane: Claude already running in pane %s", paneIndex)
+		return selectPane(sessionName, paneIndex)
+	}
+
+	// Build the ccc run command
+	runCmd := cccPath + " run"
+	if sessionID != "" {
+		runCmd += " --resume " + shellQuote(sessionID)
+	}
+	if providerName != "" {
+		runCmd += " --provider " + shellQuote(providerName)
+	}
+
+	// Respawn the pane
+	if err := exec.Command(tmuxPath, "respawn-pane", "-t", paneTarget, "-k").Run(); err != nil {
+		return fmt.Errorf("failed to respawn pane: %w", err)
+	}
+
+	// Wait for respawn
+	time.Sleep(500 * time.Millisecond)
+
+	// Send command to start Claude
+	fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+	if err := exec.Command(tmuxPath, "send-keys", "-t", paneTarget, fullCmd, "C-m").Run(); err != nil {
+		return fmt.Errorf("failed to send command: %w", err)
+	}
+
+	// Select the pane to make it active
+	return selectPane(sessionName, paneIndex)
+}
+
+// syncPanes reconciles the config's pane map with actual tmux pane state
+// Removes stale entries (panes in config but not in tmux)
+// Adds empty shells for new panes (in tmux but not in config)
+func syncPanes(config *Config, sessionName string) error {
+	info := config.Sessions[sessionName]
+	if info == nil {
+		return nil
+	}
+
+	// Get actual pane state from tmux
+	actualPanes, err := getPanesInWindow(sessionName)
+	if err != nil {
+		// Window might not exist yet — skip sync
+		return nil
+	}
+
+	actualSet := make(map[string]bool)
+	for _, p := range actualPanes {
+		actualSet[p] = true
+	}
+
+	// Initialize panes map if needed
+	if info.Panes == nil {
+		info.Panes = make(map[string]*PaneInfo)
+	}
+
+	// Remove stale config entries
+	for paneIndex := range info.Panes {
+		if !actualSet[paneIndex] {
+			delete(info.Panes, paneIndex)
+			listenLog("syncPanes: removed stale pane %s from config", paneIndex)
+		}
+	}
+
+	// Add new panes found in tmux
+	for _, paneIndex := range actualPanes {
+		if _, exists := info.Panes[paneIndex]; !exists {
+			info.Panes[paneIndex] = &PaneInfo{PaneIndex: paneIndex}
+			listenLog("syncPanes: added new pane %s to config", paneIndex)
+		}
+	}
+
+	// Validate ActivePane exists
+	if info.ActivePane != "" {
+		if !actualSet[info.ActivePane] {
+			// Active pane no longer exists, reset to "0"
+			info.ActivePane = "0"
+			listenLog("syncPanes: ActivePane was invalid, reset to 0")
+		}
+	}
+
+	return nil
+}
+
+// resolvePaneTarget returns the tmux target for a session, accounting for panes
+// If the session has panes and ActivePane is set, returns pane-specific target
+// Otherwise returns window-level target (backward compatible)
+func resolvePaneTarget(config *Config, sessionName string) (string, error) {
+	info := config.Sessions[sessionName]
+	if info == nil || info.Panes == nil || info.ActivePane == "" {
+		return getCccWindowTarget(sessionName)
+	}
+
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s.%s", target, info.ActivePane), nil
+}
+
 // killTmuxSession kills an entire tmux session (used for temporary sessions like auth)
 func killTmuxSession(name string) error {
 	cmd := exec.Command(tmuxPath, "kill-session", "-t", name)

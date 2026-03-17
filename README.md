@@ -110,6 +110,21 @@ No need to open your laptop
 └────────────────────────────────────────────────────────────────┘
 ```
 
+**Multi-Pane Sessions** (NEW):
+Each session can have multiple Claude panes running in parallel:
+
+```
+myproject session
+├── Pane 0: coder (using Opus)       ← active
+└── Pane 1: reviewer (using Haiku)
+```
+
+Send prompts to specific panes:
+```
+/pane coder "Implement the feature"
+/pane reviewer "Review the changes in auth.go"
+```
+
 ## Features
 
 | Feature | Description |
@@ -117,6 +132,7 @@ No need to open your laptop
 | 📱 **Remote Control** | Start and manage sessions from Telegram |
 | 🔔 **Smart Notifications** | Get notified when tasks complete |
 | 📁 **Multi-Session** | Multiple projects, each with its own topic |
+| 🎯 **Multi-Pane** | Parallel Claude instances per session (coder + reviewer) |
 | 🔄 **Seamless Handoff** | Start on phone, continue on PC |
 | 📤 **File Transfer** | Send files to your phone (large files via streaming) |
 | 🎤 **Voice Messages** | Send voice notes, auto-transcribed |
@@ -361,8 +377,9 @@ export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-3-7-sonnet-20250214"
 **Project Structure:**
 - `types.go` - All struct definitions
 - `config_*.go` - Modular config system (load, save, paths, validation)
-- `session_*.go` - Session lookup and persistence
+- `session*.go` - Session management (lookup, persistence, pane CRUD)
 - `provider.go` - Provider abstraction layer
+- `tmux.go` - Tmux operations (pane lifecycle, detection)
 - `telegram.go` - Telegram Bot API integration
 - `hooks.go` - Claude Code hook system
 - `ledger.go` - Message delivery tracking

@@ -1761,6 +1761,169 @@ func listen() error {
 				continue
 			}
 
+			// ========== Pane Commands ==========
+
+			// /split <name> [--horizontal|--vertical] — create a new pane
+			if strings.HasPrefix(text, "/split") && isGroup {
+				config, _ = loadConfig()
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "⚠️ No session linked to this topic")
+					continue
+				}
+
+				args := strings.Fields(text)
+				if len(args) < 2 {
+					sendMessage(config, chatID, threadID, "Usage: /split <name> [--horizontal|--vertical]\nExample: /split reviewer --vertical")
+					continue
+				}
+
+				paneName := args[1]
+				direction := "horizontal" // default
+				for _, arg := range args[2:] {
+					if arg == "--vertical" || arg == "-v" {
+						direction = "vertical"
+					}
+				}
+
+				paneIndex, err := createPane(config, sessName, paneName, direction)
+				if err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create pane: %v", err))
+					continue
+				}
+
+				sendMessage(config, chatID, threadID, fmt.Sprintf("✅ Created pane '%s' (index: %s)\nUse /pane %s <prompt> to send commands", paneName, paneIndex, paneIndex))
+				continue
+			}
+
+			// /panes — list panes in current session
+			if text == "/panes" && isGroup {
+				config, _ = loadConfig()
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "⚠️ No session linked to this topic")
+					continue
+				}
+
+				initSessionPanes(config, sessName)
+				lines := listPanes(config, sessName)
+				sendMessage(config, chatID, threadID, fmt.Sprintf("📊 Panes in '%s':\n\n%s\n\n* = active pane", sessName, strings.Join(lines, "\n")))
+				continue
+			}
+
+			// /pane <ref> <prompt> — send prompt to specific pane
+			if strings.HasPrefix(text, "/pane ") && isGroup {
+				config, _ = loadConfig()
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "⚠️ No session linked to this topic")
+					continue
+				}
+
+				rest := strings.TrimSpace(strings.TrimPrefix(text, "/pane "))
+				spaceIdx := strings.Index(rest, " ")
+				if spaceIdx < 0 {
+					sendMessage(config, chatID, threadID, "Usage: /pane <ref> <prompt>\nExample: /pane reviewer explain this code")
+					continue
+				}
+
+				paneRef := rest[:spaceIdx]
+				prompt := rest[spaceIdx+1:]
+
+				// Sync pane state with tmux before resolving reference
+				initSessionPanes(config, sessName)
+
+				paneIndex := resolvePaneRef(config, sessName, paneRef)
+				if paneIndex == "" {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Pane '%s' not found\nUse /panes to list available panes", paneRef))
+					continue
+				}
+
+				target, err := getCccWindowTarget(sessName)
+				if err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get window: %v", err))
+					continue
+				}
+				paneTarget := fmt.Sprintf("%s.%s", target, paneIndex)
+
+				if err := sendToTmuxFromTelegram(paneTarget, tmuxSafeName(sessName), prompt); err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
+					continue
+				}
+				sendMessage(config, chatID, threadID, fmt.Sprintf("✓ Sent to pane %s", paneRef))
+				continue
+			}
+
+			// /remove-pane <ref> — remove a pane
+			if strings.HasPrefix(text, "/remove-pane") && isGroup {
+				config, _ = loadConfig()
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "⚠️ No session linked to this topic")
+					continue
+				}
+
+				args := strings.Fields(text)
+				if len(args) < 2 {
+					sendMessage(config, chatID, threadID, "Usage: /remove-pane <ref>\nExample: /remove-pane reviewer")
+					continue
+				}
+
+				paneRef := args[1]
+
+				// Sync pane state with tmux before resolving reference
+				initSessionPanes(config, sessName)
+
+				paneIndex := resolvePaneRef(config, sessName, paneRef)
+				if paneIndex == "" {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Pane '%s' not found", paneRef))
+					continue
+				}
+
+				if err := removePane(config, sessName, paneIndex); err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ %v", err))
+					continue
+				}
+
+				sendMessage(config, chatID, threadID, fmt.Sprintf("✅ Removed pane %s", paneRef))
+				continue
+			}
+
+			// /switch-pane <ref> — change active pane
+			if strings.HasPrefix(text, "/switch-pane") && isGroup {
+				config, _ = loadConfig()
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "⚠️ No session linked to this topic")
+					continue
+				}
+
+				args := strings.Fields(text)
+				if len(args) < 2 {
+					sendMessage(config, chatID, threadID, "Usage: /switch-pane <ref>\nExample: /switch-pane reviewer")
+					continue
+				}
+
+				paneRef := args[1]
+
+				// Sync pane state with tmux before resolving reference
+				initSessionPanes(config, sessName)
+
+				paneIndex := resolvePaneRef(config, sessName, paneRef)
+				if paneIndex == "" {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Pane '%s' not found", paneRef))
+					continue
+				}
+
+				if err := setActivePane(config, sessName, paneIndex); err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ %v", err))
+					continue
+				}
+
+				sendMessage(config, chatID, threadID, fmt.Sprintf("✅ Active pane → %s", paneRef))
+				continue
+			}
+
 			// Check if message is in a topic (interactive session)
 			if isGroup && threadID > 0 {
 				// Reload config to get latest sessions
@@ -1769,6 +1932,9 @@ func listen() error {
 				if sessName != "" {
 					var target string
 					var err error
+
+					// Sync pane state for this session
+					initSessionPanes(config, sessName)
 
 					// Only switch if the requested session is different from current
 					// Compare using tmux-safe names since window names are sanitized
@@ -1803,8 +1969,8 @@ func listen() error {
 							continue
 						}
 
-						// Get the target for the project window
-						target, err = getCccWindowTarget(sessName)
+						// Get the target (pane-aware for multi-pane sessions)
+						target, err = resolvePaneTarget(config, sessName)
 						if err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
 							continue
@@ -1826,8 +1992,8 @@ func listen() error {
 
 						listenLog("sendToTmux: target=%s session=%s (switched from %s)", target, sessName, currentSession)
 					} else {
-						// Already in the correct session, just get the target
-						target, err = getCccWindowTarget(sessName)
+						// Already in the correct session, get pane-aware target
+						target, err = resolvePaneTarget(config, sessName)
 						if err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
 							continue
