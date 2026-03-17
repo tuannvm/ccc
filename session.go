@@ -211,7 +211,7 @@ func createSession(config *Config, name string) error {
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName)
+	topicID, err := createForumTopic(config, name, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -293,7 +293,7 @@ func startSession(continueSession bool) error {
 	// Create topic if it doesn't exist and we have a group configured
 	if config.GroupID != 0 {
 		if _, exists := config.Sessions[name]; !exists {
-			topicID, err := createForumTopic(config, name, providerName)
+			topicID, err := createForumTopic(config, name, providerName, "")
 			if err == nil {
 				config.Sessions[name] = &SessionInfo{
 					TopicID:      topicID,
@@ -390,7 +390,7 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName)
+	topicID, err := createForumTopic(config, name, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -569,7 +569,7 @@ func startTelegramSession(config *Config, sessionName, workDir, message string) 
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, sessionName, providerName)
+	topicID, err := createForumTopic(config, sessionName, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}

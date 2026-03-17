@@ -450,7 +450,31 @@ func downloadTelegramFile(config *Config, fileID string, destPath string) error 
 	return err
 }
 
-func createForumTopic(config *Config, name string, providerName string) (int64, error) {
+// worktreeColor generates a consistent color for worktree sessions based on the base project name.
+// All worktrees belonging to the same base project will have the same color, creating visual grouping.
+// Returns the Telegram icon_color integer value as a string (Telegram only allows 6 specific colors).
+func worktreeColor(baseSessionName string) string {
+	// Hash the base name to get a consistent color using FNV-1a algorithm
+	var hash uint32 = 2166136261 // FNV offset basis
+	for _, c := range baseSessionName {
+		hash ^= uint32(c)
+		hash *= 16777619 // FNV prime
+	}
+
+	// Telegram only allows these 6 specific icon_color values (decimal integers)
+	// See: https://core.telegram.org/bots/api#createforumtopic
+	colors := []string{
+		"7322096",  // Blue (0x6FB9F0)
+		"16766590", // Yellow (0xFFD67E)
+		"13338331", // Violet (0xCB86DB)
+		"9367192",  // Green (0x8EEE98)
+		"16749490", // Rose (0xFF93B2)
+		"16478047", // Red (0xFB6F5F)
+	}
+	return colors[hash%uint32(len(colors))]
+}
+
+func createForumTopic(config *Config, name string, providerName string, baseSessionName string) (int64, error) {
 	if config.GroupID == 0 {
 		return 0, fmt.Errorf("no group configured. Add bot to a group with topics enabled and run: ccc setgroup")
 	}
@@ -465,6 +489,11 @@ func createForumTopic(config *Config, name string, providerName string) (int64, 
 	params := url.Values{
 		"chat_id": {fmt.Sprintf("%d", config.GroupID)},
 		"name":    {topicName},
+	}
+
+	// Add icon color for worktree sessions to group them by base project
+	if baseSessionName != "" {
+		params.Add("icon_color", worktreeColor(baseSessionName))
 	}
 
 	result, err := telegramAPI(config, "createForumTopic", params)

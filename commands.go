@@ -1663,7 +1663,7 @@ func listen() error {
 					if providerName == "" {
 						providerName = config.ActiveProvider
 					}
-					topicID, err := createForumTopic(config, sessionName, providerName)
+					topicID, err := createForumTopic(config, sessionName, providerName, "")
 					if err != nil {
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 						continue
@@ -1784,8 +1784,8 @@ func listen() error {
 					providerName = config.ActiveProvider
 				}
 
-				// Create Telegram topic
-				topicID, err := createForumTopic(config, worktreeSessionName, providerName)
+				// Create Telegram topic with color based on base project for visual grouping
+				topicID, err := createForumTopic(config, worktreeSessionName, providerName, baseSessionName)
 				if err != nil {
 					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 					continue
@@ -1974,7 +1974,7 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 	}
 
 	// Create topic
-	topicID, err := createForumTopic(config, sessionName, providerName)
+	topicID, err := createForumTopic(config, sessionName, providerName, "")
 	if err != nil {
 		if cb.Message != nil {
 			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
