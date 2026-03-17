@@ -69,29 +69,6 @@ func initPaths() {
 	}
 }
 
-// getTargetSession returns an existing tmux session name, or creates one if none exist
-func getTargetSession() (string, error) {
-	// Try to find any existing session
-	cmd := exec.Command(tmuxPath, "list-sessions", "-F", "#{session_name}")
-	out, err := cmd.Output()
-	if err == nil {
-		scanner := bufio.NewScanner(bytes.NewReader(out))
-		for scanner.Scan() {
-			name := scanner.Text()
-			if name != "" {
-				return name, nil
-			}
-		}
-	}
-	// No sessions exist, create one
-	c := exec.Command(tmuxPath, "new-session", "-d", "-s", cccSessionName)
-	if err := c.Run(); err != nil {
-		return "", err
-	}
-	exec.Command(tmuxPath, "set-option", "-t", cccSessionName, "mouse", "on").Run()
-	return cccSessionName, nil
-}
-
 // tmuxTargetByID returns the window ID if available, otherwise falls back to name lookup
 func tmuxTargetByID(windowID string, windowName string) string {
 	if windowID != "" {
@@ -527,37 +504,6 @@ func tmuxWindowHasShellRunning(windowID string, windowName string) bool {
 	return false
 }
 
-func tmuxWindowExistsByID(windowID string, windowName string) bool {
-	if windowID != "" {
-		// Check by ID directly
-		cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_id}")
-		out, err := cmd.Output()
-		if err != nil {
-			return false
-		}
-		scanner := bufio.NewScanner(bytes.NewReader(out))
-		for scanner.Scan() {
-			if scanner.Text() == windowID {
-				return true
-			}
-		}
-		return false
-	}
-	// Fallback: search by name
-	cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_name}")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		if scanner.Text() == windowName {
-			return true
-		}
-	}
-	return false
-}
-
 // cccSessionExists checks if the main "ccc" tmux session exists without creating it
 // Returns true if session exists, false otherwise
 func cccSessionExists() bool {
@@ -765,8 +711,15 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 	if providerName != "" {
 		runCmd += " --provider " + shellQuote(providerName)
 	}
+	// worktreeName is WorktreeAutoGenerate for auto-generation, or a specific name
+	// ccc run passes --worktree with optional value
 	if worktreeName != "" {
-		runCmd += " --worktree " + shellQuote(worktreeName)
+		if worktreeName == WorktreeAutoGenerate {
+			// Auto-generate: pass --worktree without a value
+			runCmd += " --worktree"
+		} else {
+			runCmd += " --worktree " + shellQuote(worktreeName)
+		}
 	}
 
 	// Send commands to switch session context
@@ -877,44 +830,6 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func createTmuxWindow(windowName string, workDir string, continueSession bool, providerName string, sessionID string, worktreeName string) (string, error) {
-	// Build the command to run inside the window
-	cccCmd := cccPath + " run"
-	if sessionID != "" {
-		// Resume specific session by ID
-		cccCmd += " --resume " + shellQuote(sessionID)
-	} else if continueSession {
-		cccCmd += " -c"
-	}
-	if providerName != "" {
-		cccCmd += " --provider " + shellQuote(providerName)
-	}
-	if worktreeName != "" {
-		cccCmd += " --worktree " + shellQuote(worktreeName)
-	}
-
-	// Get an existing session or create one
-	sess, err := getTargetSession()
-	if err != nil {
-		return "", err
-	}
-
-	// Create new window, -P -F prints the window ID
-	args := []string{"new-window", "-P", "-F", "#{window_id}", "-t", sess + ":", "-n", windowName, "-c", workDir}
-	cmd := exec.Command(tmuxPath, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	windowID := strings.TrimSpace(string(out))
-
-	// Send the command to the window via send-keys using window ID
-	time.Sleep(200 * time.Millisecond)
-	exec.Command(tmuxPath, "send-keys", "-t", windowID, cccCmd, "C-m").Run()
-
-	return windowID, nil
-}
-
 // applyProviderEnv applies provider-specific environment variables to cmd.Env
 // Returns the modified environment slice
 // This version uses the Provider interface for provider-agnostic design
@@ -995,98 +910,6 @@ func applyProviderEnv(baseEnv []string, provider Provider, config *Config) []str
 	return env
 }
 
-// applyProviderEnvLegacy applies provider-specific environment variables using the old ProviderConfig struct
-// This is a transitional function for backward compatibility
-func applyProviderEnvLegacy(baseEnv []string, provider *ProviderConfig, config *Config) []string {
-	if provider == nil {
-		return baseEnv
-	}
-
-	home, _ := os.UserHomeDir()
-
-	// Build environment with provider settings
-	// First, unset any Anthropic-related vars to avoid conflicts
-	env := baseEnv
-	env = unsetEnvVars(env, []string{
-		"ANTHROPIC_API_KEY",
-		"CLAUDE_API_KEY",
-		"ANTHROPIC_AUTH_TOKEN",
-		"ANTHROPIC_BASE_URL",
-		"ANTHROPIC_MODEL",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
-		"CLAUDE_CODE_SUBAGENT_MODEL",
-	})
-
-	// Determine auth token (auto-load from env if empty)
-	authToken := provider.AuthToken
-	if authToken == "" && provider.AuthEnvVar != "" {
-		authToken = os.Getenv(provider.AuthEnvVar)
-	}
-	// If still no token, preserve existing Anthropic credentials from environment
-	if authToken == "" {
-		if existing := os.Getenv("ANTHROPIC_API_KEY"); existing != "" {
-			authToken = existing
-		} else if existing := os.Getenv("ANTHROPIC_AUTH_TOKEN"); existing != "" {
-			authToken = existing
-		} else if existing := os.Getenv("CLAUDE_API_KEY"); existing != "" {
-			authToken = existing
-		}
-	}
-	if authToken != "" {
-		env = append(env, "ANTHROPIC_AUTH_TOKEN="+authToken)
-	}
-
-	// Base URL
-	if provider.BaseURL != "" {
-		env = append(env, "ANTHROPIC_BASE_URL="+provider.BaseURL)
-	}
-
-	// Models
-	if provider.OpusModel != "" {
-		env = append(env, "ANTHROPIC_DEFAULT_OPUS_MODEL="+provider.OpusModel)
-	}
-	if provider.SonnetModel != "" {
-		env = append(env, "ANTHROPIC_DEFAULT_SONNET_MODEL="+provider.SonnetModel)
-		env = append(env, "ANTHROPIC_MODEL="+provider.SonnetModel)
-	} else if provider.OpusModel != "" {
-		// Fallback: if Sonnet is not configured but Opus is, use Opus as default
-		env = append(env, "ANTHROPIC_MODEL="+provider.OpusModel)
-	}
-	if provider.HaikuModel != "" {
-		env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+provider.HaikuModel)
-	}
-	if provider.SubagentModel != "" {
-		env = append(env, "CLAUDE_CODE_SUBAGENT_MODEL="+provider.SubagentModel)
-	}
-
-	// Config dir with ~ expansion
-	if provider.ConfigDir != "" {
-		configDir := provider.ConfigDir
-		if strings.HasPrefix(configDir, "~/") {
-			configDir = home + configDir[1:]
-		} else if configDir == "~" {
-			configDir = home
-		}
-		env = append(env, "CLAUDE_CONFIG_DIR="+configDir)
-	}
-
-	// Common settings for all providers (use values from config)
-	if provider.ApiTimeout > 0 {
-		env = append(env, fmt.Sprintf("API_TIMEOUT_MS=%d", provider.ApiTimeout))
-	}
-	env = append(env, []string{
-		"TMPDIR=/tmp/claude",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"DISABLE_COST_WARNINGS=1",
-		"DISABLE_TELEMETRY=1",
-		"DISABLE_ERROR_REPORTING=1",
-	}...)
-
-	return env
-}
-
 // unsetEnvVars removes specified environment variables from env slice
 func unsetEnvVars(env []string, keys []string) []string {
 	keyMap := make(map[string]bool)
@@ -1133,8 +956,15 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	} else if continueSession {
 		args = append(args, "-c")
 	}
+	// worktreeName is the special value WorktreeAutoGenerate for auto-generation, or a specific name
+	// Claude accepts --worktree [name] where name is optional
 	if worktreeName != "" {
-		args = append(args, "--worktree", worktreeName)
+		if worktreeName == WorktreeAutoGenerate {
+			// Auto-generate: pass --worktree without a value
+			args = append(args, "--worktree")
+		} else {
+			args = append(args, "--worktree", worktreeName)
+		}
 	}
 
 	// Build the claude command with all args
@@ -1434,28 +1264,6 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 	}
 
 	return false
-}
-
-func killTmuxWindow(windowID string, windowName string) error {
-	target := tmuxTargetByID(windowID, windowName)
-	cmd := exec.Command(tmuxPath, "kill-window", "-t", target)
-	return cmd.Run()
-}
-
-func listTmuxWindows() ([]string, error) {
-	cmd := exec.Command(tmuxPath, "list-windows", "-a", "-F", "#{window_name}")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	var windows []string
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		name := scanner.Text()
-		windows = append(windows, name)
-	}
-	return windows, nil
 }
 
 // killTmuxSession kills an entire tmux session (used for temporary sessions like auth)

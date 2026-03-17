@@ -5,6 +5,18 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 ## [Unreleased]
 
 ### Added
+- **Worktree auto-generation**: `/worktree` command now supports auto-generating worktree names
+  - Run `/worktree` in a session topic to let Claude Code generate a unique name
+  - Generated names follow Claude's adjective-noun-noun pattern (e.g., `merry-wishing-crystal`)
+  - `ccc run --worktree` also supports auto-generation when no name is provided
+- **Visual worktree organization**: Worktree sessions now have color-coded Telegram topics
+  - All worktrees for the same base project share the same color icon
+  - Uses FNV-1a hash for consistent color assignment across runs
+  - Makes it easy to visually identify related worktree sessions
+- **Snapshot-based worktree detection**: Improved reliability when detecting newly created worktrees
+  - Prevents race conditions when multiple worktrees are created concurrently
+  - Confirmation check reduces false positives from transient files
+  - 30-second polling timeout with helpful error messages
 - Documentation website with architecture, configuration, and usage guides
 - `ccc install-hooks` command for manual hook installation in current project directory
   - Installs hooks to `.claude/settings.local.json`

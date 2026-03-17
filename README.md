@@ -117,6 +117,7 @@ No need to open your laptop
 | 📱 **Remote Control** | Start and manage sessions from Telegram |
 | 🔔 **Smart Notifications** | Get notified when tasks complete |
 | 📁 **Multi-Session** | Multiple projects, each with its own topic |
+| 🌳 **Git Worktrees** | Auto-generated worktree sessions with visual color grouping |
 | 🔄 **Seamless Handoff** | Start on phone, continue on PC |
 | 📤 **File Transfer** | Send files to your phone (large files via streaming) |
 | 🎤 **Voice Messages** | Send voice notes, auto-transcribed |

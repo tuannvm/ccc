@@ -197,65 +197,66 @@ func generateUniqueSessionName(config *Config, cwd string, basename string) stri
 	}
 }
 
-func createSession(config *Config, name string) error {
-	// Check if session already exists
-	if _, exists := config.Sessions[name]; exists {
-		return fmt.Errorf("session '%s' already exists", name)
-	}
-
-	// Get the provider to use for this session
-	provider := getActiveProvider(config)
-	providerName := ""
-	if provider != nil && config.ActiveProvider != "" {
-		providerName = config.ActiveProvider
-	}
-
-	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName)
+// getWorktreeNames returns a set of existing worktree names at basePath.
+// Returns nil if the worktrees directory doesn't exist.
+func getWorktreeNames(basePath string) map[string]bool {
+	worktreesDir := filepath.Join(basePath, ".claude", "worktrees")
+	entries, err := os.ReadDir(worktreesDir)
 	if err != nil {
-		return fmt.Errorf("failed to create topic: %w", err)
+		return nil
 	}
 
-	// Create work directory
-	workDir := resolveProjectPath(config, name)
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		// Create project directory
-		os.MkdirAll(workDir, 0755)
+	names := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names[entry.Name()] = true
+		}
 	}
-
-	// Save session info first (needed for ensureHooksForSession)
-	config.Sessions[name] = &SessionInfo{
-		TopicID:      topicID,
-		Path:         workDir,
-		ProviderName: providerName,
-	}
-	if err := saveConfig(config); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	// Ensure hooks are installed in the project directory
-	if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
-		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
-	}
-
-	// Switch to the new session in the single ccc window
-	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
-	}
-
-	return nil
+	return names
 }
 
-func killSession(config *Config, name string) error {
-	if _, exists := config.Sessions[name]; !exists {
-		return fmt.Errorf("session '%s' not found", name)
+// waitForNewWorktree polls for a new worktree directory to be created.
+// Takes a snapshot of existing worktrees and waits for a new one to appear.
+// Returns the new worktree name or empty string if timeout occurs.
+func waitForNewWorktree(basePath string, existingNames map[string]bool, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	pollInterval := 200 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		currentNames := getWorktreeNames(basePath)
+		if currentNames == nil {
+			// Directory doesn't exist yet, wait for it
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// Find a new name that wasn't in the existing snapshot
+		var newName string
+		for name := range currentNames {
+			if !existingNames[name] {
+				newName = name
+				break
+			}
+		}
+
+		if newName != "" {
+			// Found a potential new worktree - confirm it's stable (not a transient file)
+			// Wait one more poll interval and verify it still exists
+			time.Sleep(pollInterval)
+			confirmNames := getWorktreeNames(basePath)
+			if confirmNames != nil && confirmNames[newName] {
+				// Confirmed: worktree still exists after one poll cycle
+				listenLog("[waitForNewWorktree] Confirmed new worktree: %s", newName)
+				return newName
+			}
+			// Not confirmed - was transient or removed, continue waiting
+			listenLog("[waitForNewWorktree] Worktree %s not confirmed, continuing to wait", newName)
+		}
+
+		time.Sleep(pollInterval)
 	}
 
-	// Remove from config (no need to kill tmux window with single window approach)
-	delete(config.Sessions, name)
-	saveConfig(config)
-
-	return nil
+	return ""
 }
 
 // startSession creates/attaches to a tmux window with Telegram topic
@@ -293,7 +294,7 @@ func startSession(continueSession bool) error {
 	// Create topic if it doesn't exist and we have a group configured
 	if config.GroupID != 0 {
 		if _, exists := config.Sessions[name]; !exists {
-			topicID, err := createForumTopic(config, name, providerName)
+			topicID, err := createForumTopic(config, name, providerName, "")
 			if err == nil {
 				config.Sessions[name] = &SessionInfo{
 					TopicID:      topicID,
@@ -390,7 +391,7 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName)
+	topicID, err := createForumTopic(config, name, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -569,7 +570,7 @@ func startTelegramSession(config *Config, sessionName, workDir, message string) 
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, sessionName, providerName)
+	topicID, err := createForumTopic(config, sessionName, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}

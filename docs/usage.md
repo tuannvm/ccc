@@ -29,7 +29,9 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 | `/new <name>@provider` | Create session with specific provider |
 | `/new ~/path/to/dir` | Create session with custom path |
 | `/new` | Restart session in current topic |
-| `/worktree <base> <name>` | Create worktree session |
+| `/worktree` | Create worktree with auto-generated name |
+| `/worktree <name>` | Create worktree with custom name |
+| `/worktree <base> <name>` | Create worktree for specific base session |
 | `/continue` | Restart keeping conversation history |
 | `/providers` | List available providers |
 | `/provider [name]` | Show/change provider for current session |
@@ -193,30 +195,65 @@ Or edit `~/.config/ccc/config.json`:
 
 ## Worktree Sessions
 
-Worktree sessions allow you to work on git branches in separate tmux windows.
+Worktree sessions allow you to work on git branches in separate tmux windows with visual organization.
+
+### Visual Organization
+
+Worktree sessions are automatically color-coded by base project in Telegram:
+- All worktrees for `myproject` share the same color topic icon
+- Different projects get different colors
+- Makes it easy to distinguish worktree sessions at a glance
 
 ### Creating a Worktree Session
 
+#### From a Telegram Topic (Recommended)
+
+When in a session's Telegram topic, simply run:
+
 ```
-/worktree myproject feature-auth
+/worktree
 ```
 
 This:
-1. Creates a git worktree for branch `feature-auth`
-2. Creates a new session `myproject-feature-auth`
-3. Uses the base session's configuration
+1. Lets Claude Code generate a unique worktree name (e.g., `merry-wishing-crystal`)
+2. Creates a git worktree with auto-generated name
+3. Creates a new session `myproject_merry-wishing-crystal` with colored topic
+4. Uses the base session's provider and configuration
 
-**From terminal:**
+**Specify a custom name:**
+
+```
+/worktree feature-auth
+```
+
+#### From Terminal
+
 ```bash
 cd ~/myproject
 ccc worktree feature-auth
 ```
 
+Or let Claude generate the name:
+
+```bash
+ccc run --worktree
+```
+
+#### Using Base Session Name
+
+```
+/worktree myproject experiment-x
+```
+
+Creates `myproject_experiment-x` session from the `myproject` base session.
+
 ### Worktree Session Behavior
 
-- Inherits provider and configuration from base session
-- Has its own Claude Code session and conversation history
-- Can be attached independently: `ccc attach myproject-feature-auth`
+- **Auto-generated names**: Claude creates memorable adjective-noun-noun combinations
+- **Visual grouping**: Same color icon for all worktrees of a base project
+- **Independent conversations**: Each worktree has its own Claude Code session history
+- **Provider inheritance**: Uses base session's provider and API configuration
+- **Easy switching**: `ccc attach myproject-feature-auth` to resume
 
 ## Advanced Usage
 
