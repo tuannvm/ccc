@@ -167,6 +167,28 @@ func executeCommand(cmdStr string) (string, error) {
 	return strings.TrimSpace(output), err
 }
 
+// sendPromptToSession sends a prompt to an existing Claude session
+func sendPromptToSession(sessionName string, prompt string) error {
+	// Get the target for the project window
+	target, err := getCccWindowTarget(sessionName)
+	if err != nil {
+		return fmt.Errorf("failed to get ccc window: %w", err)
+	}
+
+	// Set the telegram-active flag so UserPromptSubmit hook knows this came from Telegram
+	tmuxName := tmuxSafeName(sessionName)
+	if err := os.WriteFile(telegramActiveFlag(tmuxName), []byte("1"), 0600); err != nil {
+		return fmt.Errorf("failed to set telegram-active flag: %w", err)
+	}
+
+	// Send the prompt to Claude
+	if err := sendToTmuxFromTelegram(target, tmuxName, prompt); err != nil {
+		return fmt.Errorf("failed to send prompt: %w", err)
+	}
+
+	return nil
+}
+
 // One-shot Claude run (for private chat)
 func runClaude(prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1742,8 +1764,46 @@ func listen() error {
 				args := strings.TrimSpace(strings.TrimPrefix(text, "/worktree"))
 				parts := strings.Fields(args)
 
+				// New behavior: /worktree with no args uses current session and WorktreeCreate hook
+				if len(parts) == 0 {
+					// Find current session from topic
+					sessName := getSessionByTopic(config, threadID)
+					if sessName == "" {
+						sendMessage(config, chatID, threadID, "❌ No active session. Use /new to create a session first.")
+						continue
+					}
+
+					sessionInfo, exists := config.Sessions[sessName]
+					if !exists || sessionInfo == nil {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Session '%s' not found.", sessName))
+						continue
+					}
+
+					// Send prompt to current session to create worktree
+					// Claude will handle worktree creation and WorktreeCreate hook will create topic
+					workDir := sessionInfo.Path
+					if workDir == "" {
+						workDir = resolveProjectPath(config, sessName)
+					}
+
+					// Send the worktree creation prompt to Claude
+					// sendPromptToSession will set the telegram-active flag
+					prompt := "Create a new git worktree for this repository. Use a descriptive name based on what work I'll be doing."
+					if err := sendPromptToSession(sessName, prompt); err != nil {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send worktree request: %v", err))
+						// Clean up the flag that sendPromptToSession already set
+						tmuxName := tmuxSafeName(sessName)
+						os.Remove(telegramActiveFlag(tmuxName))
+						continue
+					}
+
+					sendMessage(config, chatID, threadID, "🔄 Creating worktree...\n\nClaude will create the worktree and a new Telegram topic will be created automatically.")
+					continue
+				}
+
+				// Legacy behavior: /worktree <session_name> <worktree_name> with manual topic creation
 				if len(parts) < 2 {
-					sendMessage(config, chatID, threadID, "Usage: /worktree <session_name> <worktree_name>\n\nCreates a new worktree session from an existing session's repository.")
+					sendMessage(config, chatID, threadID, "Usage: /worktree <session_name> <worktree_name>\n\nCreates a new worktree session from an existing session's repository.\n\nOr use /worktree with no args in an active session to let Claude create the worktree automatically.")
 					continue
 				}
 

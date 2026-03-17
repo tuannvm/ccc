@@ -828,6 +828,138 @@ func handleNotificationHook() error {
 	return nil
 }
 
+// handleWorktreeCreateHook handles the WorktreeCreate hook from Claude Code.
+// When Claude creates a worktree, this hook automatically creates a corresponding Telegram topic.
+func handleWorktreeCreateHook() error {
+	defer func() {
+		if r := recover(); r != nil {
+			hookLog("worktree-create: panic recovered: %v", r)
+		}
+	}()
+
+	rawData, _ := readHookStdin()
+	if len(rawData) == 0 {
+		return nil
+	}
+
+	hookData, err := parseHookData(rawData)
+	if err != nil {
+		return fmt.Errorf("failed to parse hook data: %w", err)
+	}
+
+	// Validate we have the worktree path
+	if hookData.WorktreePath == "" {
+		return fmt.Errorf("no worktree_path in hook data")
+	}
+
+	config, err := loadConfig()
+	if err != nil || config == nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if config.GroupID == 0 {
+		return fmt.Errorf("no group configured")
+	}
+
+	hookLog("worktree-create: worktree_path=%s cwd=%s session_id=%s", hookData.WorktreePath, hookData.Cwd, hookData.SessionID)
+
+	// Extract worktree name from path
+	// Path format: /path/to/repo/.claude/worktrees/{worktree_name}
+	worktreeName := ""
+	pathParts := strings.Split(hookData.WorktreePath, string(filepath.Separator))
+	for i, part := range pathParts {
+		if part == ".claude" && i+2 < len(pathParts) && pathParts[i+1] == "worktrees" {
+			worktreeName = pathParts[i+2]
+			break
+		}
+	}
+	if worktreeName == "" {
+		// Fallback: try extracting from basename
+		worktreeName = filepath.Base(hookData.WorktreePath)
+	}
+
+	// Sanitize worktree name to prevent invalid session names
+	worktreeName = strings.TrimSpace(worktreeName)
+	worktreeName = strings.ReplaceAll(worktreeName, " ", "_")
+	if worktreeName == "" || worktreeName == "." || worktreeName == ".." {
+		return fmt.Errorf("invalid worktree name: %q", worktreeName)
+	}
+
+	// Determine base repository path and base session name
+	basePath := hookData.Cwd
+	if basePath == "" {
+		// Fallback: derive from worktree path by removing .claude/worktrees/{name}
+		idx := strings.Index(hookData.WorktreePath, ".claude"+string(filepath.Separator)+"worktrees")
+		if idx > 0 {
+			basePath = hookData.WorktreePath[:idx-1] // -1 to remove trailing separator
+		}
+	}
+
+	// Find existing session that matches this base path
+	baseSessionName := ""
+	for sessName, sessInfo := range config.Sessions {
+		if sessInfo.Path == basePath && !sessInfo.IsWorktree {
+			baseSessionName = sessName
+			break
+		}
+	}
+
+	// If no matching base session, try to derive from path
+	if baseSessionName == "" {
+		baseSessionName = filepath.Base(basePath)
+		// Validate base session name
+		if baseSessionName == "" || baseSessionName == "." || baseSessionName == ".." {
+			return fmt.Errorf("invalid base session name derived from path: %q", baseSessionName)
+		}
+	}
+
+	// Generate worktree session name
+	worktreeSessionName := baseSessionName + "_" + worktreeName
+
+	// Check if session already exists
+	if _, exists := config.Sessions[worktreeSessionName]; exists {
+		hookLog("worktree-create: session %s already exists", worktreeSessionName)
+		return nil // Not an error, just already exists
+	}
+
+	// Get provider for the worktree (inherit from base session or use active)
+	providerName := config.ActiveProvider
+	if baseSession, ok := config.Sessions[baseSessionName]; ok && baseSession.ProviderName != "" {
+		providerName = baseSession.ProviderName
+	}
+
+	// Create Telegram topic with color based on base project for visual grouping
+	topicID, err := createForumTopic(config, worktreeSessionName, providerName, baseSessionName)
+	if err != nil {
+		return fmt.Errorf("failed to create topic: %w", err)
+	}
+
+	hookLog("worktree-create: created topic %d for session %s", topicID, worktreeSessionName)
+
+	// Create session info with worktree metadata
+	config.Sessions[worktreeSessionName] = &SessionInfo{
+		TopicID:      topicID,
+		Path:         hookData.WorktreePath,
+		ProviderName: providerName,
+		IsWorktree:   true,
+		WorktreeName: worktreeName,
+		BaseSession:  baseSessionName,
+	}
+
+	if err := saveConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Ensure hooks are installed in the worktree directory
+	if err := ensureHooksForSession(config, worktreeSessionName, config.Sessions[worktreeSessionName]); err != nil {
+		hookLog("worktree-create: failed to install hooks: %v", err)
+		// Don't fail on hook installation error, just log it
+	}
+
+	hookLog("worktree-create: successfully created session %s", worktreeSessionName)
+	return nil
+}
+
 // isCccHook checks if a hook entry contains a ccc command
 func isCccHook(entry interface{}) bool {
 	if m, ok := entry.(map[string]interface{}); ok {
@@ -1006,13 +1138,23 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 				},
 			},
 		},
+		"WorktreeCreate": {
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"command": cccPath + " hook-worktree-create",
+						"type":    "command",
+					},
+				},
+			},
+		},
 	}
 
 	// For settings.local.json, we completely replace hooks (not merge)
 	// This ensures only ccc hooks are in the project-local settings
 	if isLocal {
 		// Remove ALL existing ccc hooks from all hook types (clean slate)
-		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit", "WorktreeCreate"}
 		for _, hookType := range allHookTypes {
 			delete(hooks, hookType)
 		}
@@ -1024,7 +1166,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 	} else {
 		// Legacy behavior for global settings: merge with existing hooks
 		// Remove ALL existing ccc hooks from all hook types
-		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit", "WorktreeCreate"}
 		for _, hookType := range allHookTypes {
 			if existing, ok := hooks[hookType].([]interface{}); ok {
 				filtered := removeCccHooks(existing)
