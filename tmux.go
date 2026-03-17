@@ -765,8 +765,15 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 	if providerName != "" {
 		runCmd += " --provider " + shellQuote(providerName)
 	}
+	// worktreeName is WorktreeAutoGenerate for auto-generation, or a specific name
+	// ccc run passes --worktree with optional value
 	if worktreeName != "" {
-		runCmd += " --worktree " + shellQuote(worktreeName)
+		if worktreeName == WorktreeAutoGenerate {
+			// Auto-generate: pass --worktree without a value
+			runCmd += " --worktree"
+		} else {
+			runCmd += " --worktree " + shellQuote(worktreeName)
+		}
 	}
 
 	// Send commands to switch session context
@@ -1133,8 +1140,15 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	} else if continueSession {
 		args = append(args, "-c")
 	}
+	// worktreeName is the special value WorktreeAutoGenerate for auto-generation, or a specific name
+	// Claude accepts --worktree [name] where name is optional
 	if worktreeName != "" {
-		args = append(args, "--worktree", worktreeName)
+		if worktreeName == WorktreeAutoGenerate {
+			// Auto-generate: pass --worktree without a value
+			args = append(args, "--worktree")
+		} else {
+			args = append(args, "--worktree", worktreeName)
+		}
 	}
 
 	// Build the claude command with all args

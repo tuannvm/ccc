@@ -197,6 +197,68 @@ func generateUniqueSessionName(config *Config, cwd string, basename string) stri
 	}
 }
 
+// getWorktreeNames returns a set of existing worktree names at basePath.
+// Returns nil if the worktrees directory doesn't exist.
+func getWorktreeNames(basePath string) map[string]bool {
+	worktreesDir := filepath.Join(basePath, ".claude", "worktrees")
+	entries, err := os.ReadDir(worktreesDir)
+	if err != nil {
+		return nil
+	}
+
+	names := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names[entry.Name()] = true
+		}
+	}
+	return names
+}
+
+// waitForNewWorktree polls for a new worktree directory to be created.
+// Takes a snapshot of existing worktrees and waits for a new one to appear.
+// Returns the new worktree name or empty string if timeout occurs.
+func waitForNewWorktree(basePath string, existingNames map[string]bool, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	pollInterval := 200 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		currentNames := getWorktreeNames(basePath)
+		if currentNames == nil {
+			// Directory doesn't exist yet, wait for it
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// Find a new name that wasn't in the existing snapshot
+		var newName string
+		for name := range currentNames {
+			if !existingNames[name] {
+				newName = name
+				break
+			}
+		}
+
+		if newName != "" {
+			// Found a potential new worktree - confirm it's stable (not a transient file)
+			// Wait one more poll interval and verify it still exists
+			time.Sleep(pollInterval)
+			confirmNames := getWorktreeNames(basePath)
+			if confirmNames != nil && confirmNames[newName] {
+				// Confirmed: worktree still exists after one poll cycle
+				listenLog("[waitForNewWorktree] Confirmed new worktree: %s", newName)
+				return newName
+			}
+			// Not confirmed - was transient or removed, continue waiting
+			listenLog("[waitForNewWorktree] Worktree %s not confirmed, continuing to wait", newName)
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return ""
+}
+
 func createSession(config *Config, name string) error {
 	// Check if session already exists
 	if _, exists := config.Sessions[name]; exists {

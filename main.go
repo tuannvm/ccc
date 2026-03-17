@@ -8,6 +8,8 @@ import (
 
 const version = "1.7.0"
 
+const WorktreeAutoGenerate = "AUTO" // Special value for auto-generating worktree names
+
 func init() {
 	initPaths()
 }
@@ -44,7 +46,7 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		// Run claude directly (used inside tmux sessions)
-		// Flags: -c (continue), --resume <session-id>, --provider <name>, --worktree <name>
+		// Flags: -c (continue), --resume <session-id>, --provider <name>, --worktree [name]
 		continueSession := false
 		var resumeSessionID string
 		var providerOverride string
@@ -59,9 +61,16 @@ func main() {
 			} else if args[i] == "--provider" && i+1 < len(args) {
 				providerOverride = args[i+1]
 				i++
-			} else if args[i] == "--worktree" && i+1 < len(args) {
-				worktreeName = args[i+1]
-				i++
+			} else if args[i] == "--worktree" {
+				// --worktree with optional value
+				// If next arg exists and doesn't start with "-", use it as name
+				// Otherwise, use WorktreeAutoGenerate for auto-generation
+				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					worktreeName = args[i+1]
+					i++
+				} else {
+					worktreeName = WorktreeAutoGenerate
+				}
 			}
 		}
 		if err := runClaudeRaw(continueSession, resumeSessionID, providerOverride, worktreeName); err != nil {
