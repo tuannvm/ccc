@@ -519,6 +519,7 @@ func setBotCommands(botToken string) {
 		{"command": "version", "description": "Show ccc version"},
 		{"command": "stats", "description": "Show system stats (RAM, disk, etc)"},
 		{"command": "auth", "description": "Re-authenticate Claude OAuth"},
+		{"command": "stop", "description": "Stop/interrupt current Claude execution"},
 	}
 
 	// Set for default scope

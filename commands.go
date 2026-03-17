@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1153,6 +1154,81 @@ func listen() error {
 
 			if text == "/auth" {
 				go handleAuth(config, chatID, threadID)
+				continue
+			}
+
+			// /stop command - interrupt current Claude execution
+			if text == "/stop" {
+				if !isGroup {
+					sendMessage(config, chatID, threadID, "ℹ️ /stop only works in group topics. Switch to a session topic to use this command.")
+					continue
+				}
+				if threadID == 0 {
+					sendMessage(config, chatID, threadID, "ℹ️ /stop only works in session topics. Switch to a session topic (thread) to use this command.")
+					continue
+				}
+
+				sessName := getSessionByTopic(config, threadID)
+				if sessName == "" {
+					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
+					continue
+				}
+
+				// Check if ccc session exists without creating it (avoid side effects)
+				if !cccSessionExists() {
+					sendMessage(config, chatID, threadID, "❌ No active tmux window for this session.")
+					continue
+				}
+
+				// Do read-only window lookup without calling ensureCccSession
+				// to avoid race condition where session gets deleted between checks
+				windowName := tmuxSafeName(sessName)
+				cmd := exec.Command(tmuxPath, "list-windows", "-t", cccSessionName, "-F", "#{window_name}\t#{window_id}")
+				out, err := cmd.Output()
+				if err != nil {
+					sendMessage(config, chatID, threadID, "❌ No active tmux window for this session.")
+					continue
+				}
+
+				var target string
+				scanner := bufio.NewScanner(bytes.NewReader(out))
+				for scanner.Scan() {
+					parts := strings.SplitN(scanner.Text(), "\t", 2)
+					if len(parts) == 2 && parts[0] == windowName {
+						target = cccSessionName + ":" + windowName
+						break
+					}
+				}
+				// Check for scanner errors
+				if err := scanner.Err(); err != nil {
+					sendMessage(config, chatID, threadID, "❌ No active tmux window for this session.")
+					continue
+				}
+				if target == "" {
+					sendMessage(config, chatID, threadID, "❌ No active tmux window for this session.")
+					continue
+				}
+
+				// Only send interrupt if Claude is actually running (avoid interrupting other work)
+				if !tmuxTargetHasClaudeRunning(target) {
+					sendMessage(config, chatID, threadID, "ℹ️ Claude is not running in this session.")
+					continue
+				}
+
+				// Send Esc (Escape key) for graceful cancellation - safer than Ctrl+C
+				if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-[").Run(); err != nil {
+					sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send interrupt: %v", err))
+					continue
+				}
+
+				// Wait for interrupt to be processed, then check status
+				time.Sleep(600 * time.Millisecond)
+
+				if tmuxTargetHasClaudeRunning(target) {
+					sendMessage(config, chatID, threadID, "⏹️ Interrupt sent. Claude may be finishing up...")
+				} else {
+					sendMessage(config, chatID, threadID, "✅ Claude session interrupted")
+				}
 				continue
 			}
 

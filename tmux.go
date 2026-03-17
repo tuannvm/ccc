@@ -558,6 +558,27 @@ func tmuxWindowExistsByID(windowID string, windowName string) bool {
 	return false
 }
 
+// cccSessionExists checks if the main "ccc" tmux session exists without creating it
+// Returns true if session exists, false otherwise
+func cccSessionExists() bool {
+	cmd := exec.Command(tmuxPath, "list-sessions", "-F", "#{session_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		if scanner.Text() == cccSessionName {
+			return true
+		}
+	}
+	// Check for scanner errors (though unlikely with tmux output)
+	if err := scanner.Err(); err != nil {
+		return false
+	}
+	return false
+}
+
 // ensureCccSession ensures the main "ccc" tmux session exists
 // Returns the session name "ccc"
 func ensureCccSession() (string, error) {
