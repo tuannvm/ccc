@@ -24,6 +24,11 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
   - Useful for troubleshooting and manual setup
 
 ### Fixed
+- **Worktree session hook routing**: Fixed critical bug where reply hooks for worktree sessions were sent to the base session's Telegram topic instead of the worktree session's topic
+  - Added tmux window name detection as the primary lookup method in `findSession()`
+  - Handles tmux name sanitization (dots → "__") with collision detection
+  - Correctly handles session switches via `ccc attach` and manual Claude ID changes via `/session`
+  - See commit `53dd308` for details
 - **Hooks installation documentation**: The `install-hooks` command mentioned in docs but not implemented has now been added (PR #3)
 - **`/new` command requirements**: Documented that `/new` only works in supergroups, not private chats
 - **GroupID requirement**: Clarified that `ccc setgroup` must be run before `/new` will work
