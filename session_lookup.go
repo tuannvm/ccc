@@ -20,26 +20,43 @@ func getCurrentTmuxWindowName() string {
 
 // findSessionByWindowName finds a session by its tmux window name
 // Handles tmux name sanitization where dots are replaced with "__"
+// Prefers exact matches over sanitized matches to avoid collision ambiguity
 func findSessionByWindowName(config *Config, windowName string) (string, int64) {
 	if windowName == "" {
 		return "", 0
 	}
-	// Window names match session names, but tmux sanitizes dots to "__"
-	// So we need to compare both the raw name and sanitized name
+	// First pass: look for exact match (highest priority)
 	for name, info := range config.Sessions {
 		if name == "" || info == nil {
 			continue
 		}
-		// Direct match
 		if name == windowName {
 			return name, info.TopicID
 		}
-		// Match with tmux sanitization (dots -> "__")
+	}
+	// Second pass: look for sanitized match (lower priority)
+	// Window names match session names, but tmux sanitizes dots to "__"
+	// This handles sessions like "my.project" whose tmux window is "my__project"
+	var sanitizedMatch string
+	var sanitizedTopicID int64
+	for name, info := range config.Sessions {
+		if name == "" || info == nil {
+			continue
+		}
 		if tmuxSafeName(name) == windowName {
-			return name, info.TopicID
+			// Found a match via sanitization
+			if sanitizedMatch != "" {
+				// Ambiguous! Multiple sessions sanitize to the same window name
+				// This is a configuration error - log and skip
+				hookLog("WARNING: Ambiguous window name '%s' matches multiple sessions: %s, %s",
+					windowName, sanitizedMatch, name)
+				return "", 0
+			}
+			sanitizedMatch = name
+			sanitizedTopicID = info.TopicID
 		}
 	}
-	return "", 0
+	return sanitizedMatch, sanitizedTopicID
 }
 
 // getSessionByTopic finds a session name by its Telegram topic ID
@@ -81,19 +98,22 @@ func findSessionByCwd(config *Config, cwd string) (string, int64) {
 	return "", 0
 }
 
-// findSession matches by tmux window name first, then claude_session_id, then falls back to cwd
+// findSession matches by claude_session_id first (fast, reliable once persisted),
+// then tmux window name (for new worktree sessions), then falls back to cwd
 // The window name check is critical for worktree sessions since they run from the base directory
 // but have their own tmux windows named after the worktree session name
 func findSession(config *Config, cwd string, claudeSessionID string) (string, int64) {
-	// First, try to match by tmux window name (most reliable for worktree sessions)
+	// First, try to match by claude session ID (fast map lookup, reliable once persisted)
+	// This is checked first to avoid the overhead of tmux display-message on every hook
+	if name, topicID := findSessionByClaudeID(config, claudeSessionID); name != "" {
+		return name, topicID
+	}
+	// Then, try to match by tmux window name (needed for new worktree sessions)
+	// This is only reached when claudeSessionID is empty or not yet persisted
 	if windowName := getCurrentTmuxWindowName(); windowName != "" {
 		if name, topicID := findSessionByWindowName(config, windowName); name != "" {
 			return name, topicID
 		}
-	}
-	// Then, try to match by claude session ID (reliable once persisted)
-	if name, topicID := findSessionByClaudeID(config, claudeSessionID); name != "" {
-		return name, topicID
 	}
 	// Finally, fall back to cwd matching (least reliable for worktree sessions)
 	return findSessionByCwd(config, cwd)
