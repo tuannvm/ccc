@@ -46,6 +46,36 @@ var authInProgress sync.Mutex
 var authWaitingCode bool
 var otpAttempts = make(map[string]int) // session -> failed attempts
 
+// isAuthorizedCallback checks if a callback query is authorized based on multi-user mode
+func isAuthorizedCallback(config *Config, cb *CallbackQuery) bool {
+	if cb == nil || cb.Message == nil {
+		return false
+	}
+
+	if config.MultiUserMode {
+		// Multi-user mode: anyone in the configured group can interact
+		if config.GroupID == 0 {
+			return false // Group not configured
+		}
+		return cb.Message.Chat.ID == config.GroupID
+	}
+	// Single-user mode (default): only the authorized user can interact
+	return cb.From.ID == config.ChatID
+}
+
+// isAuthorizedMessage checks if a message is authorized based on multi-user mode
+func isAuthorizedMessage(config *Config, msg TelegramMessage) bool {
+	if config.MultiUserMode {
+		// Multi-user mode: anyone in the configured group can interact
+		if config.GroupID == 0 {
+			return false // Group not configured
+		}
+		return msg.Chat.ID == config.GroupID
+	}
+	// Single-user mode (default): only the authorized user can interact
+	return msg.From.ID == config.ChatID
+}
+
 // getSystemStats returns machine stats (works on Linux and macOS)
 func getSystemStats() string {
 	var sb strings.Builder
@@ -371,7 +401,8 @@ step2:
 		for _, update := range updates.Result {
 			offset = update.UpdateID + 1
 			chat := update.Message.Chat
-			if chat.Type == "supergroup" {
+			// Only accept group configuration from the owner (security: prevent hijacking)
+			if chat.Type == "supergroup" && update.Message.From.ID == config.ChatID {
 				config.GroupID = chat.ID
 				saveConfig(config)
 				fmt.Printf("✅ Group configured!\n\n")
@@ -822,8 +853,8 @@ func listen() error {
 			// Handle callback queries (button presses)
 			if update.CallbackQuery != nil {
 				cb := update.CallbackQuery
-				// Only accept from authorized user
-				if cb.From.ID != config.ChatID {
+				// Authorization check: depends on multi-user mode
+				if !isAuthorizedCallback(config, cb) {
 					continue
 				}
 
@@ -918,8 +949,8 @@ func listen() error {
 
 			msg := update.Message
 
-			// Only accept from authorized user
-			if msg.From.ID != config.ChatID {
+			// Authorization check: depends on multi-user mode
+			if !isAuthorizedMessage(config, msg) {
 				continue
 			}
 

@@ -43,9 +43,10 @@ type ProviderConfig struct {
 // Config stores bot configuration and session mappings
 type Config struct {
 	// ========== Telegram Integration ==========
-	BotToken string `json:"bot_token"`
-	ChatID   int64  `json:"chat_id"`              // Private chat for simple commands
-	GroupID  int64  `json:"group_id,omitempty"`   // Group with topics for sessions
+	BotToken      string `json:"bot_token"`
+	ChatID        int64  `json:"chat_id"`                    // Private chat for simple commands
+	GroupID       int64  `json:"group_id,omitempty"`         // Group with topics for sessions
+	MultiUserMode bool   `json:"multi_user_mode,omitempty"`  // Allow any group member (default: false = owner only)
 
 	// ========== Sessions ==========
 	Sessions map[string]*SessionInfo `json:"sessions,omitempty"` // session name -> session info
