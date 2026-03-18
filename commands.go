@@ -1812,6 +1812,7 @@ func listen() error {
 					}
 
 					// Create session info with worktree metadata
+					// Path points to the worktree directory for file operations, but hooks match via base directory
 					worktreePath := filepath.Join(basePath, ".claude", "worktrees", worktreeName)
 					config.Sessions[worktreeSessionName] = &SessionInfo{
 						TopicID:      topicID,
@@ -1904,11 +1905,11 @@ func listen() error {
 				}
 
 				// Create session info with worktree metadata
-				// Store the actual worktree path for unique identification
+				// Path points to the worktree directory for file operations, but hooks match via base directory
 				worktreePath := filepath.Join(basePath, ".claude", "worktrees", worktreeName)
 				config.Sessions[worktreeSessionName] = &SessionInfo{
 					TopicID:      topicID,
-					Path:         worktreePath, // Use actual worktree path for unique session resolution
+					Path:         worktreePath,
 					ProviderName: providerName,
 					IsWorktree:   true,
 					WorktreeName: worktreeName,
