@@ -98,22 +98,23 @@ func findSessionByCwd(config *Config, cwd string) (string, int64) {
 	return "", 0
 }
 
-// findSession matches by claude_session_id first (fast, reliable once persisted),
-// then tmux window name (for new worktree sessions), then falls back to cwd
-// The window name check is critical for worktree sessions since they run from the base directory
-// but have their own tmux windows named after the worktree session name
+// findSession matches by tmux window name first (represents current user context),
+// then claude_session_id (fast lookup for persisted sessions), then falls back to cwd
+// The window name check is critical for worktree sessions and for handling session switches
 func findSession(config *Config, cwd string, claudeSessionID string) (string, int64) {
-	// First, try to match by claude session ID (fast map lookup, reliable once persisted)
-	// This is checked first to avoid the overhead of tmux display-message on every hook
-	if name, topicID := findSessionByClaudeID(config, claudeSessionID); name != "" {
-		return name, topicID
-	}
-	// Then, try to match by tmux window name (needed for new worktree sessions)
-	// This is only reached when claudeSessionID is empty or not yet persisted
+	// First, try to match by tmux window name (most reliable indicator of current session)
+	// This is checked first because it represents the user's actual current context
+	// Window name lookup handles: worktree sessions, session switches via `ccc attach`,
+	// and cases where ClaudeSessionID is stale or manually set via `/session`
 	if windowName := getCurrentTmuxWindowName(); windowName != "" {
 		if name, topicID := findSessionByWindowName(config, windowName); name != "" {
 			return name, topicID
 		}
+	}
+	// Then, try to match by claude session ID (fast map lookup, reliable once persisted)
+	// This is a fallback for when tmux is not available or window name doesn't match
+	if name, topicID := findSessionByClaudeID(config, claudeSessionID); name != "" {
+		return name, topicID
 	}
 	// Finally, fall back to cwd matching (least reliable for worktree sessions)
 	return findSessionByCwd(config, cwd)
