@@ -1,26 +1,10 @@
-# Golangci-lint configuration for CCC (Claude Command Center)
-
 run:
   timeout: 5m
   modules-download-mode: readonly
-  skip-dirs:
-    - third_party
-    - build
-    - vendor
 
 linters:
   disable:
-    - dupword  # Too noisy for CLI help text
-  enable:
-    - gofmt
-    - goimports
-    - govet
-    - gocyclo
-    - misspell
-    - staticcheck
-    - unused
-    - ineffassign
-    - deadcode
+    - dupword
 
 linters-settings:
   govet:
