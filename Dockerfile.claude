@@ -50,15 +50,8 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     git \
     jq \
     procps \
-    bash
-
-# Install Claude Code with pinned version
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION}
-
-# Install tini for proper signal handling (static, no libc deps)
-ARG TARGETARCH
-RUN curl -fsSL https://github.com/krallin/tini/releases/download/v0.19.0/tini-static-${TARGETARCH} -o /usr/local/bin/tini && \
-    chmod +x /usr/local/bin/tini
+    bash \
+    tini
 
 # DNS fix script
 RUN printf '#!/bin/sh\n# Fix DNS for Apple Containers if DNS is broken\nif [ ! -s /etc/resolv.conf ] || ! grep -q "nameserver" /etc/resolv.conf 2>/dev/null; then\n  if [ -w /etc/resolv.conf ]; then\n    echo "nameserver 8.8.8.8" > /etc/resolv.conf\n    echo "nameserver 8.8.4.4" >> /etc/resolv.conf\n  fi\nfi\nexit 0\n' > /usr/local/bin/fix-dns && \
@@ -87,9 +80,6 @@ RUN printf '# CCC aliases\nalias ccc-status="pgrep -f ccc || echo CCC not runnin
 
 # Set environment
 ENV PATH="/usr/local/bin:${PATH}"
-
-# Expose relay port for file transfers
-EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

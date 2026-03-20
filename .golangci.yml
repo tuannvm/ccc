@@ -21,7 +21,7 @@ linters-settings:
     disable:
       - shadow
   goimports:
-    local-prefixes: github.com/tuannvm/ccc
+    local-prefixes: github.com/kidandcat/ccc
   gocyclo:
     min-complexity: 15
   misspell:
