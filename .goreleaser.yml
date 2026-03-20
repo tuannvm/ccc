@@ -12,7 +12,7 @@ before:
 # They require platform-specific C libraries and are handled separately
 builds:
   # macOS and Windows builds (amd64, arm64 only - no 32-bit arm)
-  - id: ccc-desktop
+  - id: ccc-macos
     binary: ccc
     main: .
     env:
