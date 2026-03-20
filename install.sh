@@ -45,9 +45,9 @@ case "$ARCH" in
         ;;
 esac
 
-# Get latest version from GitHub API
+# Get latest version from GitHub redirect (no API rate limit)
 echo "Fetching latest version..."
-LATEST_VERSION=$(curl -s https://api.github.com/repos/tuannvm/ccc/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//')
+LATEST_VERSION=$(curl -sI https://github.com/tuannvm/ccc/releases/latest 2>&1 | grep -i "^location:" | sed 's|.*/v*||' | tr -d '\r')
 
 if [ -z "$LATEST_VERSION" ]; then
     echo -e "${RED}Error: Could not fetch latest version from GitHub.${NC}"
