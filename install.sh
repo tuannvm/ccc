@@ -47,12 +47,16 @@ esac
 
 # Get latest version from GitHub redirect (no API rate limit)
 echo "Fetching latest version..."
-LATEST_VERSION=$(curl -sI https://github.com/tuannvm/ccc/releases/latest 2>&1 | grep -i "^location:" | sed 's|.*/v*||' | tr -d '\r')
+LATEST_VERSION=$(curl -sI https://github.com/tuannvm/ccc/releases/latest 2>&1 | awk -F'/' '/^[Ll]ocation:/{version=$NF; sub(/\r/, "", version); gsub(/^v/, "", version); print version}')
 
 if [ -z "$LATEST_VERSION" ]; then
     echo -e "${RED}Error: Could not fetch latest version from GitHub.${NC}"
-    echo "Please check your internet connection or visit:"
-    echo "  https://github.com/tuannvm/ccc/releases/latest"
+    echo ""
+    echo "Manual installation:"
+    echo "  1. Visit: https://github.com/tuannvm/ccc/releases/latest"
+    echo "  2. Download: ccc_VERSION_${OS}_${ARCH}.tar.gz"
+    echo "  3. Extract: tar -xzf ccc_VERSION_${OS}_${ARCH}.tar.gz"
+    echo "  4. Install: sudo mv ccc /usr/local/bin/"
     exit 1
 fi
 
