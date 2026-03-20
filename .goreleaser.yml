@@ -12,7 +12,8 @@ before:
 # They require platform-specific C libraries and are handled separately
 builds:
   # macOS and Windows builds (amd64, arm64 only - no 32-bit arm)
-  - binary: ccc
+  - id: ccc-desktop
+    binary: ccc
     main: .
     env:
       - CGO_ENABLED=0
@@ -27,7 +28,8 @@ builds:
     mod_timestamp: "{{ .CommitTimestamp }}"
 
   # Linux builds (amd64, arm64, arm/v7)
-  - binary: ccc
+  - id: ccc-linux
+    binary: ccc
     main: .
     env:
       - CGO_ENABLED=0
