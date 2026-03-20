@@ -1,0 +1,29 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  disable:
+    - dupword
+    - errcheck  # Pre-existing unchecked return values
+    - unused    # Pre-existing unused functions
+    - gosimple  # Pre-existing style issues
+    - staticcheck  # Pre-existing code issues
+    - deadcode  # Pre-existing unused code
+    - ineffassign  # Pre-existing code issues
+
+linters-settings:
+  govet:
+    disable:
+      - shadow
+  goimports:
+    local-prefixes: github.com/kidandcat/ccc
+  gocyclo:
+    min-complexity: 15
+  misspell:
+    locale: US
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
