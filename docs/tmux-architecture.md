@@ -384,3 +384,233 @@ ccc send-to <topic-name> <role> "<command>"
 # Example: send to executor pane
 ccc send-to feature-api executor "git status"
 ```
+
+## Inter-Pane @Mentions (Local Claude Sessions)
+
+When working directly in tmux panes with local Claude sessions, you can use @mentions to route messages between panes—mirroring the Telegram bot behavior.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TMUX WINDOW: ccc-feature-api                                    │
+│  ┌──────────────┬──────────────┬──────────────────────────────┐ │
+│  │ Planner Pane │ Executor Pane│       Reviewer Pane          │ │
+│  │ (pane 0)     │ (pane 1)     │        (pane 2)              │ │
+│  │              │              │                              │ │
+│  │ You type:    │              │                              │ │
+│  │ "@executor   │              │                              │ │
+│  │  implement   │              │                              │ │
+│  │  the API"    │              │                              │ │
+│  │      │       │              │                              │ │
+│  │      └───────┴──────────────┴──► Message routed to pane 1  │ │
+│  │                                  │                         │ │
+│  │                                  ▼                         │ │
+│  │                     "implement the API"                    │ │
+│  │                          appears here                       │ │
+│  └──────────────┴──────────────┴──────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Approach
+
+**Option A: Claude Hooks** (Automatic)
+
+Add post-response and session-start hooks to detect @mentions and route them:
+
+```json
+{
+  "hooks": {
+    "PostResponse": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "~/.claude/hooks/postresponse-interpane-mention.sh",
+        "timeout": 5
+      }]
+    }],
+    "SessionStart": [{
+      "matcher": "startup",
+      "hooks": [{
+        "type": "command",
+        "command": "~/.claude/hooks/sessionstart-interpane-listener.sh",
+        "timeout": 5,
+        "async": true
+      }]
+    }]
+  }
+}
+```
+
+**PostResponse Hook** (`~/.claude/hooks/postresponse-interpane-mention.sh`):
+```bash
+#!/bin/bash
+[[ -z "$TMUX" ]] && exit 0
+
+PANE_INDEX=$(tmux display-message -p '#{pane_index}')
+WINDOW_NAME=$(tmux display-message -p '#{window_name}')
+[[ "$WINDOW_NAME" != ccc-* ]] && exit 0
+
+# Map pane to role
+case "$PANE_INDEX" in
+  0) CURRENT_ROLE="planner" ;;
+  1) CURRENT_ROLE="executor" ;;
+  2) CURRENT_ROLE="reviewer" ;;
+  *) exit 0 ;;
+esac
+
+# Read response from stdin (hook provides JSON)
+RESPONSE=$(jq -r '.response // ""' /dev/stdin)
+
+# Check for @mentions and route
+if [[ "$RESPONSE" =~ @([a-z]+)[[:space:]]+(.+)$ ]]; then
+  target_role="${BASH_REMATCH[1]}"
+  message="${BASH_REMATCH[2]}"
+  
+  case "$target_role" in
+    planner)  target_idx=0 ;;
+    executor) target_idx=1 ;;
+    reviewer) target_idx=2 ;;
+    *) exit 0 ;;
+  esac
+  
+  # Skip self-mentions
+  [[ "$target_idx" == "$PANE_INDEX" ]] && exit 0
+  
+  # Write to shared inbox
+  echo "$message" > "$HOME/.claude/interpane/${WINDOW_NAME}-pane${target_idx}.txt"
+fi
+```
+
+**SessionStart Hook** (`~/.claude/hooks/sessionstart-interpane-listener.sh`):
+```bash
+#!/bin/bash
+[[ -z "$TMUX" ]] && exit 0
+
+WINDOW_NAME=$(tmux display-message -p '#{window_name}')
+[[ "$WINDOW_NAME" != ccc-* ]] && exit 0
+
+PANE_INDEX=$(tmux display-message -p '#{pane_index}')
+MY_INBOX="$HOME/.claude/interpane/${WINDOW_NAME}-pane${PANE_INDEX}.txt"
+
+# Start background listener
+(
+  while true; do
+    if [[ -f "$MY_INBOX" ]]; then
+      message=$(cat "$MY_INBOX")
+      rm -f "$MY_INBOX"
+      [[ -n "$message" ]] && echo ""
+      echo "→ Received from pane: $message"
+    fi
+    sleep 0.5
+  done
+) &
+```
+
+**Option B: Manual tmux send-keys** (CLI Commands)
+
+Use `tmux send-keys` to route messages:
+
+```bash
+# From planner pane (0), send to executor pane (1)
+ccc send-to-pane ccc-feature-api 1 "implement the API"
+
+# Or use tmux directly
+tmux send-keys -t ccc-feature-api.1 "implement the API" C-m
+```
+
+### Usage
+
+In any pane, type:
+```
+@executor implement the REST API
+@reviewer please review my changes  
+@planner help me refine this plan
+```
+
+The message appears in the target pane automatically.
+
+### Limitations
+
+- Only works in tmux windows named `ccc-*`
+- Pane indexing must be: 0=planner, 1=executor, 2=reviewer
+- Hooks-based approach requires Claude Code settings configuration
+- Manual approach requires explicit tmux commands
+
+
+### CCC Implementation: Automatic Hook Setup
+
+**IMPORTANT**: CCC should create and configure hooks **per-project**, not globally. When CCC creates a new bot window/topic, it should:
+
+1. **Create hook scripts** in the project directory:
+   ```
+   .claude/hooks/
+   ├── postresponse-interpane-mention.sh
+   └── sessionstart-interpane-listener.sh
+   ```
+
+2. **Create/update** `.claude/settings.json` with the hooks:
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [
+         {
+           "matcher": "startup",
+           "hooks": [
+             {
+               "type": "command",
+               "command": "$PROJECT_DIR/.claude/hooks/sessionstart-interpane-listener.sh",
+               "timeout": 5,
+               "async": true
+             }
+           ]
+         }
+       ],
+       "PostResponse": [
+         {
+           "matcher": "*",
+           "hooks": [
+             {
+               "type": "command",
+               "command": "$PROJECT_DIR/.claude/hooks/postresponse-interpane-mention.sh",
+               "timeout": 5
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+3. **Use `$PROJECT_DIR` or relative paths** instead of `$HOME` to keep hooks project-scoped.
+
+**Why per-project hooks?**
+- Hooks only run in CCC bot sessions, not all Claude sessions
+- Each project can have its own hook configuration
+- No global configuration needed
+- Hooks travel with the project (in git)
+
+**Implementation steps in CCC:**
+
+```go
+func CreateTopicWindow(topicID int64, topicName string) error {
+    // ... existing tmux window creation ...
+    
+    // Create hooks directory
+    hooksDir := filepath.Join(projectDir, ".claude", "hooks")
+    os.MkdirAll(hooksDir, 0755)
+    
+    // Copy or create hook scripts
+    createInterPaneHooks(hooksDir)
+    
+    // Update .claude/settings.json
+    addHooksToSettings(projectDir)
+    
+    return nil
+}
+```
+
+**Hook variables CCC should set:**
+- `$PROJECT_DIR` - Absolute path to project root
+- `$WINDOW_NAME` - Tmux window name (ccc-*)
+- `$PANE_INDEX` - Which pane (0=planner, 1=executor, 2=reviewer)

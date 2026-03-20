@@ -1045,11 +1045,7 @@ After UX analysis considering reply clarity and unqualified message routing, the
    - `your_project_executor` → token saved as `bot_tokens.executor`
    - `your_project_reviewer` → token saved as `bot_tokens.reviewer`
 
-2. **CRITICAL**: Disable privacy mode for all 3 bots:
-   ```
-   /setprivacy → your_project_planner → "Disable"
-   /setprivacy → your_project_executor → "Disable"
-   /setprivacy → your_project_reviewer → "Disable"
+2. **Privacy Mode**: Can stay **ENABLED** ✅ (internal event bus handles bot-to-bot coordination)
    ```
 
 3. Add all 3 bots to your private group as admins
