@@ -48,6 +48,141 @@ Each bot username (@planner_bot, @executor_bot, @reviewer_bot) requires:
 - Router layer polls 3 separate update streams
 - State is shared across all 3 bot identities
 
+### CRITICAL: Bot-to-Bot Visibility Limitation
+
+**⚠️ TELEGRAM API CONSTRAINT: Bots cannot see messages from other bots.**
+
+Regardless of privacy mode settings, **one bot cannot see another bot's messages via the API**.
+
+#### The Problem
+
+```
+@planner_bot: "@executor_bot Please implement the API"
+                │
+                ▼
+Telegram API delivers to: ✅ planner_bot (sender)
+Telegram API delivers to: ❌ executor_bot (mentioned, but not a user message)
+```
+
+**Original design assumption:** When @planner_bot says "@executor_bot do X", the executor would see this via Telegram polling and respond.
+
+**Reality:** The executor never receives that message. Bot-to-bot messages are NOT delivered via the API.
+
+#### The Fix: Internal Event Bus
+
+**Core Principle:** Telegram is the **UI layer**, not the message bus.
+
+```
+Human Message → Telegram API → Router → Role Handler
+                                                │
+                                                ▼
+                                    Internal Event Bus (Go channels)
+                                                │
+                                                ▼
+                              Bot-to-Bot Handoff (INTERNAL)
+                                                │
+                                                ▼
+                                  Telegram Echo (for human visibility)
+```
+
+**How it works:**
+
+```go
+// Internal event structure
+type BotEvent struct {
+    FromRole string  // "planner", "executor", "reviewer"
+    ToRole   string  // "planner", "executor", "reviewer"
+    Message  string
+    TopicID  int64
+    Context  map[string]interface{}
+}
+
+type InternalEventBus struct {
+    events chan BotEvent
+}
+
+// When Planner wants to hand off to Executor:
+func (h *PlannerHandler) HandoffToExecutor(topicID int64, task string) {
+    // 1. Send to Telegram for HUMAN visibility only
+    sendMessage(config, topicID, "@executor_bot Please implement: " + task)
+
+    // 2. ACTUAL handoff via internal bus
+    h.eventBus.events <- BotEvent{
+        FromRole: "planner",
+        ToRole:   "executor",
+        Message:  task,
+        TopicID:  topicID,
+    }
+}
+
+// Router listens to BOTH Telegram polling AND internal bus
+func (r *MessageRouter) Start() {
+    // Poll 3 bot tokens for HUMAN messages
+    for role := range r.config.BotTokens {
+        go r.pollBot(role)
+    }
+
+    // Listen to internal bus for BOT-TO-BOT handoffs
+    go r.listenToInternalBus()
+}
+```
+
+#### Key Implications
+
+| Concern | Without Fix | With Internal Bus |
+|---------|------------|-------------------|
+| Bot handoffs | ❌ Don't work | ✅ Internal coordination |
+| Privacy mode | ❌ Must disable | ✅ Can keep ENABLED |
+| Coupling | ❌ Tied to Telegram | ✅ Telegram = UI only |
+| Testing | ❌ Hard to test | ✅ Test logic separately |
+
+**Privacy mode benefit:** With internal event bus, you can keep privacy mode ENABLED. Bots still see human @mentions, while bot-to-bot coordination happens internally—much more secure!
+
+#### Architecture Update
+
+The @mentions you see in Telegram are **UI echoes for humans**, not functional triggers. The real coordination happens via internal Go channels.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Telegram Group (Display Layer)               │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  @planner_bot: "Plan created. @executor_bot implement" │   │
+│  │  @executor_bot: "Implementing..."                       │   │
+│  │  @reviewer_bot: "LGTM!"                                 │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+                            │ Humans see this
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  CCC Router (The Real System)                  │
+│  ┌────────────────────────────────────────────────────────┐   │
+│  │           Internal Event Bus (Go channels)              │   │
+│  │  ┌──────────────────────────────────────────────────┐   │   │
+│  │  │ Planner: "I'm done, handoff to executor"       │   │   │
+│  │  │          └─────────────────────────────────────► │   │   │
+│  │  │                                                   │   │   │
+│  │  │              ┌────────────────────────────────┐ │   │   │
+│  │  │              ▼                                │ │   │   │
+│  │  │         Executor: "Executing task..."        │ │   │   │
+│  │  │              └────────────────────────────────┘ │   │   │
+│  │  └──────────────────────────────────────────────────┘   │   │
+│  └────────────────────────────────────────────────────────┘   │
+│                        │                                       │
+│                        ▼                                       │
+│  ┌──────────────┬──────────────┬──────────────┐                 │
+│  │  Planner     │  Executor    │  Reviewer     │                 │
+│  │  Handler     │  Handler     │  Handler     │                 │
+│  │  ┌────────┐   │  ┌────────┐   │  ┌────────┐   │                 │
+│  │  │ Tmux   │   │  │ Tmux   │   │  │ Tmux   │   │                 │
+│  │  │ Pane 0 │   │  │ Pane 1 │   │  │ Pane 2 │   │                 │
+│  │  └────────┘   │  └────────┘   │  └────────┘   │                 │
+│  └──────────────┴──────────────┴──────────────┘                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Source:** Verified against official Telegram Bot API documentation: https://core.telegram.org/bots/features#privacy-mode
+
 ## Architecture
 
 ### Bot Roles
@@ -137,10 +272,11 @@ ccc (single binary)
 5. Executor responds when explicitly mentioned with @executor_bot
 
 **Privacy Mode Handling:**
-- Bot privacy mode MUST be disabled for all 3 bots
-- In BotFather: `/setprivacy` → "Disable" for each bot
-- This ensures bots receive ALL group messages, not just @mentions
-- Router then filters messages based on intended recipient
+- **With internal event bus**: Privacy mode can stay **ENABLED** ✅
+- Bots still receive human @mentions (works with privacy mode)
+- Bot-to-bot coordination happens internally via Go channels
+- If you need unqualified message handling: Disable privacy in BotFather (`/setprivacy` → "Disable")
+- Only use in private groups if privacy is disabled
 
 **Pros:**
 - Single deployment, single service
@@ -244,20 +380,44 @@ ccc-reviewer  (separate binary)
 #### 1. Router Layer
 
 ```go
-// New: Message router handling 3 bot tokens
+// Internal event for bot-to-bot coordination
+type BotEvent struct {
+    FromRole string                    // "planner", "executor", "reviewer"
+    ToRole   string                    // "planner", "executor", "reviewer"
+    Message  string                    // The task/message
+    TopicID  int64                     // Telegram topic ID
+    Context  map[string]interface{}    // Additional context
+}
+
+// Internal event bus - CRITICAL for bot-to-bot coordination
+// Telegram bots CANNOT see each other's messages via API
+type InternalEventBus struct {
+    events chan BotEvent
+}
+
+func NewInternalEventBus() *InternalEventBus {
+    return &InternalEventBus{
+        events: make(chan BotEvent, 100),
+    }
+}
+
+// Message router handling 3 bot tokens + internal event bus
 type MessageRouter struct {
     config          *Config
     stateManager    *ConversationStateManager
     roleHandlers    map[string]RoleHandler
-    // Each bot has its own update channel
     updateChannels  map[string]chan TelegramUpdate
+    eventBus        *InternalEventBus  // CRITICAL: For bot-to-bot coordination
 }
 
 func (r *MessageRouter) Start() {
-    // Start polling for all 3 bots
+    // Start polling for all 3 bots (HUMAN messages)
     for role := range r.config.BotTokens {
         go r.pollBot(role)
     }
+
+    // Start listening to internal event bus (BOT-TO-BOT messages)
+    go r.listenToInternalBus()
 }
 
 func (r *MessageRouter) pollBot(role string) {
@@ -273,29 +433,42 @@ func (r *MessageRouter) pollBot(role string) {
 
         for _, update := range updates {
             offset = update.UpdateID + 1
-            // Tag update with source role for routing
             update.SourceRole = role
             r.routeUpdate(update)
         }
     }
 }
 
+// CRITICAL: Listen for internal bot-to-bot events
+// This is how bots actually coordinate (Telegram is just UI display)
+func (r *MessageRouter) listenToInternalBus() {
+    for event := range r.eventBus.events {
+        // Get handler for target role
+        handler, exists := r.roleHandlers[event.ToRole]
+        if !exists {
+            log.Printf("No handler for role: %s", event.ToRole)
+            continue
+        }
+
+        // Handle the internal event
+        if internalHandler, ok := handler.(InternalEventHandler); ok {
+            err := internalHandler.HandleInternal(event)
+            if err != nil {
+                log.Printf("Error handling internal event: %v", err)
+            }
+        }
+    }
+}
+
 func (r *MessageRouter) routeUpdate(update TelegramUpdate) error {
     msg := update.Message
-
-    // Skip if no message (e.g., callback query handled separately)
     if msg == nil {
         return nil
     }
 
-    // CRITICAL: Each message already has a source role (which bot received it)
-    // We only handle messages where the sender explicitly @mentioned the receiving bot
     sourceRole := update.SourceRole
-
-    // Extract @mentions to find intended recipient
     mentions := extractMentions(msg.Text)
 
-    // Check if this bot was mentioned
     botUsername := r.config.BotUsernames[sourceRole]
     isMentioned := false
     for _, m := range mentions {
@@ -305,12 +478,10 @@ func (r *MessageRouter) routeUpdate(update TelegramUpdate) error {
         }
     }
 
-    // Only process if this bot was explicitly mentioned
     if !isMentioned {
         return nil
     }
 
-    // Get handler for source role
     handler, exists := r.roleHandlers[sourceRole]
     if !exists {
         return fmt.Errorf("no handler for role: %s", sourceRole)
@@ -320,7 +491,6 @@ func (r *MessageRouter) routeUpdate(update TelegramUpdate) error {
 }
 
 func extractMentions(text string) []string {
-    // Extract @mentions like @planner_bot, @executor_bot, @reviewer_bot
     var mentions []string
     re := regexp.MustCompile(`@(\w+)`)
     matches := re.FindAllStringSubmatch(text, -1)
@@ -334,21 +504,27 @@ func extractMentions(text string) []string {
 #### 2. Role Handlers
 
 ```go
+// Interface for handlers that can receive internal bot-to-bot events
+type InternalEventHandler interface {
+    HandleInternal(event BotEvent) error
+}
+
 type RoleHandler interface {
     Handle(msg TelegramMessage) error
     CanHandle(msg TelegramMessage) bool
 }
 
 type PlannerHandler struct {
-    state   *ConversationStateManager
-    config  *Config
+    state    *ConversationStateManager
+    config   *Config
+    eventBus *InternalEventBus  // CRITICAL: For bot-to-bot coordination
 }
 
 func (h *PlannerHandler) Handle(msg TelegramMessage) error {
     // Planner logic:
     // 1. Analyze request
     // 2. Create structured plan
-    // 3. @mention executor to implement
+    // 3. Hand off to executor via INTERNAL BUS
     prompt := msg.Text
 
     // Remove @planner_bot from prompt
@@ -361,28 +537,50 @@ func (h *PlannerHandler) Handle(msg TelegramMessage) error {
         return err
     }
 
-    // Send response
+    // Send response to Telegram
     sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, response)
 
-    // If plan approved, @mention executor
+    // If plan approved, hand off to executor
     if h.shouldProceed(msg) {
-        handoff := fmt.Sprintf("@executor_bot Please implement: %s", h.getPlanSummary())
-        sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, handoff)
+        planSummary := h.getPlanSummary()
+
+        // 1. Send to Telegram for HUMAN visibility (echo only)
+        handoffMsg := fmt.Sprintf("@executor_bot Please implement: %s", planSummary)
+        sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, handoffMsg)
+
+        // 2. ACTUAL handoff via internal event bus
+        h.eventBus.events <- BotEvent{
+            FromRole: "planner",
+            ToRole:   "executor",
+            Message:  planSummary,
+            TopicID:  msg.Chat.ID,
+            Context: map[string]interface{}{
+                "message_id":    msg.MessageID,
+                "thread_id":     msg.MessageThreadID,
+                "plan_id":       h.getCurrentPlanID(),
+            },
+        }
     }
 
     return nil
 }
 
+// CRITICAL: Handle internal events from other bots
+func (h *PlannerHandler) HandleInternal(event BotEvent) error {
+    // Planner typically doesn't receive internal events
+    // It's the entry point for human requests
+    log.Printf("Planner received internal event from %s: %s", event.FromRole, event.Message)
+    return nil
+}
+
 type ExecutorHandler struct {
-    state   *ConversationStateManager
-    config  *Config
+    state    *ConversationStateManager
+    config   *Config
+    eventBus *InternalEventBus
 }
 
 func (h *ExecutorHandler) Handle(msg TelegramMessage) error {
-    // Executor logic:
-    // 1. Parse task from @mention
-    // 2. Execute implementation
-    // 3. @mention reviewer if needed
+    // Executor logic when @mentioned by HUMAN
     prompt := strings.ReplaceAll(msg.Text, "@executor_bot", "")
     prompt = strings.TrimSpace(prompt)
 
@@ -395,23 +593,68 @@ func (h *ExecutorHandler) Handle(msg TelegramMessage) error {
 
     // If code changed, @mention reviewer
     if h.hasCodeChanges() {
-        handoff := "@reviewer_bot Please review the changes"
-        sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, handoff)
+        // 1. Send to Telegram for human visibility
+        handoffMsg := "@reviewer_bot Please review the changes"
+        sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, handoffMsg)
+
+        // 2. ACTUAL handoff via internal bus
+        h.eventBus.events <- BotEvent{
+            FromRole: "executor",
+            ToRole:   "reviewer",
+            Message:  "Review requested",
+            TopicID:  msg.Chat.ID,
+            Context: map[string]interface{}{
+                "thread_id":     msg.MessageThreadID,
+                "changes":       h.getChangedFiles(),
+            },
+        }
+    }
+
+    return nil
+}
+
+// CRITICAL: Handle internal events from planner
+func (h *ExecutorHandler) HandleInternal(event BotEvent) error {
+    log.Printf("Executor received internal event from %s: %s", event.FromRole, event.Message)
+
+    // This is the REAL trigger - not the Telegram @mention
+    // Execute the task from planner
+    response, err := h.executeTask(event.Message)
+    if err != nil {
+        return err
+    }
+
+    // Send response to Telegram (using executor bot token)
+    threadID := int64(event.Context["thread_id"].(float64))
+    sendMessage(h.config, event.TopicID, threadID, response)
+
+    // If code changed, hand off to reviewer
+    if h.hasCodeChanges() {
+        // Telegram echo for humans
+        handoffMsg := "@reviewer_bot Please review the changes"
+        sendMessage(h.config, event.TopicID, threadID, handoffMsg)
+
+        // Internal handoff
+        h.eventBus.events <- BotEvent{
+            FromRole: "executor",
+            ToRole:   "reviewer",
+            Message:  "Review requested",
+            TopicID:  event.TopicID,
+            Context:  event.Context,
+        }
     }
 
     return nil
 }
 
 type ReviewerHandler struct {
-    state   *ConversationStateManager
-    config  *Config
+    state    *ConversationStateManager
+    config   *Config
+    eventBus *InternalEventBus
 }
 
 func (h *ReviewerHandler) Handle(msg TelegramMessage) error {
-    // Reviewer logic:
-    // 1. Review code/changes
-    // 2. Provide feedback
-    // 3. @mention executor for fixes OR approve
+    // Reviewer logic when @mentioned by HUMAN
     prompt := strings.ReplaceAll(msg.Text, "@reviewer_bot", "")
     prompt = strings.TrimSpace(prompt)
 
@@ -424,8 +667,54 @@ func (h *ReviewerHandler) Handle(msg TelegramMessage) error {
 
     // If issues found, @mention executor
     if h.hasIssues() {
-        handoff := "@executor_bot Please fix the following issues..."
-        sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, handoff)
+        issues := h.getIssues()
+        handoffMsg := fmt.Sprintf("@executor_bot Please fix: %s", issues)
+        sendMessage(h.config, msg.Chat.ID, msg.MessageThreadID, handoffMsg)
+
+        // Internal handoff
+        h.eventBus.events <- BotEvent{
+            FromRole: "reviewer",
+            ToRole:   "executor",
+            Message:  issues,
+            TopicID:  msg.Chat.ID,
+            Context: map[string]interface{}{
+                "thread_id": msg.MessageThreadID,
+            },
+        }
+    }
+
+    return nil
+}
+
+// CRITICAL: Handle internal events from executor
+func (h *ReviewerHandler) HandleInternal(event BotEvent) error {
+    log.Printf("Reviewer received internal event from %s: %s", event.FromRole, event.Message)
+
+    // This is the REAL trigger - review the changes
+    review, err := h.reviewChanges(event.Message)
+    if err != nil {
+        return err
+    }
+
+    threadID := int64(event.Context["thread_id"].(float64))
+    sendMessage(h.config, event.TopicID, threadID, review)
+
+    // If issues found, hand off to executor
+    if h.hasIssues() {
+        issues := h.getIssues()
+
+        // Telegram echo
+        handoffMsg := fmt.Sprintf("@executor_bot Please fix: %s", issues)
+        sendMessage(h.config, event.TopicID, threadID, handoffMsg)
+
+        // Internal handoff
+        h.eventBus.events <- BotEvent{
+            FromRole: "reviewer",
+            ToRole:   "executor",
+            Message:  issues,
+            TopicID:  event.TopicID,
+            Context:  event.Context,
+        }
     }
 
     return nil
@@ -652,17 +941,24 @@ func (r *Router) Route(msg TelegramMessage) {
 - Messages that explicitly @mention the bot
 - Replies to the bot's own messages
 
-**Our requirement:** Bots must see all messages to detect cross-bot handoffs.
+**Original concern:** Bots must see cross-bot @mentions (e.g., "@executor_bot do X" from @planner_bot)
 
-**Solution:** Disable privacy mode for all 3 bots in BotFather.
+**Solution: Internal Event Bus**
 
-**Trade-offs:**
-| Privacy Mode | Pros | Cons |
-|--------------|------|------|
-| **Enabled** (default) | More private, bot sees less | Cannot detect all @mentions in conversation |
-| **Disabled** (required) | Full message visibility, works as designed | Bot reads ALL group messages (only use in private groups) |
+With the internal event bus architecture:
+- Privacy mode can stay **ENABLED** ✅
+- Bots still receive human @mentions (works with privacy mode)
+- Bot-to-bot coordination happens **internally** via Go channels
+- @mentions in Telegram are UI echoes for humans only
 
-**Recommendation:** Use dedicated private groups for development. Never disable privacy for bots in public groups.
+**Privacy Mode Decision Matrix:**
+
+| Privacy Mode | Works with Internal Bus? | Use Case |
+|--------------|--------------------------|----------|
+| **Enabled** (recommended) | ✅ Yes | Most secure; human @mentions only |
+| **Disabled** | ✅ Yes (but not needed) | If you want unqualified message handling |
+
+**Recommendation:** Keep privacy mode **ENABLED**. Only disable if you have a specific need for unqualified message routing (e.g., "fix this" without @mention). Never disable privacy for bots in public groups.
 
 ### Rate Limits
 
