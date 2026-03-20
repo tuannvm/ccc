@@ -747,11 +747,8 @@ func listen() error {
 	defer lockFile.Close()
 
 	// Try to acquire exclusive lock (non-blocking)
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		fmt.Println("Another ccc listen instance is already running, exiting quietly")
-		os.Exit(0) // Exit with 0 so launchd doesn't restart
-	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	releaseLock := acquireFileLock(lockFile)
+	defer releaseLock()
 
 	// Write our PID to the lock file
 	lockFile.Truncate(0)

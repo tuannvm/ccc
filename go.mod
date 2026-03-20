@@ -1,4 +1,4 @@
-module github.com/kidandcat/ccc
+module github.com/tuannvm/ccc
 
 go 1.24.0
 
