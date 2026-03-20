@@ -1,0 +1,33 @@
+# Golangci-lint configuration for CCC (Claude Command Center)
+
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  skip-dirs:
+    - third_party
+    - build
+    - vendor
+
+linters:
+  default: standard
+  disable:
+    - dupword  # Too noisy for CLI help text
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - shadow
+  goimports:
+    local-prefixes: github.com/tuannvm/ccc
+  gocyclo:
+    min-complexity: 15
+  misspell:
+    locale: US
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

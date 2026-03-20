@@ -1,0 +1,50 @@
+version: 2
+updates:
+  # Maintain dependencies for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    assignees:
+      - "tuannvm"
+    labels:
+      - "ci/cd"
+      - "dependencies"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Maintain dependencies for Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    assignees:
+      - "tuannvm"
+    labels:
+      - "dependencies"
+      - "go"
+    open-pull-requests-limit: 10
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "golang.org/x/*"
+
+  # Maintain dependencies for Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    assignees:
+      - "tuannvm"
+    labels:
+      - "dependencies"
+      - "docker"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

@@ -1,0 +1,87 @@
+# GoReleaser configuration for CCC (Claude Command Center)
+# CLI tool with optional voice transcription features
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+# Standard builds (pure Go, no voice features)
+# Voice builds with whisper.cpp/ffmpeg are too complex for CI cross-compilation
+# They require platform-specific C libraries and are handled separately
+builds:
+  # macOS and Windows builds (amd64, arm64 only - no 32-bit arm)
+  - binary: ccc
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  # Linux builds (amd64, arm64, arm/v7)
+  - binary: ccc
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - format: tar.gz
+  name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+  format_overrides:
+    - goos: windows
+      format: zip
+  files:
+    - LICENSE
+    - README.md
+    - docs/*
+
+# Use simpler snapshot naming
+snapshot:
+  name_template: "next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "^style:"
+
+# GitHub Releases configuration
+release:
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  footer: |
+    **Voice-enabled builds** (with whisper.cpp support) are available separately.
+    See the README for instructions on building with voice features.
+
+# Checksums
+checksum:
+  name_template: "checksums.txt"
+
+# Source archive
+source:
+  enabled: true
+  prefix_template: "{{ .ProjectName }}-{{ .Version }}"

@@ -1,0 +1,109 @@
+# Multi-stage build for smaller, more secure image
+FROM golang:1.24-bookworm AS ccc-builder
+
+# Build arguments for version pinning
+ARG CCC_VERSION=latest
+ARG CCC_REF=main
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build CCC
+WORKDIR /src
+RUN if [ "$CCC_VERSION" = "latest" ]; then \
+        git clone --depth 1 https://github.com/tuannvm/ccc.git .; \
+    else \
+        git clone --depth 1 --branch "${CCC_VERSION}" https://github.com/tuannvm/ccc.git .; \
+    fi
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ccc .
+
+# Runtime stage - Alpine for Apple Container arm64 compatibility
+FROM alpine:3.21
+
+# Metadata
+LABEL maintainer="tuannvm"
+LABEL description="Alpine with Claude Code and CCC (Claude Code Companion)"
+LABEL version="2.1"
+
+# Build arguments for version pinning
+ARG NODE_VERSION=22
+ARG CLAUDE_VERSION=latest
+
+# Prevent interactive prompts
+ENV NONINTERACTIVE=1
+
+# Set locale (musl uses C.UTF-8 by default)
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# Install runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add --no-cache \
+    curl \
+    ca-certificates \
+    nodejs \
+    npm \
+    tmux \
+    git \
+    jq \
+    procps \
+    bash
+
+# Install Claude Code with pinned version
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION}
+
+# Install tini for proper signal handling (static, no libc deps)
+ARG TARGETARCH
+RUN curl -fsSL https://github.com/krallin/tini/releases/download/v0.19.0/tini-static-${TARGETARCH} -o /usr/local/bin/tini && \
+    chmod +x /usr/local/bin/tini
+
+# DNS fix script
+RUN printf '#!/bin/sh\n# Fix DNS for Apple Containers if DNS is broken\nif [ ! -s /etc/resolv.conf ] || ! grep -q "nameserver" /etc/resolv.conf 2>/dev/null; then\n  if [ -w /etc/resolv.conf ]; then\n    echo "nameserver 8.8.8.8" > /etc/resolv.conf\n    echo "nameserver 8.8.4.4" >> /etc/resolv.conf\n  fi\nfi\nexit 0\n' > /usr/local/bin/fix-dns && \
+    chmod +x /usr/local/bin/fix-dns
+
+# Copy CCC binary from builder
+COPY --from=ccc-builder /out/ccc /usr/local/bin/ccc
+RUN chmod +x /usr/local/bin/ccc
+
+# Create non-root user
+RUN adduser -D -s /bin/sh cccuser
+
+# Setup as cccuser
+USER cccuser
+WORKDIR /home/cccuser
+
+# Create directory structure
+RUN mkdir -p ~/.config/ccc /home/cccuser/projects ~/.cache/ccc
+
+# Create default CCC config with multi-user mode enabled
+RUN printf '{\n  "multi_user_mode": true,\n  "projects_dir": "/home/cccuser/projects"\n}\n' > ~/.config/ccc/config.json && \
+    chmod 600 ~/.config/ccc/config.json
+
+# Add helpful aliases to .shrc (POSIX shell profile)
+RUN printf '# CCC aliases\nalias ccc-status="pgrep -f ccc || echo CCC not running"\nalias ccc-stop="pkill -f ccc"\nalias ccc-log="tail -f ~/.cache/ccc/ccc.log"\nalias ccc-restart="pkill -f ccc && sleep 1 && ccc-listen &"\n\necho "CCC Docker Environment (Alpine)"\necho "Multi-user mode: ENABLED (default)"\necho "Configure: ccc setup <bot_token>"\necho ""\n' >> ~/.shrc
+
+# Set environment
+ENV PATH="/usr/local/bin:${PATH}"
+
+# Expose relay port for file transfers
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep -f "ccc listen" || exit 1
+
+# Volumes for persistent data
+VOLUME ["/home/cccuser/.config/ccc", "/home/cccuser/projects", "/home/cccuser/.cache/ccc"]
+
+# Startup script (POSIX sh, no bashisms)
+RUN printf '#!/bin/sh\nfix-dns\n\n# Start CCC listener in background if configured\nif [ -f ~/.config/ccc/config.json ] && grep -q "bot_token" ~/.config/ccc/config.json 2>/dev/null; then\n    echo "Starting CCC listener..."\n    ccc listen >> ~/.cache/ccc/ccc.log 2>&1 &\n    sleep 2\n    if pgrep -f "ccc listen" > /dev/null; then\n        echo "CCC listener started"\n    else\n        echo "CCC listener failed to start. Check logs with: ccc-log"\n    fi\nelse\n    echo "CCC not configured. Run: ccc setup <bot_token>"\nfi\n\nexec "$@"\n' > ~/docker-entrypoint.sh && \
+    chmod +x ~/docker-entrypoint.sh
+
+# Use tini for proper signal handling and zombie process reaping
+ENTRYPOINT ["/usr/local/bin/tini", "--", "/home/cccuser/docker-entrypoint.sh"]
+
+# Run shell (CCC will auto-start in background if configured)
+CMD ["/bin/sh"]

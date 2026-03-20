@@ -1,0 +1,29 @@
+# Code Owners for CCC (Claude Command Center)
+
+# Default: all changes require approval from tuannvm
+* @tuannvm
+
+# CI/CD changes
+.github/** @tuannvm
+*workflow*.yml @tuannvm
+.goreleaser.yml @tuannvm
+.golangci.yml @tuannvm
+
+# Documentation changes
+docs/** @tuannvm
+*.md @tuannvm
+
+# Dependencies
+go.mod @tuannvm
+go.sum @tuannvm
+Makefile @tuannvm
+
+# Build artifacts and third-party
+build/** @tuannvm
+third_party/** @tuannvm
+
+# Core functionality
+main.go @tuannvm
+commands.go @tuannvm
+session.go @tuannvm
+provider.go @tuannvm
