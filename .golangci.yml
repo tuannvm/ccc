@@ -11,7 +11,6 @@ linters:
     - staticcheck  # Pre-existing code issues
     - deadcode  # Pre-existing unused code
     - ineffassign  # Pre-existing code issues
-    - fieldalignment  # Pre-existing struct alignment
 
 linters-settings:
   govet:
