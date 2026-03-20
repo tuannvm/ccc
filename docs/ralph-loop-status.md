@@ -158,12 +158,13 @@ Telegram Group    → Tmux Session
 
 ### Step 1: Bot Creation
 - Create 3 BotFather bots with distinct usernames
-- Disable privacy mode for all 3
+- Privacy mode can stay **ENABLED** (with internal event bus)
 - Save tokens to config
 
 ### Step 2: Core Implementation
-- Router layer polling 3 bot tokens
-- Role handlers (planner, executor, reviewer)
+- **Internal event bus** (P0 - CRITICAL for bot-to-bot coordination)
+- Router layer polling 3 bot tokens + internal bus listener
+- Role handlers with HandleInternal methods
 - Thread-safe state management
 - Per-topic message queues
 
@@ -174,7 +175,7 @@ Telegram Group    → Tmux Session
 
 ### Step 4: Testing
 - @mention routing flows
-- Cross-bot handoffs
+- Internal bot-to-bot handoffs via event bus
 - State synchronization
 - Error scenarios
 
@@ -192,4 +193,6 @@ The design is complete for iteration 1. Three-bot architecture selected based on
 - ✅ Error scenarios: Strategies documented
 - ✅ Implementation complexity: Phased approach defined
 - ✅ Security concerns: Documented with warnings
+- ✅ **Bot-to-bot visibility**: Internal event bus architecture added (2026-03-20)
+- ✅ **Privacy mode**: Can stay enabled with internal bus (2026-03-20)
 - ✅ Better alternatives: Single-bot approach recommended as starting point
