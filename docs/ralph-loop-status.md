@@ -85,14 +85,31 @@
 
 ## Recommendation
 
-**Exit loop with DESIGN_COMPLETE and begin Phase 1 implementation.**
+**Three-Bot Architecture Selected**
 
-Justification:
-- Design addresses all critical concerns from review
-- Clear architectural decisions made
-- Implementation path is well-defined
-- Further design iterations have diminishing returns
-- Real-world testing will provide better feedback than more planning
+After UX analysis considering reply clarity and unqualified message routing, the three-bot approach is selected.
+
+### Why Three-Bot?
+
+1. **Clear Identity**: `@planner_bot` IS the planner, `@executor_bot` IS the executor
+2. **Visual Clarity**: Different usernames/avatars = no confusion
+3. **Explicit Routing**: @mentions prevent accidental triggering
+4. **Natural UX**: Mirrors how teams actually communicate
+
+### What Was Wrong with Single-Bot?
+
+1. **Reply Ambiguity**: All responses from same username - which "expert" is speaking?
+2. **Unqualified Messages**: No clear default routing - where does "fix the bug" go?
+3. **Hidden State**: One bot pretending to be 3 personas = confusing
+4. **User Friction**: Must remember `/commands` instead of natural @mentions
+
+### Implementation Path
+
+1. Create 3 BotFather bots
+2. Disable privacy mode (private groups only)
+3. Router with 3-token polling
+4. Tmux 3-pane layout
+5. Thread-safe state management
 
 ## Files Created This Iteration
 
@@ -137,9 +154,38 @@ Telegram Group    → Tmux Session
 - Managing topic window lifecycle
 - Pane switching and zooming
 
+## Implementation Roadmap
+
+### Step 1: Bot Creation
+- Create 3 BotFather bots with distinct usernames
+- Disable privacy mode for all 3
+- Save tokens to config
+
+### Step 2: Core Implementation
+- Router layer polling 3 bot tokens
+- Role handlers (planner, executor, reviewer)
+- Thread-safe state management
+- Per-topic message queues
+
+### Step 3: Tmux Integration
+- 3-pane window creation per topic
+- Message routing to correct pane
+- Topic lifecycle management
+
+### Step 4: Testing
+- @mention routing flows
+- Cross-bot handoffs
+- State synchronization
+- Error scenarios
+
+### Step 5: Production Readiness
+- Monitoring and observability
+- Error handling and escalation
+- Documentation
+
 ## Completion Assessment
 
-The design is complete for iteration 1. Key questions answered:
+The design is complete for iteration 1. Three-bot architecture selected based on UX analysis.
 - ✅ Architecture soundness: Validated with fixes applied
 - ✅ State management: Thread-safe pattern defined
 - ✅ @mention routing: Clarified as requiring 3 tokens

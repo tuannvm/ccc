@@ -6,6 +6,30 @@ A system of 3 specialized AI bots (planner, executor, reviewer) collaborating in
 
 ## CRITICAL ARCHITECTURAL DECISION
 
+**Three-Bot Architecture Selected**
+
+After UX analysis, the three-bot approach (`@planner_bot`, `@executor_bot`, `@reviewer_bot`) is selected over single-bot with commands.
+
+### Why Not Single-Bot?
+
+The single-bot approach (`/planner`, `/executor`, `/reviewer`) was evaluated and rejected due to:
+
+1. **Reply Ambiguity**: All responses come from `@your_bot` - user can't tell if planner, executor, or reviewer is speaking
+2. **Unqualified Messages**: No clear routing for "fix this bug" - which role handles it?
+3. **Hidden State**: One bot pretending to be 3 personas creates confusion
+4. **User Friction**: Commands are less natural than @mentions
+5. **Failed Core Promise**: The value proposition was "3 specialized bots collaborating" - single bot doesn't deliver that
+
+### Why Three-Bot Works
+
+1. **Clear Identity**: Each bot IS its role - `@planner_bot` = planner, etc.
+2. **Visual Clarity**: Different usernames/avatars make roles obvious
+3. **Explicit Routing**: @mentions only - no accidental triggering
+4. **Natural UX**: Mirrors team communication - "@Jane review this"
+5. **Delivers Promise**: Actual 3 specialized bots, not 1 bot with routing
+
+### Telegram Bot Constraint
+
 **You CANNOT use a single bot token for multiple @mention identities.**
 
 Each bot username (@planner_bot, @executor_bot, @reviewer_bot) requires:
@@ -662,29 +686,22 @@ func (r *Router) Route(msg TelegramMessage) {
 - Track `message_id` + `bot_username` in state
 - Cross-bot updates: send new message instead of edit
 
-## Alternative: Single Bot with Role Prefix (Simpler Alternative)
+## Alternative: Single Bot with Role Commands (DEPRECATED)
 
-If creating 3 bots is too complex or privacy mode is a concern, use a single bot with role-based commands:
+**Decision:** After UX analysis, the single-bot approach has been **deprecated** in favor of three-bot.
 
-```
-/planner build a REST API
-/executor implement the plan
-/reviewer review the changes
-```
+**Reasoning:**
+1. **Reply Clarity**: Single bot creates ambiguity - all responses come from same username/avatar
+2. **Unqualified Messages**: No clear routing for messages without commands
+3. **Hidden State**: Single bot pretending to be 3 personas = confusing UX
+4. **User Expectation**: "Talk to the expert" not "Talk to a router that pretends to be 3 experts"
 
-**Pros:**
-- Single bot token (simpler setup)
-- Privacy mode can stay enabled
-- Lower security surface
-- Easier to deploy and maintain
-
-**Cons:**
-- Loses explicit @mention routing UX
-- All commands must use `/role` prefix
-- Less natural conversation flow
-- User must remember command prefixes
-
-**Recommendation:** Start with single-bot approach to validate the concept, then migrate to 3-bot architecture if the UX is critical.
+**Three-bot advantages:**
+- ✅ Clear identity: Each bot IS its role
+- ✅ Visual clarity: Different usernames/avatars
+- ✅ No routing confusion: @mentions are explicit
+- ✅ Unqualified messages go nowhere (must @mention to trigger)
+- ✅ Natural conversation flow
 
 ### Hybrid Approach (Best of Both)
 
@@ -700,46 +717,102 @@ This allows gradual migration and supports users who prefer different interactio
 
 ## Final Recommendation
 
-**Start with Single Bot (Alternative), then scale to 3-Bot if UX demands it:**
+**Three-Bot Architecture (Primary Approach)**
 
-### Phase 1: Single Bot with Role Commands (Recommended Starting Point)
+After UX analysis considering reply clarity and unqualified message routing, the three-bot approach is selected as the primary implementation path.
 
-1. Create 1 bot account via BotFather
-2. Implement role-based commands: `/planner`, `/executor`, `/reviewer`
-3. Add conversation state management
-4. Test the multi-role collaboration concept
-5. Privacy mode can stay enabled (more secure)
+### Why Three-Bot?
 
-### Phase 2: Scale to 3-Bot Architecture (If UX is critical)
+1. **Clear Identity**: Each bot has its own username, avatar, and persona
+   - `@planner_bot` = The Planner
+   - `@executor_bot` = The Executor
+   - `@reviewer_bot` = The Reviewer
 
-1. Create 3 bot accounts via BotFather
-2. Disable privacy mode for all 3 (use only in private groups)
-3. Implement router layer polling 3 bot tokens
-4. Add per-topic processor queues for concurrency
-5. Use `UpdateState()` pattern for thread-safe state updates
+2. **Visual Clarity**: Users always know who they're talking to
+   - No ambiguity about which role is responding
+   - Clear conversation flow visible in Telegram
 
-**Decision Criteria:**
-- Go with 3-bot if: Natural @mention conversation flow is essential, using private trusted groups
-- Stay with 1-bot if: Simplicity and security are higher priority, command-based UX is acceptable
+3. **Explicit Routing**: @mentions prevent routing confusion
+   - Unqualified messages ignored (no accidental triggering)
+   - Users must intentionally @mention to engage a bot
+   - Cross-bot handoffs are explicit and visible
+
+4. **Natural Conversation**: Mirrors how teams communicate
+   - "@Jane review this" → "@Reviewer check the changes"
+   - No special syntax or commands to remember
+
+### Implementation Roadmap
+
+#### Step 1: Bot Setup
+1. Create 3 bots via BotFather:
+   - `your_project_planner` → token saved as `bot_tokens.planner`
+   - `your_project_executor` → token saved as `bot_tokens.executor`
+   - `your_project_reviewer` → token saved as `bot_tokens.reviewer`
+
+2. **CRITICAL**: Disable privacy mode for all 3 bots:
+   ```
+   /setprivacy → your_project_planner → "Disable"
+   /setprivacy → your_project_executor → "Disable"
+   /setprivacy → your_project_reviewer → "Disable"
+   ```
+
+3. Add all 3 bots to your private group as admins
+
+#### Step 2: Router Implementation
+1. Router polls all 3 bot tokens
+2. Each message tagged with source role
+3. Route to appropriate handler based on @mention detection
+4. Shared conversation state across all 3 bots
+
+#### Step 3: Tmux Integration
+1. Each Telegram topic = 1 tmux window with 3 panes
+2. Planner → Pane 0 (left), Executor → Pane 1 (middle), Reviewer → Pane 2 (right)
+3. Dual visibility: Telegram (conversation) + Tmux (detail)
+
+#### Step 4: State Management
+1. Thread-safe `UpdateState()` pattern
+2. Per-topic message processors
+3. Conversation state tracking across bot handoffs
+
+#### Step 5: Error Handling
+1. Max iteration counter (prevent executor-reviewer loops)
+2. Human escalation on bot disagreement
+3. Message ID tracking (prevent duplicate processing)
+
+### Security Considerations
+
+⚠️ **Private Groups Only**: Privacy mode disabled means bots read ALL group messages.
+- Use dedicated private groups for development
+- Never add these bots to public channels
+- Consider group membership carefully
+
+✅ **Mitigation**: All 3 bots require explicit @mention to respond, reducing accidental trigger surface.
 
 ## Next Steps
 
-1. **Phase 1 (Immediate):**
-   - Create 1 BotFather bot
-   - Implement `/planner`, `/executor`, `/reviewer` commands
-   - Add basic state management
-   - Test single-bot collaboration flow
+1. **Bot Creation:**
+   - Create 3 BotFather bots
+   - Save tokens to config
+   - Disable privacy mode
 
-2. **Phase 2 (If UX validates):**
-   - Create additional BotFather bots for separate identities
-   - Disable privacy mode (private groups only!)
-   - Implement router with 3-token polling
-   - Add per-topic message queues
-   - Implement thread-safe `UpdateState()` pattern
-   - Test full @mention routing flow
+2. **Implementation:**
+   - Router layer with 3-token polling
+   - Role handlers (planner, executor, reviewer)
+   - Thread-safe state management
+   - Per-topic message queues
 
-3. **Phase 3 (Production):**
-   - Add error handling and escalation
-   - Implement retry logic for failed handoffs
-   - Add monitoring and observability
-   - Document operational procedures
+3. **Tmux Integration:**
+   - 3-pane window creation
+   - Message routing to panes
+   - Topic lifecycle management
+
+4. **Testing:**
+   - Test @mention routing flow
+   - Test cross-bot handoffs
+   - Test state synchronization
+   - Test error scenarios
+
+5. **Production:**
+   - Monitoring and observability
+   - Error handling and escalation
+   - Documentation and runbooks

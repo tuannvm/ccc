@@ -156,13 +156,27 @@ Reviewer: Review complete. Found 2 issues:
 @executor_bot Please fix the issues.
 ```
 
-## Recommendation
+## Decision
 
-**Start with Single Bot.** Reasons:
-1. Faster to implement and validate the concept
-2. No security compromises (privacy mode stays on)
-3. Works in any group type
-4. Lower operational complexity
+**Three-Bot Architecture Selected**
+
+After UX analysis, the three-bot approach is selected as the primary implementation.
+
+### Key Decision Factors
+
+1. **Reply Clarity**: Each bot has distinct identity - no confusion about who's responding
+2. **Unqualified Messages**: @mentions only - no accidental triggering, no routing ambiguity
+3. **User Expectations**: Matches how teams communicate - explicit addressing
+4. **Visual Clarity**: Different usernames/avatars make roles obvious
+
+### Trade-offs Accepted
+
+| Concern | Mitigation |
+|---------|------------|
+| Privacy mode disabled | Private groups only; explicit @mention required |
+| 3 tokens to manage | Single binary manages all; config simplifies setup |
+| More complex setup | One-time cost; clearer UX justifies effort |
+| Username collision | Register names early in BotFather |
 
 **Migrate to Three Bots if:**
 - User testing shows @mention UX is critical
