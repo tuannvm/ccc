@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tuannvm/ccc/session"
 )
 
 // telegramActiveFlag returns the path of the flag file that indicates
@@ -98,6 +100,7 @@ func saveToolState(sessionName string, state *ToolState) {
 func clearToolState(sessionName string) {
 	os.Remove(toolStatePath(sessionName))
 }
+
 
 // addTextToToolState adds an assistant text block to the tool state, ordered by timestamp.
 func addTextToToolState(sessName string, text string, ts int64) {
@@ -243,7 +246,7 @@ func handleStopHook() error {
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	hookLog("stop-hook: session=%s claude_session_id=%s transcript=%s", sessName, hookData.SessionID, hookData.TranscriptPath)
 
@@ -254,7 +257,7 @@ func handleStopHook() error {
 
 	// Deliver unsent texts as separate messages (these come after all tools)
 	hookLog("stop-hook: delivering unsent texts")
-	sent := deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, false)
+	sent := deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, false, hookData.SessionID)
 	hookLog("stop-hook: sent=%d", sent)
 	clearToolState(sessName)
 
@@ -272,7 +275,8 @@ func handleStopHook() error {
 // If insertIntoToolMsg is true and tool state has a message, texts are inserted
 // into the tool blockquote (for text before/between tools in PreToolUse).
 // If false, texts are sent as separate messages (for text after tools in Stop hook).
-func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool) int {
+// claudeSessionID is used to look up the role for team sessions.
+func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, claudeSessionID string) int {
 	hookLog("deliver-unsent: sess=%s topic=%d transcript=%s", sessName, topicID, transcriptPath)
 	blocks := extractRecentAssistantTexts(transcriptPath, 80)
 	lastPreview := ""
@@ -280,6 +284,72 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 		lastPreview = truncate(blocks[len(blocks)-1].text, 60)
 	}
 	hookLog("deliver-unsent: found %d blocks, last=%s", len(blocks), lastPreview)
+
+	// Determine message prefix for team sessions
+	// For team sessions, look up the role by matching Claude session ID to panes
+	rolePrefix := ""
+	hookLog("deliver-unsent: checking team session: topicID=%d, claudeSessionID=%s", topicID, claudeSessionID)
+	if config.IsTeamSession(topicID) {
+		hookLog("deliver-unsent: is team session")
+		// Try to find the role by matching Claude session ID to panes
+		if sessInfo, exists := config.GetTeamSession(topicID); exists && sessInfo != nil && sessInfo.Panes != nil {
+			hookLog("deliver-unsent: got sessInfo with %d panes", len(sessInfo.Panes))
+			for role, pane := range sessInfo.Panes {
+				if pane != nil {
+					hookLog("deliver-unsent: pane role=%s, claudeSessionID=%s", role, pane.ClaudeSessionID)
+					if pane.ClaudeSessionID == claudeSessionID {
+						// Found the matching pane, get role prefix
+						rolePrefixes := map[session.PaneRole]string{
+							session.RolePlanner:  "[Planner] ",
+							session.RoleExecutor: "[Executor] ",
+							session.RoleReviewer: "[Reviewer] ",
+						}
+						if prefix, ok := rolePrefixes[role]; ok {
+							rolePrefix = prefix
+							hookLog("deliver-unsent: found role=%s for claude_session_id=%s", role, claudeSessionID)
+						}
+						break
+					}
+				}
+			}
+		}
+		// Fallback 1: Try to infer role from transcript path (same logic as persistClaudeSessionID)
+		if rolePrefix == "" && transcriptPath != "" {
+			hookLog("deliver-unsent: role not found via panes, trying transcript path inference")
+			role := inferRoleFromTranscriptPath(transcriptPath)
+			if role != "" {
+				rolePrefixes := map[session.PaneRole]string{
+					session.RolePlanner:  "[Planner] ",
+					session.RoleExecutor: "[Executor] ",
+					session.RoleReviewer: "[Reviewer] ",
+				}
+				if prefix, ok := rolePrefixes[role]; ok {
+					rolePrefix = prefix
+					hookLog("deliver-unsent: inferred role=%s from transcript path", role)
+				}
+			}
+		}
+		// Fallback 2: check CCC_ROLE environment variable (may not work due to process isolation)
+		if rolePrefix == "" {
+			hookLog("deliver-unsent: role not found via transcript, trying CCC_ROLE env var")
+			if cccRole := os.Getenv("CCC_ROLE"); cccRole != "" {
+				rolePrefixes := map[string]string{
+					"planner":  "[Planner] ",
+					"executor": "[Executor] ",
+					"reviewer": "[Reviewer] ",
+				}
+				if prefix, ok := rolePrefixes[cccRole]; ok {
+					rolePrefix = prefix
+					hookLog("deliver-unsent: using CCC_ROLE env var=%s", cccRole)
+				}
+			} else {
+				hookLog("deliver-unsent: CCC_ROLE env var is empty")
+			}
+		}
+	} else {
+		hookLog("deliver-unsent: not a team session")
+	}
+	hookLog("deliver-unsent: final rolePrefix=%s", rolePrefix)
 
 	sent := 0
 	for _, block := range blocks {
@@ -302,8 +372,9 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 				TerminalDelivered: true, TelegramDelivered: true, TelegramMsgID: state.MsgID,
 			})
 		} else {
-			// Send as separate message
-			msg := fmt.Sprintf("*%s:*\n%s", sessName, block.text)
+			// Send as separate message with role prefix for team sessions
+			// Format: *topic-name:* [Role] message
+			msg := fmt.Sprintf("*%s:* %s%s", sessName, rolePrefix, block.text)
 			tgMsgID, err := sendMessageGetID(config, config.GroupID, topicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
@@ -485,7 +556,8 @@ func handleStopRetry(sessName string, topicID int64, transcriptPath string) erro
 	}
 	for i := 0; i < 3; i++ {
 		time.Sleep(2 * time.Second)
-		n := deliverUnsentTexts(config, sessName, topicID, transcriptPath, false)
+		// Note: retry doesn't have access to claudeSessionID, pass empty string
+		n := deliverUnsentTexts(config, sessName, topicID, transcriptPath, false, "")
 		hookLog("stop-retry: %d/3 sent=%d session=%s", i+1, n, sessName)
 	}
 	return nil
@@ -515,13 +587,13 @@ func handlePermissionHook() error {
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	hookLog("pre-tool: session=%s tool=%s", sessName, hookData.ToolName)
 
 	// Deliver any unsent assistant text before showing tool calls
 	if topicID != 0 && hookData.TranscriptPath != "" {
-		deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, true)
+		deliverUnsentTexts(config, sessName, topicID, hookData.TranscriptPath, true, hookData.SessionID)
 	}
 
 	// Update tool call display
@@ -717,7 +789,7 @@ func handleUserPromptHook() error {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	// Collapse tool message from previous turn
 	collapseToolMessage(config, sessName, topicID)
@@ -792,7 +864,7 @@ func handleNotificationHook() error {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	// idle_prompt means Claude is waiting for user input — clear typing indicator
 	if hookData.NotificationType == "idle_prompt" {

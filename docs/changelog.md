@@ -32,6 +32,11 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 - **Hooks installation documentation**: The `install-hooks` command mentioned in docs but not implemented has now been added (PR #3)
 - **`/new` command requirements**: Documented that `/new` only works in supergroups, not private chats
 - **GroupID requirement**: Clarified that `ccc setgroup` must be run before `/new` will work
+- **Team session role display bug**: Fixed incorrect role names in Telegram messages (e.g., planner showing [Executor])
+  - Root cause: Hooks couldn't determine which pane a session belonged to (transcript path inference failed, env vars unavailable in hook context)
+  - Solution: Query tmux for active pane name (Planner/Executor/Reviewer) or index (1/2/3) to determine role
+  - Panes are now named during creation for better UX and more reliable role detection
+  - Telegram messages now show correct role prefix: `[Planner]`, `[Executor]`, `[Reviewer]`
 
 ## [1.2.1] - 2026-03-03
 

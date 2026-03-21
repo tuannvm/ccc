@@ -21,11 +21,12 @@ func getCurrentTmuxWindowName() string {
 // findSessionByWindowName finds a session by its tmux window name
 // Handles tmux name sanitization where dots are replaced with "__"
 // Prefers exact matches over sanitized matches to avoid collision ambiguity
+// Checks both Sessions and TeamSessions
 func findSessionByWindowName(config *Config, windowName string) (string, int64) {
 	if windowName == "" {
 		return "", 0
 	}
-	// First pass: look for exact match (highest priority)
+	// First pass: look for exact match in regular sessions (highest priority)
 	for name, info := range config.Sessions {
 		if name == "" || info == nil {
 			continue
@@ -34,7 +35,18 @@ func findSessionByWindowName(config *Config, windowName string) (string, int64) 
 			return name, info.TopicID
 		}
 	}
-	// Second pass: look for sanitized match (lower priority)
+	// First pass: look for exact match in team sessions
+	if config.TeamSessions != nil {
+		for tid, info := range config.TeamSessions {
+			if info == nil {
+				continue
+			}
+			if info.SessionName == windowName {
+				return info.SessionName, tid
+			}
+		}
+	}
+	// Second pass: look for sanitized match in regular sessions (lower priority)
 	// Window names match session names, but tmux sanitizes dots to "__"
 	// This handles sessions like "my.project" whose tmux window is "my__project"
 	var sanitizedMatch string
@@ -56,14 +68,41 @@ func findSessionByWindowName(config *Config, windowName string) (string, int64) 
 			sanitizedTopicID = info.TopicID
 		}
 	}
+	// Second pass: look for sanitized match in team sessions
+	if config.TeamSessions != nil {
+		for tid, info := range config.TeamSessions {
+			if info == nil {
+				continue
+			}
+			if tmuxSafeName(info.SessionName) == windowName {
+				if sanitizedMatch != "" {
+					hookLog("WARNING: Ambiguous window name '%s' matches multiple sessions: %s, %s",
+						windowName, sanitizedMatch, info.SessionName)
+					return "", 0
+				}
+				sanitizedMatch = info.SessionName
+				sanitizedTopicID = tid
+			}
+		}
+	}
 	return sanitizedMatch, sanitizedTopicID
 }
 
 // getSessionByTopic finds a session name by its Telegram topic ID
+// Checks both Sessions and TeamSessions
 func getSessionByTopic(config *Config, topicID int64) string {
+	// First check regular sessions
 	for name, info := range config.Sessions {
 		if info != nil && info.TopicID == topicID {
 			return name
+		}
+	}
+	// Then check team sessions
+	if config.TeamSessions != nil {
+		for tid, info := range config.TeamSessions {
+			if info != nil && tid == topicID {
+				return info.SessionName
+			}
 		}
 	}
 	return ""
@@ -71,6 +110,7 @@ func getSessionByTopic(config *Config, topicID int64) string {
 
 // findSessionByClaudeID matches a claude session ID to a configured session
 // If multiple sessions have the same claude_session_id, prefers the one matching current window
+// Checks both Sessions and TeamSessions
 func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int64) {
 	if claudeSessionID == "" {
 		return "", 0
@@ -79,9 +119,24 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 	// This handles the case where multiple sessions accidentally have the same ID
 	currentWindowName := getCurrentTmuxWindowName()
 	if currentWindowName != "" {
-		// Try direct match first
+		// Try direct match first (regular sessions)
 		if info, exists := config.Sessions[currentWindowName]; exists && info != nil && info.ClaudeSessionID == claudeSessionID {
 			return currentWindowName, info.TopicID
+		}
+		// Try direct match in team sessions (check Panes map)
+		if config.TeamSessions != nil {
+			for tid, info := range config.TeamSessions {
+				if info != nil && info.SessionName == currentWindowName {
+					// For team sessions, check each pane's ClaudeSessionID
+					if info.Panes != nil {
+						for _, pane := range info.Panes {
+							if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+								return info.SessionName, tid
+							}
+						}
+					}
+				}
+			}
 		}
 		// Try sanitized match (handles session names with dots like "foo.bar")
 		// Check for ambiguous matches (multiple sessions sanitizing to same window name)
@@ -102,11 +157,36 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 				sanitizedTopicID = info.TopicID
 			}
 		}
+		// Also check team sessions for sanitized match (check Panes map)
+		if config.TeamSessions != nil {
+			for tid, info := range config.TeamSessions {
+				if info == nil {
+					continue
+				}
+				// For team sessions, check each pane's ClaudeSessionID
+				if info.Panes != nil {
+					for _, pane := range info.Panes {
+						if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+							if tmuxSafeName(info.SessionName) == currentWindowName {
+								if sanitizedMatch != "" {
+									// Ambiguous! Multiple sessions with same ID sanitize to the same window name
+									hookLog("WARNING: Ambiguous claude_session_id '%s' and window '%s' matches multiple sessions: %s, %s",
+										claudeSessionID, currentWindowName, sanitizedMatch, info.SessionName)
+									return "", 0
+								}
+								sanitizedMatch = info.SessionName
+								sanitizedTopicID = tid
+							}
+						}
+					}
+				}
+			}
+		}
 		if sanitizedMatch != "" {
 			return sanitizedMatch, sanitizedTopicID
 		}
 	}
-	// Fall back to first match (should be rare after persistClaudeSessionID deduplication)
+	// Fall back to first match in regular sessions (should be rare after persistClaudeSessionID deduplication)
 	for name, info := range config.Sessions {
 		if name == "" || info == nil {
 			continue
@@ -115,17 +195,46 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 			return name, info.TopicID
 		}
 	}
+	// Fall back to first match in team sessions (check Panes map)
+	if config.TeamSessions != nil {
+		for tid, info := range config.TeamSessions {
+			if info == nil {
+				continue
+			}
+			// For team sessions, check each pane's ClaudeSessionID
+			if info.Panes != nil {
+				for _, pane := range info.Panes {
+					if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+						return info.SessionName, tid
+					}
+				}
+			}
+		}
+	}
 	return "", 0
 }
 
 // findSessionByCwd matches a hook's cwd to a configured session (fallback)
+// Checks both Sessions and TeamSessions
 func findSessionByCwd(config *Config, cwd string) (string, int64) {
+	// First check regular sessions
 	for name, info := range config.Sessions {
 		if name == "" || info == nil {
 			continue
 		}
 		if cwd == info.Path || strings.HasPrefix(cwd, info.Path+"/") || strings.HasSuffix(cwd, "/"+name) {
 			return name, info.TopicID
+		}
+	}
+	// Then check team sessions
+	if config.TeamSessions != nil {
+		for tid, info := range config.TeamSessions {
+			if info == nil {
+				continue
+			}
+			if cwd == info.Path || strings.HasPrefix(cwd, info.Path+"/") {
+				return info.SessionName, tid
+			}
 		}
 	}
 	return "", 0

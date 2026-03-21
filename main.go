@@ -298,6 +298,25 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "team":
+		// Team session commands: ccc team new|list|attach|start|stop|delete
+		if len(os.Args) < 3 {
+			fmt.Fprintf(os.Stderr, "Usage: ccc team <command> [args...]\n")
+			fmt.Fprintf(os.Stderr, "\nCommands:\n")
+			fmt.Fprintf(os.Stderr, "  new <name> --topic <id>     Create a new team session (3 panes)\n")
+			fmt.Fprintf(os.Stderr, "  list                        List all team sessions\n")
+			fmt.Fprintf(os.Stderr, "  attach <name> [--role <r>]  Attach to a team session\n")
+			fmt.Fprintf(os.Stderr, "  start <name>                Start Claude in a team session\n")
+			fmt.Fprintf(os.Stderr, "  stop <name>                 Stop a team session\n")
+			fmt.Fprintf(os.Stderr, "  delete <name>               Delete a team session\n")
+			os.Exit(1)
+		}
+		teamCmd := NewTeamCommands()
+		if err := teamCmd.Run(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "start":
 		// start <name> <work-dir> <prompt>
 		// Creates a Telegram topic, tmux session with Claude, and sends the prompt (detached)
