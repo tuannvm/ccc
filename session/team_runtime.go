@@ -89,15 +89,22 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 
 		// Build the ccc run command with CCC_ROLE environment variable
 		// We set CCC_ROLE to indicate which role this pane should use
-		// Use shell quoting for paths with spaces/special characters
-		quotedWorkDir := shellQuote(workDir)
 		// Export CCC_ROLE separately to ensure it's available to ccc run
-		runCmd := fmt.Sprintf("export CCC_ROLE=%s; cd %s && ccc run", role, quotedWorkDir)
+		// Use bash explicitly to avoid shell compatibility issues
+		// NOTE: We use double quotes for the bash -c string to allow single quotes in workDir
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run\"", role, shellQuote(workDir))
+
+		// Clear any existing content in the pane
+		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()
+		time.Sleep(50 * time.Millisecond)
 
 		// Send command to the pane
 		if err := exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, runCmd, "C-m").Run(); err != nil {
 			return fmt.Errorf("failed to start Claude in %s pane: %w", role, err)
 		}
+
+		// Wait a moment for the command to start
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	return nil
@@ -134,12 +141,11 @@ func (r *TeamRuntime) initTmuxPath() error {
 
 // getSessionName extracts the session name from the Session interface
 func (r *TeamRuntime) getSessionName(sess Session) string {
-	// Use path basename as session name
-	path := sess.GetPath()
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-	return path
+	// Use GetName() which handles SessionName field for team sessions
+	name := sess.GetName()
+	// Sanitize for tmux: replace dots with underscores
+	// This matches the behavior of tmuxSafeName() for consistency
+	return strings.ReplaceAll(name, ".", "_")
 }
 
 // windowExists checks if a tmux window exists (with 5s timeout)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/tuannvm/ccc/session"
 )
@@ -12,6 +13,7 @@ import (
 type SessionInfo struct {
 	TopicID         int64  `json:"topic_id"`
 	Path            string `json:"path"`
+	SessionName     string `json:"session_name,omitempty"`    // User-provided session name (for team sessions)
 	ClaudeSessionID string `json:"claude_session_id,omitempty"`
 	WindowID        string `json:"window_id,omitempty"`     // tmux window ID (@N)
 	ProviderName    string `json:"provider_name,omitempty"` // Provider to use for this session
@@ -41,8 +43,14 @@ var _ session.Session = (*SessionInfo)(nil)
 
 // GetName returns the session name (derived from path for now)
 func (s *SessionInfo) GetName() string {
-	// Session name is typically the basename of the path
-	// This is a simplified implementation
+	// For team sessions, use the SessionName field
+	if s.SessionName != "" {
+		return s.SessionName
+	}
+	// Fallback to path basename for backward compatibility
+	if idx := strings.LastIndex(s.Path, "/"); idx >= 0 {
+		return s.Path[idx+1:]
+	}
 	return s.Path
 }
 

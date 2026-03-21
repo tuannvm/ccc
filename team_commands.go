@@ -49,7 +49,7 @@ func (tc *TeamCommands) printUsage() error {
 	fmt.Println("ccc team - Multi-pane team session management")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  ccc team new <name> --topic <topic-id>     Create a new team session")
+	fmt.Println("  ccc team new <name>                         Create a new team session")
 	fmt.Println("  ccc team list                               List all active team sessions")
 	fmt.Println("  ccc team attach <name> [--role <role>]      Attach to a team session")
 	fmt.Println("  ccc team start <name>                       Start Claude in a team session")
@@ -62,7 +62,7 @@ func (tc *TeamCommands) printUsage() error {
 	fmt.Println("  reviewer  - Code review and feedback")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  ccc team new feature-api --topic 12345")
+	fmt.Println("  ccc team new feature-api")
 	fmt.Println("  ccc team attach feature-api --role planner")
 	fmt.Println("  ccc team list")
 	return nil
@@ -71,26 +71,10 @@ func (tc *TeamCommands) printUsage() error {
 // NewTeam creates a new team session with 3 panes
 func (tc *TeamCommands) NewTeam(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: ccc team new <name> --topic <topic-id>")
+		return fmt.Errorf("usage: ccc team new <name>")
 	}
 
 	name := args[0]
-	var topicID int64
-
-	// Parse --topic flag
-	for i := 1; i < len(args); i++ {
-		if args[i] == "--topic" && i+1 < len(args) {
-			_, err := fmt.Sscanf(args[i+1], "%d", &topicID)
-			if err != nil {
-				return fmt.Errorf("invalid topic ID: %w", err)
-			}
-			break
-		}
-	}
-
-	if topicID == 0 {
-		return fmt.Errorf("topic ID is required (use --topic <id>)")
-	}
 
 	// Load config
 	config, err := loadConfig()
@@ -98,9 +82,14 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Check if team session already exists for this topic
-	if config.IsTeamSession(topicID) {
-		return fmt.Errorf("team session already exists for topic %d", topicID)
+	// Check if team session with this name already exists
+	for topicID, sessInfo := range config.TeamSessions {
+		if sessInfo != nil {
+			sessName := getSessionNameFromInfo(sessInfo)
+			if sessName == name {
+				return fmt.Errorf("team session '%s' already exists (topic: %d)", name, topicID)
+			}
+		}
 	}
 
 	// Get working directory
@@ -115,10 +104,12 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 		providerName = "anthropic"
 	}
 
-	// Create SessionInfo for team session
+	// Create SessionInfo for team session (without topic ID yet)
+	// Path is the actual working directory for file operations
+	// SessionName is the user-provided name for identification
 	sessInfo := &SessionInfo{
-		TopicID:      topicID,
-		Path:         cwd,
+		Path:         cwd,         // Actual working directory
+		SessionName:  name,        // User-provided name
 		ProviderName: providerName,
 		Type:         "team",              // Using string directly, will convert to SessionKind
 		LayoutName:   "team-3pane",
@@ -130,29 +121,40 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	sessInfo.Panes[session.RoleExecutor] = &PaneInfo{Role: session.RoleExecutor}
 	sessInfo.Panes[session.RoleReviewer] = &PaneInfo{Role: session.RoleReviewer}
 
-	// Save to config
-	config.SetTeamSession(topicID, sessInfo)
-	if err := saveConfig(config); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	// Ensure hooks are installed
-	if err := ensureHooksForSession(config, name, sessInfo); err != nil {
-		listenLog("[team new] Failed to install hooks: %v", err)
-	}
-
 	// Create the 3-pane tmux layout using TeamRuntime
 	runtime := session.GetRuntime(session.SessionKindTeam)
 	if runtime == nil {
 		return fmt.Errorf("team runtime not registered")
 	}
 
-	// Ensure layout creates the 3-pane window
+	// Ensure layout creates the 3-pane window (local setup)
 	if err := runtime.EnsureLayout(sessInfo, cwd); err != nil {
-		// Rollback: remove from config
-		config.DeleteTeamSession(topicID)
-		saveConfig(config)
 		return fmt.Errorf("failed to create team session layout: %w", err)
+	}
+
+	// Local setup succeeded - now create Telegram topic
+	topicID, err := createForumTopic(config, name, providerName, "")
+	if err != nil {
+		// Cleanup: kill the tmux window we just created
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+name).Run()
+		return fmt.Errorf("failed to create topic: %w", err)
+	}
+
+	// Update sessInfo with the topic ID
+	sessInfo.TopicID = topicID
+
+	// Save to config
+	config.SetTeamSession(topicID, sessInfo)
+	if err := saveConfig(config); err != nil {
+		// Cleanup: delete topic and kill window
+		deleteForumTopic(config, topicID)
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+name).Run()
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Ensure hooks are installed
+	if err := ensureHooksForSession(config, name, sessInfo); err != nil {
+		listenLog("[team new] Failed to install hooks: %v", err)
 	}
 
 	// Start Claude in each pane

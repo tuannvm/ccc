@@ -108,7 +108,11 @@ func switchToTeamWindow(sessionName string, role session.PaneRole) error {
 
 // getSessionNameFromInfo extracts the session name from SessionInfo
 func getSessionNameFromInfo(info *SessionInfo) string {
-	// For team sessions, use the path basename as the session name
+	// For team sessions, use the SessionName field if available
+	if info.SessionName != "" {
+		return info.SessionName
+	}
+	// Fallback to path basename for backward compatibility
 	path := info.Path
 	if idx := strings.LastIndex(path, "/"); idx >= 0 {
 		return path[idx+1:]
