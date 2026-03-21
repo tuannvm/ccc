@@ -621,3 +621,169 @@ Only one `ccc listen` instance runs at a time, enforced via lock file:
 - Telegram messages limited to 4000 characters (split automatically)
 - File transfer uses relay for large files (>50MB)
 - Voice messages transcribed before sending to Claude
+
+## Team Sessions (Multi-Pane Architecture)
+
+### Overview
+
+Team sessions provide a 3-pane tmux layout where specialized AI agents collaborate:
+- **Planner** (left pane) - Plans and breaks down tasks
+- **Executor** (middle pane) - Implements code changes
+- **Reviewer** (right pane) - Reviews and validates changes
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TEAM SESSION LAYOUT                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────┬─────────────┬─────────────┐                    │
+│  │   Planner   │  Executor   │  Reviewer   │                    │
+│  │  (Pane 1)   │  (Pane 2)   │  (Pane 3)   │                    │
+│  │             │             │             │                    │
+│  │ CCC_ROLE=   │ CCC_ROLE=   │ CCC_ROLE=   │                    │
+│  │ "planner"   │ "executor"  │ "reviewer"  │                    │
+│  └─────────────┴─────────────┴─────────────┘                    │
+│                                                                  │
+│  Each pane runs its own Claude process with unique:            │
+│  - Claude session ID                                             │
+│  - Transcript file (session-{role}.jsonl)                       │
+│  - Environment context (CCC_ROLE)                                │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Decisions
+
+1. **Single Telegram Topic**: All three panes share one Telegram topic
+   - Messages are prefixed with role: `[Planner]`, `[Executor]`, `[Reviewer]`
+   - User routes commands using `/planner`, `/executor`, `/reviewer`
+
+2. **Role Inference**: Hooks identify which pane sent a message by:
+   - Extracting role from transcript path (e.g., `session-planner.jsonl`)
+   - Looking up pane by matching Claude session ID
+   - Fallback to CCC_ROLE environment variable
+
+3. **Dedicated Tmux Session**: Team sessions use `ccc-team` tmux session
+   - Isolated from single-pane sessions (in `ccc` session)
+   - Each team session is a window: `ccc-team:sessionname`
+
+4. **Config Storage**: Team sessions stored separately from regular sessions
+   - Regular sessions: `config.Sessions[session_name]`
+   - Team sessions: `config.TeamSessions[topic_id]`
+
+### Session Creation Flow
+
+```
+User: /team demo-team
+       │
+       ▼
+1. Create project folder: ~/Projects/demo-team/
+       │
+       ▼
+2. Initialize SessionInfo with Type="team", LayoutName="team-3pane"
+       │
+       ▼
+3. Create Telegram topic for the team
+       │
+       ▼
+4. Create 3-pane tmux layout (Planner | Executor | Reviewer)
+       │
+       ▼
+5. Start Claude in all panes with CCC_ROLE environment variable
+       │
+       ▼
+6. Each pane gets unique:
+   - Claude session ID
+   - Transcript file (session-{role}.jsonl)
+   - Tmux pane ID (%1, %2, %3)
+```
+
+### Critical Bug Fix History
+
+**Bug #1: Pane ID Collision** (FIXED)
+- **Problem**: All panes got the same Claude session ID, breaking role identification
+- **Solution**: Use transcript path to infer role and store session ID per-pane
+- **Impact**: Role prefixes now display correctly in Telegram
+
+**Bug #2: Missing Nil Checks** (FIXED)
+- **Problem**: TeamSessions access could panic with old config files
+- **Solution**: Added defensive nil checks before all TeamSessions iterations
+- **Impact**: Robust handling of legacy configs
+
+### Configuration
+
+Team sessions in `config.json`:
+
+```json
+{
+  "team_sessions": {
+    "6123": {
+      "topic_id": 6123,
+      "path": "/home/user/Projects/demo-team",
+      "session_name": "demo-team",
+      "type": "team",
+      "layout_name": "team-3pane",
+      "panes": {
+        "planner": {
+          "claude_session_id": "uuid-1",
+          "pane_id": "%1",
+          "role": "planner"
+        },
+        "executor": {
+          "claude_session_id": "uuid-2",
+          "pane_id": "%2",
+          "role": "executor"
+        },
+        "reviewer": {
+          "claude_session_id": "uuid-3",
+          "pane_id": "%3",
+          "role": "reviewer"
+        }
+      }
+    }
+  }
+}
+```
+
+### Message Routing
+
+When a message arrives in a team session topic:
+
+1. **Detect team session**: `config.IsTeamSession(topicID)`
+2. **Get session info**: `config.GetTeamSession(topicID)`
+3. **Match pane**: Find pane by matching Claude session ID from hook
+4. **Extract role**: Get role from matching pane
+5. **Format message**: `*{session_name}*: [{Role}] {message}`
+6. **Send to Telegram**: With role prefix visible
+
+### File Organization
+
+Team session code is organized across multiple files:
+
+| File | Responsibility |
+|------|---------------|
+| `team_commands.go` | CLI commands (`/team`, `/team new`, etc.) |
+| `team_runtime.go` | Tmux layout creation, pane management |
+| `session/team_runtime.go` | Session runtime interface implementation |
+| `session_lookup.go` | Session lookup (checks both Sessions and TeamSessions) |
+| `session_persist.go` | Claude session ID persistence per-pane |
+| `hooks.go` | Hook delivery with role prefix formatting |
+
+### Tmux Commands
+
+```bash
+# Attach to specific pane
+ccc attach demo-team --role planner
+
+# Start Claude in all panes
+ccc team start demo-team
+
+# Stop all Claude processes (keeps layout)
+ccc team stop demo-team
+
+# Delete entire team session
+ccc team delete demo-team
+```
+
