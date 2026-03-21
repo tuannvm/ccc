@@ -46,16 +46,17 @@ func (r *TeamRuntime) EnsureLayout(sess Session, workDir string) error {
 }
 
 // GetRoleTarget returns the tmux target for a specific role
-// For team sessions: planner -> :.0, executor -> :.1, reviewer -> :.2
+// For team sessions: planner -> :.1, executor -> :.2, reviewer -> :.3
+// Note: tmux uses 1-based pane indexing
 func (r *TeamRuntime) GetRoleTarget(sess Session, role PaneRole) (string, error) {
 	sessionName := r.getSessionName(sess)
 	target := "ccc-team:" + sessionName
 
-	// Map role to pane index
+	// Map role to pane index (tmux uses 1-based indexing)
 	roleToIndex := map[PaneRole]int{
-		RolePlanner:  0,
-		RoleExecutor: 1,
-		RoleReviewer: 2,
+		RolePlanner:  1,
+		RoleExecutor: 2,
+		RoleReviewer: 3,
 	}
 
 	index, ok := roleToIndex[role]
@@ -198,8 +199,8 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	}
 
 	// Split to create 3 panes
-	// Pane 0 (left) - Planner - exists by default
-	// Split vertically to create Pane 1 (middle) - Executor
+	// Pane 1 (left) - Planner - exists by default after new-window
+	// Split horizontally to create Pane 2 (middle) - Executor
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel2()
 
@@ -209,13 +210,13 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 		return fmt.Errorf("failed to split for pane 1: %w", err)
 	}
 
-	// Select pane 1 and split to create Pane 2 (right) - Reviewer
+	// Select pane 2 (middle) and split to create Pane 3 (right) - Reviewer
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel3()
 
-	if err := exec.CommandContext(ctx3, r.tmuxPath, "select-pane", "-t", target+".1").Run(); err != nil {
+	if err := exec.CommandContext(ctx3, r.tmuxPath, "select-pane", "-t", target+".2").Run(); err != nil {
 		r.killWindow(target)
-		return fmt.Errorf("failed to select pane 1: %w", err)
+		return fmt.Errorf("failed to select pane 2: %w", err)
 	}
 
 	ctx4, cancel4 := context.WithTimeout(context.Background(), 10*time.Second)
@@ -223,7 +224,7 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 
 	if err := exec.CommandContext(ctx4, r.tmuxPath, "split-window", "-h", "-t", target).Run(); err != nil {
 		r.killWindow(target)
-		return fmt.Errorf("failed to split for pane 2: %w", err)
+		return fmt.Errorf("failed to split for pane 3: %w", err)
 	}
 
 	// Equalize pane sizes
