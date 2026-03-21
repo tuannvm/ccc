@@ -77,6 +77,9 @@ func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID
 
 // getTeamRoleTarget returns the tmux target for a specific role in a team session
 func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error) {
+	if sessionName == "" {
+		return "", fmt.Errorf("session name cannot be empty")
+	}
 	// Sanitize session name for tmux (dots become double underscores)
 	sanitizedName := tmuxSafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
@@ -98,12 +101,17 @@ func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error
 
 // switchToTeamWindow switches to a team session window and selects the appropriate pane
 func switchToTeamWindow(sessionName string, role session.PaneRole) error {
+	if sessionName == "" {
+		return fmt.Errorf("session name cannot be empty")
+	}
 	// Sanitize session name for tmux (dots become double underscores)
 	sanitizedName := tmuxSafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
 	// Select the window to make it active
-	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+	if err := exec.Command(tmuxPath, "select-window", "-t", target).Run(); err != nil {
+		return fmt.Errorf("failed to select window: %w", err)
+	}
 
 	return nil
 }

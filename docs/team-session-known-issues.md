@@ -1,14 +1,14 @@
 # Team Session Known Issues
 
 **Date:** 2026-03-21  
-**Status:** ✅ All Issues Fixed  
+**Status:** ✅ All Issues Fixed + Improvements Applied  
 **Priority:** High
 
 ## Issues Fixed
 
 ### 1. ✅ FIXED — Duplicate pane ClaudeSessionID
 
-**Files:** `session_persist.go:73`, `hooks.go:296`
+**Files:** `session_persist.go:85-91`
 
 **Problem:**
 - Persist logic sets the target pane ID but doesn't clear that ID from sibling panes
@@ -16,7 +16,7 @@
 
 **Fix Applied:**
 ```go
-// session_persist.go:85-91 - Now clears from sibling panes
+// session_persist.go:86-91 - Now clears from sibling panes
 // Clear this claudeSessionID from all OTHER panes to prevent ambiguity
 for otherRole, otherPane := range sessInfo.Panes {
     if otherRole != role && otherPane != nil && otherPane.ClaudeSessionID == claudeSessionID {
@@ -26,11 +26,13 @@ for otherRole, otherPane := range sessInfo.Panes {
 }
 ```
 
+**Note:** Map iteration while modifying struct fields is safe in Go (no key addition/removal).
+
 ---
 
 ### 2. ✅ FIXED — Retry path loses role prefix
 
-**Files:** `hooks.go:542`, `hooks.go:315`
+**Files:** `hooks.go:315-330`
 
 **Problem:**
 - `handleStopRetry` calls `deliverUnsentTexts(..., "")` with empty claudeSessionID
@@ -39,8 +41,8 @@ for otherRole, otherPane := range sessInfo.Panes {
 
 **Fix Applied:**
 ```go
-// hooks.go:315-330 - Added transcript path inference fallback
-// Fallback 1: Try to infer role from transcript path
+// hooks.go:315-330 - Added improved transcript path inference fallback
+// Fallback 1: Try to infer role from transcript path (improved pattern matching)
 if rolePrefix == "" && transcriptPath != "" {
     role := inferRoleFromTranscriptPathForPrefix(transcriptPath)
     if role != "" {
@@ -53,11 +55,16 @@ if rolePrefix == "" {
 }
 ```
 
+**Improvement:** Transcript path inference now uses case-insensitive substring matching instead of strict suffix matching, handling more naming patterns:
+- `session-planner.jsonl`, `session_planner.jsonl`
+- `planner.jsonl`, `planner-session.jsonl`
+- `session.planner.jsonl`
+
 ---
 
 ### 3. ✅ FIXED — Inconsistent tmux name sanitization
 
-**Files:** `session/team_runtime.go:148`, `session.go:32`, `team_routing.go:80`
+**Files:** `session/team_runtime.go:148`, `team_routing.go:80,101`
 
 **Problem:**
 - One path maps `.` → `_`, another maps `.` → `__`
@@ -66,7 +73,7 @@ if rolePrefix == "" {
 
 **Fix Applied:**
 - `session/team_runtime.go:148`: Changed to use `__` (double underscore)
-- `team_routing.go:80, 101`: Added `tmuxSafeName()` sanitization
+- `team_routing.go:80,101`: Added `tmuxSafeName()` sanitization
 
 ```go
 // session/team_runtime.go:148 - Now uses double underscore
@@ -75,6 +82,32 @@ return strings.ReplaceAll(name, ".", "__")
 // team_routing.go:80 - Now sanitizes
 sanitizedName := tmuxSafeName(sessionName)
 target := "ccc-team:" + sanitizedName
+```
+
+---
+
+## Additional Improvements (Post-Review)
+
+### 4. ✅ ADDED — Input validation for empty session names
+
+**Files:** `team_routing.go:82,104`
+
+**Improvement:** Added defensive checks for empty session names with clear error messages.
+
+---
+
+### 5. ✅ FIXED — Error handling in switchToTeamWindow
+
+**Files:** `team_routing.go:106`
+
+**Improvement:** Previously ignored tmux errors. Now returns error for proper debugging.
+
+```go
+// Before: exec.Command(tmuxPath, "select-window", "-t", target).Run()
+// After:
+if err := exec.Command(tmuxPath, "select-window", "-t", target).Run(); err != nil {
+    return fmt.Errorf("failed to select window: %w", err)
+}
 ```
 
 ---
@@ -102,10 +135,16 @@ After fixes, verify:
    # Verify all operations work correctly
    ```
 
+4. **Various transcript naming patterns:**
+   ```bash
+   # Verify role inference works with different naming patterns
+   ```
+
 ---
 
 ## References
 
 - Original review: PR #11
 - Related: `docs/multi-bot-design.md`, `docs/tmux-architecture.md`
-- Commit: Team session bug fixes (2026-03-21)
+- Commit 1: Initial bug fixes (2026-03-21)
+- Commit 2: Review improvements (2026-03-21)

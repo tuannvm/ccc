@@ -104,22 +104,40 @@ func clearToolState(sessionName string) {
 // inferRoleFromTranscriptPathForPrefix extracts the role from a transcript file path
 // This is a duplicate of the function in session_persist.go to avoid circular dependencies
 // Returns empty string if no role is found
+//
+// Handles multiple transcript naming patterns:
+// - session-planner.jsonl, session_planner.jsonl
+// - planner.jsonl, planner-session.jsonl
+// - session.planner.jsonl (with dot separator)
 func inferRoleFromTranscriptPathForPrefix(transcriptPath string) session.PaneRole {
 	if transcriptPath == "" {
 		return ""
 	}
 	base := filepath.Base(transcriptPath)
-	base = strings.TrimSuffix(base, ".jsonl")
-	base = strings.TrimSuffix(base, ".json")
+	// Remove extensions - handle multiple extensions safely
+	for {
+		newBase := strings.TrimSuffix(base, ".jsonl")
+		if newBase == base {
+			newBase = strings.TrimSuffix(base, ".json")
+		}
+		if newBase == base {
+			break // No more extensions to remove
+		}
+		base = newBase
+	}
 
-	// Check for role suffixes (e.g., "session-planner", "session-executor", "session-reviewer")
-	if strings.HasSuffix(base, "-planner") || strings.HasSuffix(base, "_planner") {
+	// Convert to lowercase for case-insensitive matching
+	baseLower := strings.ToLower(base)
+
+	// Check for role keywords anywhere in the filename
+	// Order matters: check for longer substrings first to avoid false positives
+	if strings.Contains(baseLower, "planner") {
 		return session.RolePlanner
 	}
-	if strings.HasSuffix(base, "-executor") || strings.HasSuffix(base, "_executor") {
+	if strings.Contains(baseLower, "executor") {
 		return session.RoleExecutor
 	}
-	if strings.HasSuffix(base, "-reviewer") || strings.HasSuffix(base, "_reviewer") {
+	if strings.Contains(baseLower, "reviewer") {
 		return session.RoleReviewer
 	}
 
