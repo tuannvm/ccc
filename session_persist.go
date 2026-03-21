@@ -1,10 +1,44 @@
 package main
 
+import (
+	"path/filepath"
+	"strings"
+
+	"github.com/tuannvm/ccc/session"
+)
+
+// inferRoleFromTranscriptPath extracts the role from a transcript file path
+// Returns empty string if no role is found
+// Transcript paths follow pattern: ".../session-planner.jsonl", ".../session-executor.jsonl", etc.
+func inferRoleFromTranscriptPath(transcriptPath string) session.PaneRole {
+	if transcriptPath == "" {
+		return ""
+	}
+	base := filepath.Base(transcriptPath)
+	base = strings.TrimSuffix(base, ".jsonl")
+	base = strings.TrimSuffix(base, ".json")
+
+	// Check for role suffixes (e.g., "session-planner", "session-executor", "session-reviewer")
+	if strings.HasSuffix(base, "-planner") || strings.HasSuffix(base, "_planner") {
+		return session.RolePlanner
+	}
+	if strings.HasSuffix(base, "-executor") || strings.HasSuffix(base, "_executor") {
+		return session.RoleExecutor
+	}
+	if strings.HasSuffix(base, "-reviewer") || strings.HasSuffix(base, "_reviewer") {
+		return session.RoleReviewer
+	}
+
+	// No role found in path
+	return ""
+}
+
 // persistClaudeSessionID saves the claude session ID to config if changed
 // For single sessions, stores in SessionInfo.ClaudeSessionID
 // For team sessions, stores in the matching pane's PaneInfo.ClaudeSessionID
 // It also clears the same claude_session_id from any other session/pane to prevent ambiguity
-func persistClaudeSessionID(config *Config, sessName string, claudeSessionID string) {
+// For team sessions, uses transcriptPath to infer which pane/role this session ID belongs to
+func persistClaudeSessionID(config *Config, sessName string, claudeSessionID string, transcriptPath string) {
 	if claudeSessionID == "" || sessName == "" {
 		return
 	}
@@ -37,38 +71,55 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 	}
 
 	// For team sessions, store the Claude session ID in the appropriate pane
-	// We need to find which pane this session ID belongs to by matching cwd or using the pane's pane_id
+	// Use transcript path to infer which role/pane this session ID belongs to
 	if isTeam && sessInfo.Panes != nil {
-		hookLog("persistClaudeSessionID: team session=%s, claudeSessionID=%s", sessName, claudeSessionID)
-		// Check if any pane already has this Claude session ID
-		hasMatch := false
-		for role, pane := range sessInfo.Panes {
-			if pane != nil {
-				hookLog("persistClaudeSessionID: pane role=%s has claudeSessionID=%s", role, pane.ClaudeSessionID)
-				if pane.ClaudeSessionID == claudeSessionID {
-					hasMatch = true
-					break
-				}
-			}
-		}
+		hookLog("persistClaudeSessionID: team session=%s, claudeSessionID=%s, transcript=%s", sessName, claudeSessionID, transcriptPath)
 
-		// If no existing match, we need to determine which pane this is
-		// For now, we'll store it in all panes that don't have a session ID yet
-		// (This is a fallback - ideally we'd match by cwd or pane_id)
-		if !hasMatch {
-			hookLog("persistClaudeSessionID: no existing match, storing in empty panes")
-			for role, pane := range sessInfo.Panes {
-				if pane != nil && pane.ClaudeSessionID == "" {
+		// Infer role from transcript path
+		role := inferRoleFromTranscriptPath(transcriptPath)
+		if role != "" {
+			hookLog("persistClaudeSessionID: inferred role=%s from transcript path", role)
+			// Update only the specific pane for this role
+			if pane, exists := sessInfo.Panes[role]; exists && pane != nil {
+				if pane.ClaudeSessionID != claudeSessionID {
 					pane.ClaudeSessionID = claudeSessionID
-					hookLog("persisted claude_session_id=%s for team session=%s pane=%s", claudeSessionID, sessName, role)
+					saveConfig(config)
+					hookLog("persisted claude_session_id=%s for team session=%s role=%s", claudeSessionID, sessName, role)
+				} else {
+					hookLog("persistClaudeSessionID: pane role=%s already has this claude_session_id", role)
 				}
+			} else {
+				hookLog("persistClaudeSessionID: ERROR - pane for role=%s not found in session", role)
 			}
-			saveConfig(config)
 			return
 		}
 
-		// Already had this ID, nothing to do
-		hookLog("persistClaudeSessionID: already has this ID")
+		// Fallback: Couldn't infer role from transcript path
+		// Check if any pane already has this Claude session ID (for idempotency)
+		hasMatch := false
+		for role, pane := range sessInfo.Panes {
+			if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+				hasMatch = true
+				hookLog("persistClaudeSessionID: claude_session_id=%s already in role=%s", claudeSessionID, role)
+				break
+			}
+		}
+
+		if hasMatch {
+			return // Already persisted, nothing to do
+		}
+
+		// Last resort: Store in first empty pane (unreliable, but better than losing the ID)
+		// This should rarely happen if transcript paths follow the naming convention
+		hookLog("persistClaudeSessionID: WARNING - could not infer role from transcript=%s, using fallback", transcriptPath)
+		for role, pane := range sessInfo.Panes {
+			if pane != nil && pane.ClaudeSessionID == "" {
+				pane.ClaudeSessionID = claudeSessionID
+				hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s (may be incorrect)", claudeSessionID, role)
+				break
+			}
+		}
+		saveConfig(config)
 		return
 	}
 

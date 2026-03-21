@@ -245,7 +245,7 @@ func handleStopHook() error {
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	hookLog("stop-hook: session=%s claude_session_id=%s transcript=%s", sessName, hookData.SessionID, hookData.TranscriptPath)
 
@@ -570,7 +570,7 @@ func handlePermissionHook() error {
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	hookLog("pre-tool: session=%s tool=%s", sessName, hookData.ToolName)
 
@@ -772,7 +772,7 @@ func handleUserPromptHook() error {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	// Collapse tool message from previous turn
 	collapseToolMessage(config, sessName, topicID)
@@ -847,7 +847,7 @@ func handleNotificationHook() error {
 		return nil
 	}
 
-	persistClaudeSessionID(config, sessName, hookData.SessionID)
+	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	// idle_prompt means Claude is waiting for user input — clear typing indicator
 	if hookData.NotificationType == "idle_prompt" {
