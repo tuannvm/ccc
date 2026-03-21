@@ -41,7 +41,8 @@ func (r *TeamRouter) RouteMessage(text string, layout session.LayoutSpec) (sessi
 		return session.RoleExecutor, text, nil // No prefix = executor
 	}
 
-	prefix := strings.ToLower(fields[0])
+	// Normalize prefix: remove leading slash and convert to lowercase
+	prefix := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
 
 	// Build prefix-to-role mapping from layout spec
 	prefixMap := make(map[string]session.PaneRole)

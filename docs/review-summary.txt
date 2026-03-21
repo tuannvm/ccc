@@ -1,0 +1,137 @@
+================================================================================
+MULTI-PANE TMUX ARCHITECTURE - TECHNICAL REVIEW SUMMARY
+================================================================================
+Date: 2026-03-20
+Branch: worktree-multi-bot
+Commit: 9274de6 "Use dedicated 'ccc-team' tmux session for team sessions"
+
+================================================================================
+REVIEW OUTCOME
+================================================================================
+
+Overall Grade: C (Consensus)
+Recommendation: NO-GO for Phases 6-7
+Estimated Time to GO: 2-3 hours
+
+================================================================================
+CRITICAL ISSUES (Must Fix Before Proceeding)
+================================================================================
+
+1. [CRITICAL] Role Prefix Routing Broken
+   File: routing/message.go:44
+   Impact: /planner, /executor, /reviewer commands don't work
+   Fix: 1 line change (5 minutes)
+   
+2. [CRITICAL] First-Run Failure When Tmux Server Not Running
+   File: session/team_runtime.go:245
+   Impact: New users blocked from creating sessions
+   Fix: Handle "no server running" gracefully (10 minutes)
+   
+3. [HIGH] CCC_ROLE Environment Variable Not Reliably Propagated
+   File: session/team_runtime.go:93
+   Impact: Hook-based role attribution fails
+   Fix: Reorder command (5 minutes)
+
+================================================================================
+POSITIVE FINDINGS
+================================================================================
+
+✅ Architecture: Clean separation, interface-based design
+✅ Correctness: 3-pane layout creation works correctly
+✅ Safety: Proper mutex usage, timeouts on operations
+✅ Completeness: Full CLI lifecycle implemented
+✅ Backward Compatible: Standard sessions unaffected
+
+================================================================================
+REVIEWER PERSPECTIVES
+================================================================================
+
+Codex (GPT-5.3): Grade C
+  "Solid conceptual design but critical bugs break production use."
+  
+Gemini 2.5: Grade A-
+  "Implementation is solid and functional. Minor cleanup needed."
+  
+Claude (Human): Grade C+
+  "Core architecture excellent. Critical routing bug dominates assessment."
+
+================================================================================
+PRIORITY ACTION ITEMS
+================================================================================
+
+P0 - Before Phases 6-7 (2 hours):
+  [ ] Fix prefix routing normalization (5 min)
+  [ ] Fix tmux server bootstrap (10 min)
+  [ ] Fix CCC_ROLE environment variable (5 min)
+  [ ] Add integration tests (30 min)
+  [ ] Manual testing (30 min)
+
+P1 - Before Production (1 hour):
+  [ ] Add explicit session naming (30 min)
+  [ ] Wire hook router integration (20 min)
+  [ ] Fix error suppression in switching (15 min)
+
+P2 - Code Cleanup (4 hours):
+  [ ] Remove dead parsing helpers
+  [ ] Add constants for hardcoded strings
+  [ ] Add ccc team doctor command
+  [ ] Add /help command for team sessions
+
+================================================================================
+KEY FILES REVIEWED
+================================================================================
+
+✓ session/team_runtime.go - TeamRuntime with 3-pane layout creation
+✓ team_commands.go - Complete CLI implementation (513 lines)
+✓ team_routing.go - Telegram message routing helpers
+✓ commands.go - Integration of handleTeamSessionMessage()
+✓ routing/message.go - MessageRouter implementation
+✓ routing/hook.go - HookRouter implementation
+✓ types.go - Extended SessionInfo and Config
+
+================================================================================
+TESTING RECOMMENDATIONS
+================================================================================
+
+Integration Tests:
+  - Team creation on fresh tmux (no server)
+  - /planner, /executor, /reviewer routing
+  - Session identity collision (same dir, different names)
+  - Partial failure behaviors (pane missing, tmux dead)
+
+Manual Testing:
+  - Create team session on fresh tmux install
+  - Test all role prefixes route correctly
+  - Test default routing (no prefix → executor)
+  - Test ccc team list/attach/start/stop/delete
+  - Test hook events carry correct role
+
+================================================================================
+CONCLUSION
+================================================================================
+
+The multi-pane tmux architecture has SOLID FOUNDATIONS but contains CRITICAL
+IMPLEMENTATION BUGS that block production use.
+
+The good news: All critical issues are QUICK FIXES (5-10 minutes each).
+
+Recommendation:
+  1. Stop: Don't proceed to Phases 6-7 yet
+  2. Fix: Address P0 issues (2-3 hours)
+  3. Test: Verify fixes with integration tests
+  4. Proceed: Continue to Phases 6-7 with confidence
+
+Key Takeaway: Architecture is sound. Bugs are superficial and easily fixed.
+Once corrected, this will be a robust, production-ready multi-pane system.
+
+================================================================================
+DETAILED REVIEWS
+================================================================================
+
+Full reviews available in:
+  - docs/review-codex.md (Implementation safety focus)
+  - docs/review-gemini.md (User experience focus)
+  - docs/review-opus.md (Architecture focus)
+  - docs/review-consolidated.md (All perspectives merged)
+
+================================================================================

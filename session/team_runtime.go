@@ -90,7 +90,8 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 		// We set CCC_ROLE to indicate which role this pane should use
 		// Use shell quoting for paths with spaces/special characters
 		quotedWorkDir := shellQuote(workDir)
-		runCmd := fmt.Sprintf("CCC_ROLE=%s cd %s && ccc run", role, quotedWorkDir)
+		// Export CCC_ROLE separately to ensure it's available to ccc run
+		runCmd := fmt.Sprintf("export CCC_ROLE=%s; cd %s && ccc run", role, quotedWorkDir)
 
 		// Send command to the pane
 		if err := exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, runCmd, "C-m").Run(); err != nil {
@@ -245,7 +246,20 @@ func (r *TeamRuntime) ensureTeamSession(sessionName string) error {
 	cmd := exec.CommandContext(ctx, r.tmuxPath, "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
+		// If tmux server isn't running, that's OK - we'll create the session which will start the server
+		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "connection refused") {
+			// Server not running, proceed to create session (which will start it)
+		} else {
+			return fmt.Errorf("failed to list sessions: %w", err)
+		}
+	} else {
+		// Server is running, check if session already exists
+		sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
+		for _, sess := range sessions {
+			if sess == sessionName {
+				return nil // Session exists
+			}
+		}
 	}
 
 	// Check if ccc-team session already exists

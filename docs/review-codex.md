@@ -1,425 +1,227 @@
-# Codex 5.3 Implementation Review
-## Multi-Pane Tmux Architecture Implementation
+# Codex Review: Multi-Pane Tmux Architecture
 
-**Reviewer**: OpenAI Codex 5.3 (Implementation Safety)
-**Date**: 2025-03-20
-**Status**: 🔴 Critical Safety Issues Found
+**Reviewer:** Codex (GPT-5.3)
+**Date:** 2026-03-20
+**Branch:** worktree-multi-bot
+**Commit:** 9274de6 "Use dedicated 'ccc-team' tmux session for team sessions"
 
 ---
 
 ## Executive Summary
 
-The implementation has several critical safety and reliability issues that MUST be addressed before production use:
+The multi-pane tmux architecture implementation demonstrates **solid conceptual design** but contains **several critical bugs** that will break production use. The 3-pane layout creation logic is fundamentally sound, but routing and session identity issues create significant reliability risks.
 
-1. **Race Condition in Team Session State** - Unsynchronized access
-2. **No Timeout on Tmux Commands** - Can hang indefinitely
-3. **Missing Error Context** - Debugging will be difficult
-4. **Resource Leak Risk** - No cleanup on failure paths
-5. **Unsafe Buffer Operations** - Shell quoting vulnerabilities
+**Overall Grade:** C
+**Go/No-Go:** **NO-GO** - Critical issues must be fixed before Phases 6-7
 
 ---
 
-## Critical Issues
+## Critical Issues (Must Fix)
 
-### 🔴 Issue 1: Race Condition in ActiveTeamSessions (SEVERE)
+### 1. **CRITICAL: Role Prefix Routing Broken**
+**File:** `routing/message.go:44-51`
+**Severity:** Critical - Breaks primary UX path
 
-**Location**: `session/team_runtime.go`
-
+**Issue:**
 ```go
-var ActiveTeamSessions = make(map[string]*TeamWindowState)
-var teamSessionsMutex sync.RWMutex
+prefix := strings.ToLower(fields[0])  // Keeps leading slash: "/planner"
+prefixKey := strings.TrimPrefix(strings.ToLower(p), "/")  // Removes slash: "planner"
+prefixMap[prefixKey] = session.PaneRole(pane.ID)  // Map key has no slash
+if role, ok := prefixMap[prefix]; ok {  // Lookup with slash - NEVER MATCHES
+```
 
-func GetOrCreateTeamWindow(sessionName string) (*TeamWindowState, error) {
-    teamSessionsMutex.Lock()
-    defer teamSessionsMutex.Unlock()
+**Impact:** Commands like `/planner`, `/executor`, `/reviewer` fail silently and route to executor. The entire multi-pane routing UX is non-functional.
+
+**Fix:** Normalize consistently:
+```go
+prefix := strings.TrimPrefix(strings.ToLower(fields[0]), "/")  // Strip slash from input
+```
+
+### 2. **CRITICAL: First-Run Failure When Tmux Server Not Running**
+**File:** `session/team_runtime.go:245-248`
+**Severity:** Critical - Blocks new users
+
+**Issue:**
+```go
+cmd := exec.CommandContext(ctx, r.tmuxPath, "list-sessions", "-F", "#{session_name}")
+out, err := cmd.Output()
+if err != nil {
+    return fmt.Errorf("failed to list sessions: %w", err)  // Exits instead of creating session
+}
+```
+
+**Impact:** First-time users with no tmux server get error instead of session creation.
+
+**Fix:** Check error for "no server running" condition and proceed to creation:
+```go
+if err != nil && !strings.Contains(err.Error(), "no server running") {
+    return fmt.Errorf("failed to list sessions: %w", err)
+}
+// Fall through to session creation
+```
+
+### 3. **HIGH: Session Identity Inconsistency**
+**Files:** `team_commands.go:77`, `team_routing.go:110`
+**Severity:** High - UX confusion and operational issues
+
+**Issue:**
+- User provides `<name>` in `ccc team new <name>` (line 77)
+- But session identity is derived from `path basename` (line 110-114)
+- Commands like `list/attach/stop/delete` search by derived name, not provided name
+
+**Impact:** User-facing names are unreliable. Two sessions in same directory collide.
+
+**Fix:** Add explicit `SessionName` field to `SessionInfo` and use it consistently:
+```go
+type SessionInfo struct {
     // ...
-}
-
-// BUT: No mutex protection in other methods!
-func (r *TeamRuntime) FindPaneByRole(sessionName string, role PaneRole) (string, error) {
-    teamSessionsMutex.RLock()
-    defer teamSessionsMutex.RUnlock()
-    // ...
-}
-```
-
-**Problem**: `RefreshPaneIDs()` modifies state but uses read lock:
-
-```go
-func (r *TeamRuntime) RefreshPaneIDs(sessionName string) error {
-    // Missing Lock() - should be Lock(), not RLock()
-    teamSessionsMutex.RLock()  // ❌ WRONG - this modifies state!
-    defer teamSessionsMutex.RUnlock()
-
-    state.Panes[i].PaneID = paneID  // Writing under read lock!
-}
-```
-
-**Impact**: Concurrent writes can cause:
-- Data races (Go race detector will catch this)
-- Panes with incorrect IDs
-- Messages routed to wrong panes
-- Potential crashes
-
-**Fix**:
-```go
-func (r *TeamRuntime) RefreshPaneIDs(sessionName string) error {
-    teamSessionsMutex.Lock()  // ✅ Use write lock
-    defer teamSessionsMutex.Unlock()
-    // ...
-}
-```
-
----
-
-### 🔴 Issue 2: No Timeout on Tmux Commands (HIGH)
-
-**Location**: `session/team_runtime.go`
-
-```go
-func (r *TeamRuntime) windowExists(target string) bool {
-    cmd := exec.Command(r.tmuxPath, "list-windows", "-t", target, "-F", "#{window_name}")
-    return cmd.Run() == nil
-}
-```
-
-**Problem**: If tmux is hung/unresponsive, this will block forever.
-
-**Impact**:
-- listen() loop blocks
-- All messages stop processing
-- No way to recover without restart
-
-**Fix**:
-```go
-func (r *TeamRuntime) windowExists(target string) bool {
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cmd := exec.CommandContext(ctx, r.tmuxPath, "list-windows", "-t", target, "-F", "#{window_name}")
-    return cmd.Run() == nil
-}
-```
-
-**Apply to ALL tmux commands**:
-- `windowExists()`
-- `hasThreePanes()`
-- `CapturePaneID()`
-- `ListPanes()`
-
----
-
-### 🟡 Issue 3: Unsafe Shell Quoting (MEDIUM)
-
-**Location**: `session/team_runtime.go`
-
-```go
-// In createThreePaneLayout():
-target := "ccc:" + windowName
-
-// Later used in exec.Command:
-exec.Command(r.tmuxPath, "select-pane", "-t", target+".1").Run()
-```
-
-**Problem**: `windowName` comes from user input (session name). While tmux-safe names are used, there's no validation:
-
-```go
-func getSessionName(session Session) string {
-    path := sess.GetPath()
-    if idx := strings.LastIndex(path, "/"); idx >= 0 {
-        return path[idx+1:]
-    }
-    return path
-}
-```
-
-**Attack Vector**:
-```
-Session name: "../../../etc/passwd"
-Target becomes: "ccc:../../../etc/passwd"
-Tmux interprets this as path traversal!
-```
-
-**Fix**:
-```go
-func (r *TeamRuntime) getSessionName(session Session) string {
-    name := tmuxSafeName(session.GetPath())
-    // Validate: only alphanumeric, dash, underscore
-    if !isValidSessionName(name) {
-        return sanitizeSessionName(name)
-    }
-    return name
-}
-
-func isValidSessionName(name string) bool {
-    matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, name)
-    return matched
-}
-```
-
----
-
-### 🟡 Issue 4: Missing Error Context (MEDIUM)
-
-**Location**: Throughout
-
-```go
-func (r *TeamRuntime) GetRoleTarget(sess Session, role PaneRole) (string, error) {
-    // ...
-    index, ok := roleToIndex[role]
-    if !ok {
-        return "", fmt.Errorf("unknown role: %s", role)  // ❌ Not helpful
-    }
-}
-```
-
-**Problem**: When error occurs, no context about which session/operation failed.
-
-**Fix**:
-```go
-func (r *TeamRuntime) GetRoleTarget(sess Session, role PaneRole) (string, error) {
-    sessionName := r.getSessionName(sess)
-    index, ok := roleToIndex[role]
-    if !ok {
-        return "", fmt.Errorf("GetRoleTarget(session=%s): unknown role: %s", sessionName, role)
-    }
+    SessionName  string `json:"session_name"`  // Explicit user-provided name
     // ...
 }
 ```
 
----
+### 4. **HIGH: CCC_ROLE Environment Variable Not Reliable**
+**File:** `session/team_runtime.go:93`
+**Severity:** High - Breaks hook-based role attribution
 
-### 🟡 Issue 5: Resource Leak on Failure (MEDIUM)
-
-**Location**: `session/team_runtime.go`
-
+**Issue:**
 ```go
-func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error {
-    // Create new window
-    if err := exec.Command(r.tmuxPath, "new-window", "-t", sessName+":", "-n", windowName).Run(); err != nil {
-        return fmt.Errorf("failed to create window: %w", err)  // ❌ Window created but not cleaned up!
-    }
-
-    // If split fails, we leave a partially-created window
-    if err := exec.Command(r.tmuxPath, "split-window", "-h", "-t", target).Run(); err != nil {
-        return fmt.Errorf("failed to split for pane 1: %w", err)
-    }
-}
+runCmd := fmt.Sprintf("CCC_ROLE=%s cd %s && ccc run", role, quotedWorkDir)
 ```
 
-**Problem**: If later operations fail, earlier windows/splits are left behind.
+**Impact:** Environment variable applies to `cd` command, not `ccc run`. Role inference in hooks collapses to default executor.
 
-**Impact**:
-- Orphaned tmux windows accumulate
-- User sees partial/incorrect layouts
-- No cleanup mechanism
-
-**Fix**:
+**Fix:**
 ```go
-func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error {
-    cleanupOnFailure := true
-
-    // Create new window
-    if err := exec.Command(r.tmuxPath, "new-window", ...).Run(); err != nil {
-        return err  // Nothing to clean up yet
-    }
-    defer func() {
-        if cleanupOnFailure {
-            r.killWindow(target)  // Clean up partial creation
-        }
-    }()
-
-    // Split operations...
-    if err := exec.Command(r.tmuxPath, "split-window", "-h", "-t", target).Run(); err != nil {
-        return fmt.Errorf("failed to split for pane 1: %w", err)
-    }
-
-    // If we get here, disable cleanup
-    cleanupOnFailure = false
-    return nil
-}
+runCmd := fmt.Sprintf("cd %s && CCC_ROLE=%s ccc run", quotedWorkDir, role)
+// OR
+runCmd := fmt.Sprintf("export CCC_ROLE=%s; cd %s && ccc run", role, quotedWorkDir)
 ```
+
+### 5. **HIGH: Hook Router Not Integrated**
+**File:** `routing/hook.go:88`
+**Severity:** High - Incomplete Phase 4-5 implementation
+
+**Issue:** `GetHookRouter()` is defined but never called. Hook-based role attribution doesn't work.
+
+**Impact:** Multi-pane attribution from hooks is non-functional despite being in scope.
+
+**Fix:** Wire hook router into actual hook processing path.
 
 ---
 
-## Medium Priority Issues
+## Medium Issues
 
-### 🟠 Issue 6: No Validation of Pane Count
+### 6. **Error Suppression in Window Switching**
+**File:** `team_routing.go:104`
+**Severity:** Medium
 
+**Issue:**
 ```go
-func validateTeamSession(sess Session) error {
-    if len(panes) != 3 {
-        return fmt.Errorf("team session must have exactly 3 panes, got %d", len(panes))
-    }
-}
+exec.Command(tmuxPath, "select-window", "-t", target).Run()  // Error ignored
+return nil  // Always returns success
 ```
 
-**Problem**: Hardcoded "3" makes it difficult to add 4-pane layouts later.
+**Impact:** False success during partial failures. Harder debugging.
 
-**Fix**:
-```go
-func validateTeamSession(sess Session) error {
-    layout, ok := session.GetLayout(sess.GetLayoutName())
-    if !ok {
-        return fmt.Errorf("unknown layout: %s", sess.GetLayoutName())
-    }
+### 7. **Dead Code and Duplication**
+**File:** `team_routing.go:135-194`
+**Severity:** Medium
 
-    if len(sess.GetPanes()) != len(layout.Panes) {
-        return fmt.Errorf("session has %d panes, layout %s requires %d",
-            len(sess.GetPanes()), sess.GetLayoutName(), len(layout.Panes))
-    }
-    // ...
-}
-```
+**Issue:** `isTeamSessionCommand()` and `parseTeamCommand()` duplicate router logic but appear unused.
+
+**Impact:** Code drift risk, confusion.
+
+### 8. **In-Memory State Not Synchronized**
+**File:** `session/team_runtime.go:276-325`
+**Severity:** Medium
+
+**Issue:** `ActiveTeamSessions` tracking exists but isn't clearly synchronized with `SessionInfo.Panes`.
+
+**Impact:** State drift between runtime and config.
 
 ---
 
-### 🟠 Issue 7: Tmux Buffer Not Used for Routing
+## Positive Findings
 
-**Location**: Design document specifies using `load-buffer` + `paste-buffer`
+### Correctness (Where It Works)
+- ✅ 3-pane layout creation sequence is correct (split-h, select-pane, split-h, select-layout)
+- ✅ Role-to-index mapping is consistent (Planner→0, Executor→1, Reviewer→2)
+- ✅ Shell quoting prevents injection in paths
 
-```go
-// In design:
-func sendToPaneSafely(paneID string, message string) error {
-    // Use load-buffer + paste-buffer to avoid shell quoting issues
-    if err := tmux("load-buffer", "-b", bufferName, "-", []byte(message)); err != nil {
-        return err
-    }
-    return tmux("paste-buffer", "-b", bufferName, "-t", paneID, "-d")
-}
-```
+### Safety
+- ✅ `ActiveTeamSessions` protected by `sync.RWMutex`
+- ✅ Timeouts on all tmux operations (5-10s)
+- ✅ Proper cleanup in `StopTeam` and `DeleteTeam`
 
-**Current**: Not implemented yet, but `sendToTmux()` in main package uses `send-keys`:
-
-```go
-// tmux.go (main package)
-func sendToTmuxWithDelay(target string, text string, delay time.Duration) error {
-    cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
-    // ...
-}
-```
-
-**Problem**: `send-keys` can have issues with special characters.
-
-**Fix**: Implement buffer-based sending in Phase 6.
+### Architecture
+- ✅ Clean separation: session/, routing/, main packages
+- ✅ Interface-based design (SessionRuntime, MessageRouter, HookRouter)
+- ✅ Backward compatible (standard sessions unaffected)
 
 ---
 
-## Low Priority Issues
+## Recommendations
 
-### 🔵 Issue 8: No Idempotency in Create Window
+### Immediate Actions (Before Phases 6-7)
+1. **Fix router normalization bug** - 5 minute change, unblocks entire feature
+2. **Fix tmux server bootstrap** - Handle "no server" case gracefully
+3. **Fix CCC_ROLE propagation** - Ensure hooks can infer role correctly
+4. **Add explicit session naming** - Remove path-based identity inference
+5. **Wire hook router integration** - Complete Phase 4-5 scope
 
-```go
-func GetOrCreateTeamWindow(sessionName string) (*TeamWindowState, error) {
-    if state, exists := ActiveTeamSessions[sessionName]; exists {
-        return state, nil
-    }
-    // Creates new state without verifying tmux window exists
-}
-```
+### Testing Strategy
+1. Add integration tests for:
+   - Team creation on fresh tmux (no server running)
+   - `/planner`, `/executor`, `/reviewer` routing
+   - Session identity collision (same dir, different names)
+   - Partial failure behaviors (pane missing, tmux dead)
 
-**Problem**: If state exists but tmux window was killed externally, returns stale state.
-
-**Fix**: Verify tmux window exists before returning cached state.
-
----
-
-## Concurrency Analysis
-
-### ✅ Good: Mutex Used Correctly in Most Places
-
-The `RWMutex` usage is mostly correct:
-- Read locks for reads
-- Write locks for writes
-- Proper defer usage
-
-### ❌ Bad: RefreshPaneIDs Uses Read Lock for Write
-
-Already documented in Issue #1.
+### Code Cleanup
+1. Remove dead parsing helpers in `team_routing.go`
+2. Add constants for hardcoded strings ("ccc-team")
+3. Synchronize in-memory state with persisted state
 
 ---
 
-## Resource Management
+## Grade Breakdown
 
-### ⚠️ Issue: No Cleanup on Exit
+| Dimension | Grade | Notes |
+|-----------|-------|-------|
+| Correctness | D | Routing bug breaks primary feature |
+| Safety | B+ | Good concurrency, timeout handling |
+| Completeness | C | Hook router not integrated |
+| Practicality | C | Naming confusion, unreliable UX |
+| Maintainability | B+ | Clean architecture, some dead code |
+| Edge Cases | C | First-run failure, error suppression |
 
-**Problem**: If CCC crashes or is killed:
-- `ActiveTeamSessions` map is lost (in-memory only)
-- Team sessions in tmux remain running
-- No way to recover state
-
-**Fix**:
-```go
-// In main package or init
-func init() {
-    // Register cleanup on exit
-    c := make(chan os.Signal, 1)
-    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-    go func() {
-        <-c
-        cleanupTeamSessions()  // Save state, notify panes
-        os.Exit(0)
-    }()
-}
-```
+**Overall:** C
 
 ---
 
-## Recommendations Summary
+## Go/No-Go Recommendation
 
-### Must Fix (P0)
-1. Fix race condition in `RefreshPaneIDs()` - use write lock
-2. Add context timeouts to all tmux commands
-3. Implement cleanup on failure in `createThreePaneLayout()`
+**🚨 NO-GO** for Phases 6-7
 
-### Should Fix (P1)
-4. Validate session names to prevent injection
-5. Add error context throughout
-6. Implement state persistence for recovery
+**Rationale:**
+- Critical routing bug makes feature non-functional
+- First-run failure blocks new users
+- Session identity issues create operational confusion
+- Hook router integration incomplete (Phase 4-5 scope)
 
-### Nice to Have (P2)
-7. Idempotent `GetOrCreateTeamWindow()`
-8. Configurable pane count validation
-9. Buffer-based message sending (Phase 6)
+**Required Actions Before Proceeding:**
+1. Fix prefix routing normalization (5 min)
+2. Fix tmux server bootstrap (10 min)
+3. Fix CCC_ROLE environment variable (5 min)
+4. Add explicit session naming (30 min)
+5. Integrate hook router (20 min)
 
----
-
-## Conclusion
-
-**Safety Grade**: C- (Critical issues present)
-
-The implementation shows understanding of concurrency concepts but has a critical race condition that WILL cause issues in production. The missing timeouts are also a production blocker.
-
-**Recommendation**: Address P0 issues before any further development. The race condition in `RefreshPaneIDs()` is a ticking time bomb.
-
-**Next Steps**:
-1. Fix race condition (5 minutes)
-2. Add timeouts to tmux commands (30 minutes)
-3. Add cleanup on failure (1 hour)
-4. Run `go build -race` to verify fixes
-5. Continue with remaining phases
+**Estimated Time to Go:** ~2 hours
 
 ---
 
-## Testing Recommendations
+## Sources
 
-### Unit Tests
-```go
-func TestRefreshPaneIDsConcurrency(t *testing.T) {
-    // Test concurrent calls to RefreshPaneIDs
-    // Run with go test -race
-}
-
-func TestCreateThreePaneLayoutFailure(t *testing.T) {
-    // Mock tmux to fail on second split
-    // Verify first window is cleaned up
-}
-```
-
-### Integration Tests
-```go
-func TestTmuxHangTimeout(t *testing.T) {
-    // Mock unresponsive tmux
-    // Verify command times out
-}
-```
+- Code analysis via Codex CLI (GPT-5.3)
+- Local codebase inspection at `/home/tuannvm/Projects/cli/ccc/.claude/worktrees/multi-bot`
+- Implementation comparison with architectural requirements in docs/
