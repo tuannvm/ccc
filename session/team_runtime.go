@@ -262,14 +262,6 @@ func (r *TeamRuntime) ensureTeamSession(sessionName string) error {
 		}
 	}
 
-	// Check if ccc-team session already exists
-	sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
-	for _, sess := range sessions {
-		if sess == sessionName {
-			return nil // Session exists
-		}
-	}
-
 	// Create the session
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
