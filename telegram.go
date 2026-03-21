@@ -537,6 +537,7 @@ func deleteForumTopic(config *Config, topicID int64) error {
 func setBotCommands(botToken string) {
 	commands := []map[string]string{
 		{"command": "new", "description": "Create/restart session: /new <name>"},
+		{"command": "team", "description": "Create team session (3-pane): /team <name>"},
 		{"command": "continue", "description": "Restart session with history"},
 		{"command": "delete", "description": "Delete current session and thread"},
 		{"command": "resume", "description": "List/switch Claude sessions: /resume [id]"},

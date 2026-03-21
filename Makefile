@@ -1,4 +1,4 @@
-.PHONY: build build-voice install install-voice clean deps test
+.PHONY: build build-voice install install-voice clean deps test debug deploy
 
 PREFIX := $(CURDIR)/build/whisper
 BUILD_DIR := $(CURDIR)/build/cmake
@@ -65,8 +65,35 @@ clean:
 	rm -f ccc
 	rm -rf build/
 
-# test: build, install, and restart the ccc service
-test: install
+# test: run Go tests
+test:
+	@echo "🧪 Running tests..."
+	go test -v ./...
+
+# debug: build with race detector and debug symbols, then install and restart
+debug:
+	@echo "🐛 Building debug version with race detector..."
+	go build -race -gcflags="all=-N -l" -o ccc
+	@if [ "$(UNAME)" = "Darwin" ]; then \
+		codesign -f -s - ccc 2>/dev/null || true; \
+	fi
+	@echo "📦 Installing debug binary to ~/bin/ccc..."
+	@install -m 755 ccc ~/bin/ccc
+	@echo "🔄 Restarting ccc service..."
+	@if [ "$(UNAME)" = "Darwin" ]; then \
+		launchctl unload ~/Library/LaunchAgents/com.ccc.plist 2>/dev/null || true; \
+		sleep 1; \
+		launchctl load ~/Library/LaunchAgents/com.ccc.plist; \
+		echo "✅ Debug version deployed (launchd)"; \
+	else \
+		systemctl --user daemon-reload 2>/dev/null || true; \
+		systemctl --user restart ccc.service 2>/dev/null || true; \
+		echo "✅ Debug version deployed (systemd)"; \
+	fi
+	@echo "🐛 Debug mode: race detection enabled, optimizations disabled"
+
+# deploy: build, install, and restart the ccc service (formerly 'test')
+deploy: install
 	@echo "🔄 Restarting ccc service..."
 	@if [ "$(UNAME)" = "Darwin" ]; then \
 		launchctl unload ~/Library/LaunchAgents/com.ccc.plist 2>/dev/null || true; \

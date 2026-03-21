@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/tuannvm/ccc/session"
 )
 
 // listenLog writes timestamped log entries to ccc.log AND stdout.
@@ -874,6 +875,15 @@ func listen() error {
 					}
 					continue
 
+				case "team":
+					// Provider selection for /team command: team:team_name:provider_name
+					if len(parts) == 3 {
+						teamName := parts[1]
+						providerName := parts[2]
+						handleTeamWithProvider(config, cb, teamName, providerName)
+					}
+					continue
+
 				case "provider":
 					// Provider selection for /provider command: provider:session_name:provider_name
 					if len(parts) == 3 {
@@ -1616,6 +1626,203 @@ func listen() error {
 				continue
 			}
 
+			// /team command - create team session
+			if strings.HasPrefix(text, "/team") && isGroup {
+				config, _ = loadConfig()
+				arg := strings.TrimSpace(strings.TrimPrefix(text, "/team"))
+
+				// /team <name>[@provider] - create brand new team session + topic
+				if arg != "" {
+					// Parse provider from argument: name@provider or name --provider provider
+					teamName := arg
+					providerName := ""
+
+					// Check for @provider syntax
+					if idx := strings.Index(arg, "@"); idx > 0 {
+						teamName = arg[:idx]
+						providerName = strings.TrimSpace(arg[idx+1:])
+					} else if strings.Contains(arg, " --provider ") {
+						// Check for --provider syntax
+						parts := strings.SplitN(arg, " --provider ", 2)
+						teamName = strings.TrimSpace(parts[0])
+						providerName = strings.TrimSpace(parts[1])
+					}
+
+					// Validate provider if specified using getProvider()
+					if providerName != "" {
+						provider := getProvider(config, providerName)
+						if provider == nil {
+							// List available providers
+							available := getProviderNames(config)
+							msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
+								providerName, strings.Join(available, ", "))
+							sendMessage(config, chatID, threadID, msg)
+							continue
+						}
+					}
+
+					// Always show keyboard if no explicit provider selected
+					if providerName == "" {
+						// Check if team session already exists
+						for topicID, sessInfo := range config.TeamSessions {
+							if sessInfo != nil {
+								sessName := getSessionNameFromInfo(sessInfo)
+								if sessName == teamName {
+									sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
+									continue
+								}
+							}
+						}
+
+						// Build provider selection keyboard using getProviderNames()
+						var buttons [][]InlineKeyboardButton
+
+						// Get all providers (builtin + configured)
+						providerNames := getProviderNames(config)
+						for _, name := range providerNames {
+							label := name
+							if config.ActiveProvider == name {
+								label += " ⭐"
+							}
+							callbackData := fmt.Sprintf("team:%s:%s", teamName, name)
+							buttons = append(buttons, []InlineKeyboardButton{
+								{Text: label, CallbackData: callbackData},
+							})
+						}
+
+						msg := fmt.Sprintf("🤖 Select provider for team '%s':", teamName)
+						sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
+						continue
+					}
+
+					// Direct creation (provider specified or single provider)
+					// Check for existing team session
+					for topicID, sessInfo := range config.TeamSessions {
+						if sessInfo != nil {
+							sessName := getSessionNameFromInfo(sessInfo)
+							if sessName == teamName {
+								sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
+								continue
+							}
+						}
+					}
+
+					// Use provider from arg or default to active provider
+					if providerName == "" {
+						providerName = config.ActiveProvider
+					}
+
+					// Resolve working directory using the same logic as /new
+					// Supports: team_name, ~/path, /absolute/path
+					workDir := resolveProjectPath(config, teamName)
+
+					// Create directory if it doesn't exist
+					if _, err := os.Stat(workDir); os.IsNotExist(err) {
+						os.MkdirAll(workDir, 0755)
+					}
+
+					// Create SessionInfo for team session
+					sessInfo := &SessionInfo{
+						Path:         workDir,
+						SessionName:  teamName,
+						ProviderName: providerName,
+						Type:         session.SessionKindTeam,
+						LayoutName:   "team-3pane",
+						Panes:        make(map[session.PaneRole]*PaneInfo),
+					}
+
+					// Initialize panes
+					sessInfo.Panes[session.RolePlanner] = &PaneInfo{Role: session.RolePlanner}
+					sessInfo.Panes[session.RoleExecutor] = &PaneInfo{Role: session.RoleExecutor}
+					sessInfo.Panes[session.RoleReviewer] = &PaneInfo{Role: session.RoleReviewer}
+
+					// Create the 3-pane tmux layout using TeamRuntime
+					runtime := session.GetRuntime(session.SessionKindTeam)
+					if runtime == nil {
+						sendMessage(config, chatID, threadID, "❌ Team runtime not available. Check your installation.")
+						continue
+					}
+
+					if err := runtime.EnsureLayout(sessInfo, workDir); err != nil {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create team layout: %v", err))
+						continue
+					}
+
+					// Create Telegram topic
+					topicID, err := createForumTopic(config, teamName, providerName, "")
+					if err != nil {
+						// Cleanup: kill the tmux window we just created
+						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
+						continue
+					}
+
+					// Update sessInfo with the topic ID
+					sessInfo.TopicID = topicID
+
+					// Save to config
+					config.SetTeamSession(topicID, sessInfo)
+					if err := saveConfig(config); err != nil {
+						// Cleanup: delete topic and kill window
+						deleteForumTopic(config, topicID)
+						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
+						continue
+					}
+
+					// Ensure hooks are installed
+					if err := ensureHooksForSession(config, teamName, sessInfo); err != nil {
+						listenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
+					}
+
+					// Start Claude in each pane
+					if err := runtime.StartClaude(sessInfo, workDir); err != nil {
+						listenLog("[/team] Failed to start Claude for %s: %v", teamName, err)
+						// Non-fatal - Claude can be started manually
+					}
+
+					msg := fmt.Sprintf("✅ Team session '%s' created!\n\n", teamName)
+					msg += fmt.Sprintf("📂 Path: %s\n", workDir)
+					msg += fmt.Sprintf("🤖 Provider: %s\n", providerName)
+					msg += fmt.Sprintf("💬 Topic ID: %d\n\n", topicID)
+					msg += "📱 Send messages:\n"
+					msg += "  /planner <msg>   - Send to planner\n"
+					msg += "  /executor <msg>  - Send to executor\n"
+					msg += "  /reviewer <msg>  - Send to reviewer\n"
+					msg += "  <msg> (no cmd)   - Send to executor (default)"
+					sendMessage(config, chatID, threadID, msg)
+					continue
+				}
+
+				// /team without args - restart in current topic
+				if config.IsTeamSession(threadID) {
+					sessInfo, exists := config.GetTeamSession(threadID)
+					if !exists || sessInfo == nil {
+						sendMessage(config, chatID, threadID, "❌ Team session not found. Use /team <name> to create one.")
+						continue
+					}
+
+					// Get runtime and restart
+					runtime := session.GetRuntime(session.SessionKindTeam)
+					if runtime == nil {
+						sendMessage(config, chatID, threadID, "❌ Team runtime not available.")
+						continue
+					}
+
+					if err := runtime.StartClaude(sessInfo, sessInfo.Path); err != nil {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start Claude: %v", err))
+						continue
+					}
+
+					sendMessage(config, chatID, threadID, "✅ Team session restarted!")
+					continue
+				}
+
+				// /team in non-team topic
+				sendMessage(config, chatID, threadID, "❌ No team session linked to this topic. Use /team <name> to create one.")
+				continue
+			}
+
 			// /new command - create/restart session
 			if strings.HasPrefix(text, "/new") && isGroup {
 				config, _ = loadConfig()
@@ -2201,6 +2408,118 @@ func handleProviderChange(config *Config, cb *CallbackQuery, sessionName, provid
 	}
 }
 
+// handleTeamWithProvider creates a team session after provider selection via inline keyboard
+func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, providerName string) {
+	// Check if team session already exists
+	for topicID, sessInfo := range config.TeamSessions {
+		if sessInfo != nil {
+			sessName := getSessionNameFromInfo(sessInfo)
+			if sessName == teamName {
+				if cb.Message != nil {
+					editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+						fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d).\n\nUse /team without args in that topic to restart.", teamName, topicID))
+				}
+				return
+			}
+		}
+	}
+
+	// Resolve working directory using the same logic as /new
+	// Supports: team_name, ~/path, /absolute/path
+	workDir := resolveProjectPath(config, teamName)
+
+	// Create directory if it doesn't exist
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		os.MkdirAll(workDir, 0755)
+	}
+
+	// Create SessionInfo for team session
+	sessInfo := &SessionInfo{
+		Path:         workDir,
+		SessionName:  teamName,
+		ProviderName: providerName,
+		Type:         session.SessionKindTeam,
+		LayoutName:   "team-3pane",
+		Panes:        make(map[session.PaneRole]*PaneInfo),
+	}
+
+	// Initialize panes
+	sessInfo.Panes[session.RolePlanner] = &PaneInfo{Role: session.RolePlanner}
+	sessInfo.Panes[session.RoleExecutor] = &PaneInfo{Role: session.RoleExecutor}
+	sessInfo.Panes[session.RoleReviewer] = &PaneInfo{Role: session.RoleReviewer}
+
+	// Create the 3-pane tmux layout using TeamRuntime
+	runtime := session.GetRuntime(session.SessionKindTeam)
+	if runtime == nil {
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				"❌ Team runtime not available. Check your installation.")
+		}
+		return
+	}
+
+	if err := runtime.EnsureLayout(sessInfo, workDir); err != nil {
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("❌ Failed to create team layout: %v", err))
+		}
+		return
+	}
+
+	// Create Telegram topic
+	topicID, err := createForumTopic(config, teamName, providerName, "")
+	if err != nil {
+		// Cleanup: kill the tmux window we just created
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("❌ Failed to create topic: %v", err))
+		}
+		return
+	}
+
+	// Update sessInfo with the topic ID
+	sessInfo.TopicID = topicID
+
+	// Save to config
+	config.SetTeamSession(topicID, sessInfo)
+	if err := saveConfig(config); err != nil {
+		// Cleanup: delete topic and kill window
+		deleteForumTopic(config, topicID)
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		if cb.Message != nil {
+			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("❌ Failed to save config: %v", err))
+		}
+		return
+	}
+
+	// Ensure hooks are installed
+	if err := ensureHooksForSession(config, teamName, sessInfo); err != nil {
+		listenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
+	}
+
+	// Start Claude in each pane
+	if err := runtime.StartClaude(sessInfo, workDir); err != nil {
+		listenLog("[/team] Failed to start Claude for %s: %v", teamName, err)
+		// Non-fatal - Claude can be started manually
+	}
+
+	resultMsg := fmt.Sprintf("✅ Team session '%s' created!\n\n", teamName)
+	resultMsg += fmt.Sprintf("📂 Path: %s\n", workDir)
+	resultMsg += fmt.Sprintf("🤖 Provider: %s\n", providerName)
+	resultMsg += fmt.Sprintf("💬 Topic ID: %d\n\n", topicID)
+	resultMsg += "📱 Send messages:\n"
+	resultMsg += "  /planner <msg>   - Send to planner\n"
+	resultMsg += "  /executor <msg>  - Send to executor\n"
+	resultMsg += "  /reviewer <msg>  - Send to reviewer\n"
+	resultMsg += "  <msg> (no cmd)   - Send to executor (default)"
+
+	if cb.Message != nil {
+		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
+	}
+}
+
 func printHelp() {
 	fmt.Printf(`ccc - Claude Code Companion v%s
 
@@ -2232,6 +2551,8 @@ TELEGRAM COMMANDS:
     /new <name>@provider    Create session with specific provider
     /new ~/path/name        Create session with custom path
     /new                    Restart session in current topic
+    /team <name>            Create team session (3-pane: planner|executor|reviewer)
+    /team <name>@provider   Create team session with specific provider
     /worktree <base> <name> Create worktree session from existing session
     /continue               Restart session keeping conversation history
     /providers              List available AI providers

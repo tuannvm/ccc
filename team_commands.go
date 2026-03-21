@@ -61,6 +61,13 @@ func (tc *TeamCommands) printUsage() error {
 	fmt.Println("  executor  - Code execution and commands")
 	fmt.Println("  reviewer  - Code review and feedback")
 	fmt.Println()
+	fmt.Println("Telegram:")
+	fmt.Println("  /team <name>         Create team session via Telegram")
+	fmt.Println("  /team <name>@prov    Create team with specific provider")
+	fmt.Println("  /planner <msg>       Send message to planner pane")
+	fmt.Println("  /executor <msg>      Send message to executor pane")
+	fmt.Println("  /reviewer <msg>      Send message to reviewer pane")
+	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  ccc team new feature-api")
 	fmt.Println("  ccc team attach feature-api --role planner")
@@ -92,23 +99,28 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 		}
 	}
 
-	// Get working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
-	}
-
 	// Get provider
 	providerName := config.ActiveProvider
 	if providerName == "" {
 		providerName = "anthropic"
 	}
 
+	// Resolve working directory - create folder with team name
+	// Supports: name, ~/path, /absolute/path
+	workDir := resolveProjectPath(config, name)
+
+	// Create directory if it doesn't exist
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+	}
+
 	// Create SessionInfo for team session (without topic ID yet)
 	// Path is the actual working directory for file operations
 	// SessionName is the user-provided name for identification
 	sessInfo := &SessionInfo{
-		Path:         cwd,         // Actual working directory
+		Path:         workDir,     // Actual working directory
 		SessionName:  name,        // User-provided name
 		ProviderName: providerName,
 		Type:         "team",              // Using string directly, will convert to SessionKind
@@ -128,7 +140,7 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	}
 
 	// Ensure layout creates the 3-pane window (local setup)
-	if err := runtime.EnsureLayout(sessInfo, cwd); err != nil {
+	if err := runtime.EnsureLayout(sessInfo, workDir); err != nil {
 		return fmt.Errorf("failed to create team session layout: %w", err)
 	}
 
@@ -158,14 +170,14 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	}
 
 	// Start Claude in each pane
-	if err := runtime.StartClaude(sessInfo, cwd); err != nil {
+	if err := runtime.StartClaude(sessInfo, workDir); err != nil {
 		listenLog("[team new] Failed to start Claude: %v", err)
 		// Non-fatal - Claude can be started manually
 	}
 
 	fmt.Printf("✅ Team session '%s' created!\n", name)
 	fmt.Printf("  Topic ID: %d\n", topicID)
-	fmt.Printf("  Path: %s\n", cwd)
+	fmt.Printf("  Path: %s\n", workDir)
 	fmt.Printf("  Provider: %s\n", providerName)
 	fmt.Printf("\n📱 Send messages in Telegram:\n")
 	fmt.Printf("  /planner <msg>   - Send to planner\n")

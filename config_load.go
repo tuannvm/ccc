@@ -41,11 +41,12 @@ func loadConfig() (*Config, error) {
 	if needsMigration {
 		// Parse everything except sessions first
 		type ConfigWithoutSessions struct {
-			BotToken    string `json:"bot_token"`
-			ChatID      int64  `json:"chat_id"`
-			GroupID     int64  `json:"group_id"`
-			ProjectsDir string `json:"projects_dir"`
-			Away        bool   `json:"away"`
+			BotToken     string                       `json:"bot_token"`
+			ChatID       int64                        `json:"chat_id"`
+			GroupID      int64                        `json:"group_id"`
+			ProjectsDir  string                       `json:"projects_dir"`
+			Away         bool                         `json:"away"`
+			TeamSessions map[int64]*SessionInfo       `json:"team_sessions,omitempty"`
 		}
 		var partial ConfigWithoutSessions
 		json.Unmarshal(data, &partial)
@@ -55,6 +56,8 @@ func loadConfig() (*Config, error) {
 		config.GroupID = partial.GroupID
 		config.ProjectsDir = partial.ProjectsDir
 		config.Away = partial.Away
+		// Preserve existing TeamSessions if present in the config
+		config.TeamSessions = partial.TeamSessions
 
 		// Migrate sessions
 		home, _ := os.UserHomeDir()
@@ -83,7 +86,12 @@ func loadConfig() (*Config, error) {
 				Path:    sessionPath,
 			}
 		}
-		// Save migrated config
+		// IMPORTANT: Initialize TeamSessions only if not already present
+		// The migration should preserve existing TeamSessions, not wipe them
+		if config.TeamSessions == nil {
+			config.TeamSessions = make(map[int64]*SessionInfo)
+		}
+		// Save migrated config (now with both Sessions and TeamSessions)
 		saveConfig(&config)
 	} else {
 		// Parse with new format
@@ -94,6 +102,10 @@ func loadConfig() (*Config, error) {
 
 	if config.Sessions == nil {
 		config.Sessions = make(map[string]*SessionInfo)
+	}
+	// IMPORTANT: Initialize TeamSessions if nil (may not be in old config files)
+	if config.TeamSessions == nil {
+		config.TeamSessions = make(map[int64]*SessionInfo)
 	}
 
 	// Validate the loaded config
