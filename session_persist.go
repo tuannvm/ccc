@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -133,13 +134,26 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 			return // Already persisted, nothing to do
 		}
 
-		// Last resort: Store in first empty pane (unreliable, but better than losing the ID)
-		// This should rarely happen if transcript paths follow the naming convention
-		hookLog("persistClaudeSessionID: WARNING - could not infer role from transcript=%s, using fallback", transcriptPath)
+		// Last resort: Try CCC_ROLE environment variable before random pane assignment
+		// This is set by the team runtime when starting Claude in each pane
+		if cccRole := os.Getenv("CCC_ROLE"); cccRole != "" {
+			role := session.PaneRole(strings.ToLower(cccRole))
+			if role == session.RolePlanner || role == session.RoleExecutor || role == session.RoleReviewer {
+				if pane, exists := sessInfo.Panes[role]; exists && pane != nil && pane.ClaudeSessionID == "" {
+					pane.ClaudeSessionID = claudeSessionID
+					saveConfig(config)
+					hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s using CCC_ROLE env var", claudeSessionID, role)
+					return
+				}
+			}
+		}
+
+		// Final fallback: Store in first empty pane (unreliable, but better than losing the ID)
+		hookLog("persistClaudeSessionID: WARNING - could not infer role from transcript=%s or CCC_ROLE, using random fallback", transcriptPath)
 		for role, pane := range sessInfo.Panes {
 			if pane != nil && pane.ClaudeSessionID == "" {
 				pane.ClaudeSessionID = claudeSessionID
-				hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s (may be incorrect)", claudeSessionID, role)
+				hookLog("persistClaudeSessionID: LAST RESORT - stored claude_session_id=%s in random role=%s (INCORRECT)", claudeSessionID, role)
 				break
 			}
 		}
