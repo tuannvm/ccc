@@ -1,9 +1,11 @@
 # Tmux Pane Architecture (Design Spec)
 
-> **Status**: Design document for a proposed multi-pane tmux architecture. This describes a system to be built, not current functionality.
+> **Status**: Design document for a multi-pane tmux architecture.
 >
 > **Last Updated**: 2026-03-20
-> **Status**: ⚠️ *Planning Phase — Not Implemented*
+> **Implementation Status**: 🟡 **In Progress** - Phases 0-3 Complete, Phases 4-7 Pending
+>
+> See `docs/final-summary.md` for detailed implementation status.
 
 ## Overview
 
