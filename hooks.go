@@ -101,6 +101,32 @@ func clearToolState(sessionName string) {
 	os.Remove(toolStatePath(sessionName))
 }
 
+// inferRoleFromTranscriptPathForPrefix extracts the role from a transcript file path
+// This is a duplicate of the function in session_persist.go to avoid circular dependencies
+// Returns empty string if no role is found
+func inferRoleFromTranscriptPathForPrefix(transcriptPath string) session.PaneRole {
+	if transcriptPath == "" {
+		return ""
+	}
+	base := filepath.Base(transcriptPath)
+	base = strings.TrimSuffix(base, ".jsonl")
+	base = strings.TrimSuffix(base, ".json")
+
+	// Check for role suffixes (e.g., "session-planner", "session-executor", "session-reviewer")
+	if strings.HasSuffix(base, "-planner") || strings.HasSuffix(base, "_planner") {
+		return session.RolePlanner
+	}
+	if strings.HasSuffix(base, "-executor") || strings.HasSuffix(base, "_executor") {
+		return session.RoleExecutor
+	}
+	if strings.HasSuffix(base, "-reviewer") || strings.HasSuffix(base, "_reviewer") {
+		return session.RoleReviewer
+	}
+
+	// No role found in path
+	return ""
+}
+
 // addTextToToolState adds an assistant text block to the tool state, ordered by timestamp.
 func addTextToToolState(sessName string, text string, ts int64) {
 	state := loadToolState(sessName)
@@ -312,9 +338,25 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 				}
 			}
 		}
-		// Fallback: check CCC_ROLE environment variable (may not work due to process isolation)
+		// Fallback 1: Try to infer role from transcript path (same logic as persistClaudeSessionID)
+		if rolePrefix == "" && transcriptPath != "" {
+			hookLog("deliver-unsent: role not found via panes, trying transcript path inference")
+			role := inferRoleFromTranscriptPathForPrefix(transcriptPath)
+			if role != "" {
+				rolePrefixes := map[session.PaneRole]string{
+					session.RolePlanner:  "[Planner] ",
+					session.RoleExecutor: "[Executor] ",
+					session.RoleReviewer: "[Reviewer] ",
+				}
+				if prefix, ok := rolePrefixes[role]; ok {
+					rolePrefix = prefix
+					hookLog("deliver-unsent: inferred role=%s from transcript path", role)
+				}
+			}
+		}
+		// Fallback 2: check CCC_ROLE environment variable (may not work due to process isolation)
 		if rolePrefix == "" {
-			hookLog("deliver-unsent: role not found via panes, trying CCC_ROLE env var")
+			hookLog("deliver-unsent: role not found via transcript, trying CCC_ROLE env var")
 			if cccRole := os.Getenv("CCC_ROLE"); cccRole != "" {
 				rolePrefixes := map[string]string{
 					"planner":  "[Planner] ",

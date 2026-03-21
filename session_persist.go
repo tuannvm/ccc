@@ -82,6 +82,13 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 			// Update only the specific pane for this role
 			if pane, exists := sessInfo.Panes[role]; exists && pane != nil {
 				if pane.ClaudeSessionID != claudeSessionID {
+					// Clear this claudeSessionID from all OTHER panes to prevent ambiguity
+					for otherRole, otherPane := range sessInfo.Panes {
+						if otherRole != role && otherPane != nil && otherPane.ClaudeSessionID == claudeSessionID {
+							otherPane.ClaudeSessionID = ""
+							hookLog("cleared duplicate claude_session_id=%s from sibling pane role=%s", claudeSessionID, otherRole)
+						}
+					}
 					pane.ClaudeSessionID = claudeSessionID
 					saveConfig(config)
 					hookLog("persisted claude_session_id=%s for team session=%s role=%s", claudeSessionID, sessName, role)

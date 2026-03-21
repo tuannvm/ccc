@@ -143,9 +143,10 @@ func (r *TeamRuntime) initTmuxPath() error {
 func (r *TeamRuntime) getSessionName(sess Session) string {
 	// Use GetName() which handles SessionName field for team sessions
 	name := sess.GetName()
-	// Sanitize for tmux: replace dots with underscores
-	// This matches the behavior of tmuxSafeName() for consistency
-	return strings.ReplaceAll(name, ".", "_")
+	// Sanitize for tmux: replace dots with double underscores
+	// This matches the behavior of tmuxSafeName() in the main package
+	// Double underscores avoid conflicts with natural underscores in names
+	return strings.ReplaceAll(name, ".", "__")
 }
 
 // windowExists checks if a tmux window exists (with 5s timeout)

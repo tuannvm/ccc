@@ -77,7 +77,9 @@ func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID
 
 // getTeamRoleTarget returns the tmux target for a specific role in a team session
 func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error) {
-	target := "ccc-team:" + sessionName
+	// Sanitize session name for tmux (dots become double underscores)
+	sanitizedName := tmuxSafeName(sessionName)
+	target := "ccc-team:" + sanitizedName
 
 	// Map role to pane index (tmux uses 1-based indexing)
 	roleToIndex := map[session.PaneRole]int{
@@ -96,9 +98,9 @@ func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error
 
 // switchToTeamWindow switches to a team session window and selects the appropriate pane
 func switchToTeamWindow(sessionName string, role session.PaneRole) error {
-	// For now, just select the window
-	// In a full implementation, this would also select the specific pane
-	target := "ccc-team:" + sessionName
+	// Sanitize session name for tmux (dots become double underscores)
+	sanitizedName := tmuxSafeName(sessionName)
+	target := "ccc-team:" + sanitizedName
 
 	// Select the window to make it active
 	exec.Command(tmuxPath, "select-window", "-t", target).Run()
