@@ -87,12 +87,13 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 			return fmt.Errorf("failed to get target for role %s: %w", role, err)
 		}
 
-		// Build the ccc run command with CCC_ROLE environment variable
+		// Build the ccc run command with CCC_ROLE environment variable and provider
 		// We set CCC_ROLE to indicate which role this pane should use
+		// We pass --provider to ensure the correct provider is used for this session
 		// Export CCC_ROLE separately to ensure it's available to ccc run
 		// Use bash explicitly to avoid shell compatibility issues
 		// NOTE: We use double quotes for the bash -c string to allow single quotes in workDir
-		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run\"", role, shellQuote(workDir))
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run --provider %s\"", role, shellQuote(workDir), sess.GetProviderName())
 
 		// Clear any existing content in the pane
 		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()
