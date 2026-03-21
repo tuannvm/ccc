@@ -5,7 +5,7 @@
 **Reviewer**: Claude Code (Ralph Loop)
 **Scope**: session/, routing/, types.go, team_routing.go, team_commands.go, hooks.go, session_lookup.go, session_persist.go
 
-**Status**: ✅ **ALL ISSUES RESOLVED** (P2 fixed in commit 2026-03-21, critical provider bug fixed in commit e4e3c94)
+**Status**: ✅ **ALL ISSUES RESOLVED** (P2 fixed in commit 2026-03-21, critical bugs fixed: provider selection (e4e3c94), role name display (2026-03-21))
 
 ---
 
@@ -27,6 +27,37 @@
 - CLI: `ccc team new <name> --provider <provider>` - now works correctly
 - Telegram: `/team <name>@<provider>` - now works correctly
 - Provider selection keyboard - now works correctly
+
+### 🔴 Role Name Display Bug (Fixed 2026-03-21)
+
+**Issue**: Role names displayed incorrectly in Telegram messages (e.g., planner showing [Executor]) even though routing was correct.
+
+**Root Cause**: `persistClaudeSessionID()` couldn't determine which pane a Claude session belonged to:
+1. Transcript files are named `transcript.jsonl`, not `session-planner.jsonl` - transcript path inference failed
+2. `os.Getenv("CCC_ROLE")` didn't work because hooks run in ccc service process, not pane tmux context
+3. Random pane assignment caused wrong Claude session ID → role mapping
+
+**Fix**:
+```go
+// NEW: Query tmux for active pane index/name to determine role
+func inferRoleFromTmuxPane(sessionName string) session.PaneRole {
+    // Query tmux: which pane is active in ccc-team:session-name?
+    // Primary: pane name (Planner/Executor/Reviewer)
+    // Fallback: pane index (1=planner, 2=executor, 3=reviewer)
+}
+```
+
+Also added pane naming in `session/team_runtime.go`:
+- Pane 1 → "Planner"
+- Pane 2 → "Executor" 
+- Pane 3 → "Reviewer"
+
+**Impact**:
+- Telegram messages now show correct role prefix: `[Planner]`, `[Executor]`, `[Reviewer]`
+- Claude statusline shows role icon: 📋 Planner, ⚙️ Executor, 🔍 Reviewer
+- More robust role determination using tmux query
+
+---
 
 ---
 

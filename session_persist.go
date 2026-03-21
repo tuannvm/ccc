@@ -1,7 +1,8 @@
 package main
 
 import (
-	"os"
+	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -48,6 +49,56 @@ func inferRoleFromTranscriptPath(transcriptPath string) session.PaneRole {
 	}
 
 	// No role found in path
+	return ""
+}
+
+// inferRoleFromTmuxPane determines the role by querying tmux for the active pane
+// Team sessions have panes named: Planner, Executor, Reviewer
+// Falls back to pane index if names are not set: 1=planner, 2=executor, 3=reviewer
+// Returns empty string if tmux is not available or query fails
+func inferRoleFromTmuxPane(sessionName string) session.PaneRole {
+	if tmuxPath == "" || sessionName == "" {
+		return ""
+	}
+	// Query tmux for the active pane name in the session window
+	// Format: "ccc-team:session-name"
+	target := fmt.Sprintf("ccc-team:%s", sessionName)
+	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{pane_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		hookLog("inferRoleFromTmuxPane: tmux query failed: %v", err)
+		return ""
+	}
+	paneName := strings.TrimSpace(string(out))
+	// Map pane name to role (preferred - more explicit)
+	roleMap := map[string]session.PaneRole{
+		"Planner":  session.RolePlanner,
+		"Executor": session.RoleExecutor,
+		"Reviewer": session.RoleReviewer,
+	}
+	if role, ok := roleMap[paneName]; ok {
+		hookLog("inferRoleFromTmuxPane: determined role=%s from pane name=%s", role, paneName)
+		return role
+	}
+	// Fallback: Try pane index if names are not set (for legacy sessions)
+	cmd2 := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{pane_index}")
+	out2, err2 := cmd2.Output()
+	if err2 != nil {
+		hookLog("inferRoleFromTmuxPane: pane index query failed: %v", err2)
+		return ""
+	}
+	paneIndex := strings.TrimSpace(string(out2))
+	// Map pane index to role (tmux uses 1-based indexing)
+	indexMap := map[string]session.PaneRole{
+		"1": session.RolePlanner,
+		"2": session.RoleExecutor,
+		"3": session.RoleReviewer,
+	}
+	if role, ok := indexMap[paneIndex]; ok {
+		hookLog("inferRoleFromTmuxPane: determined role=%s from pane index=%s (fallback)", role, paneIndex)
+		return role
+	}
+	hookLog("inferRoleFromTmuxPane: unknown pane name=%s or index=%s", paneName, paneIndex)
 	return ""
 }
 
@@ -134,22 +185,21 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 			return // Already persisted, nothing to do
 		}
 
-		// Last resort: Try CCC_ROLE environment variable before random pane assignment
-		// This is set by the team runtime when starting Claude in each pane
-		if cccRole := os.Getenv("CCC_ROLE"); cccRole != "" {
-			role := session.PaneRole(strings.ToLower(cccRole))
-			if role == session.RolePlanner || role == session.RoleExecutor || role == session.RoleReviewer {
-				if pane, exists := sessInfo.Panes[role]; exists && pane != nil && pane.ClaudeSessionID == "" {
-					pane.ClaudeSessionID = claudeSessionID
-					saveConfig(config)
-					hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s using CCC_ROLE env var", claudeSessionID, role)
-					return
-				}
+		// Last resort: Try to infer role from tmux pane index
+		// Team sessions use fixed pane indices: 1=planner, 2=executor, 3=reviewer
+		// We query tmux for the active pane in the session window
+		role = inferRoleFromTmuxPane(sessName)
+		if role != "" {
+			if pane, exists := sessInfo.Panes[role]; exists && pane != nil && pane.ClaudeSessionID == "" {
+				pane.ClaudeSessionID = claudeSessionID
+				saveConfig(config)
+				hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s using tmux pane index", claudeSessionID, role)
+				return
 			}
 		}
 
 		// Final fallback: Store in first empty pane (unreliable, but better than losing the ID)
-		hookLog("persistClaudeSessionID: WARNING - could not infer role from transcript=%s or CCC_ROLE, using random fallback", transcriptPath)
+		hookLog("persistClaudeSessionID: WARNING - could not infer role from transcript=%s or tmux, using random fallback", transcriptPath)
 		for role, pane := range sessInfo.Panes {
 			if pane != nil && pane.ClaudeSessionID == "" {
 				pane.ClaudeSessionID = claudeSessionID

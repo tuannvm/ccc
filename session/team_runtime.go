@@ -243,6 +243,37 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 		return fmt.Errorf("failed to equalize panes: %w", err)
 	}
 
+	// Name the panes according to their roles for better UX and role determination
+	// Pane 1 (left) = Planner, Pane 2 (middle) = Executor, Pane 3 (right) = Reviewer
+	ctx6, cancel6 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel6()
+
+	if err := exec.CommandContext(ctx6, r.tmuxPath, "select-pane", "-t", target+".1", "-T", "Planner").Run(); err != nil {
+		return fmt.Errorf("failed to name pane 1: %w", err)
+	}
+
+	ctx7, cancel7 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel7()
+
+	if err := exec.CommandContext(ctx7, r.tmuxPath, "select-pane", "-t", target+".2", "-T", "Executor").Run(); err != nil {
+		return fmt.Errorf("failed to name pane 2: %w", err)
+	}
+
+	ctx8, cancel8 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel8()
+
+	if err := exec.CommandContext(ctx8, r.tmuxPath, "select-pane", "-t", target+".3", "-T", "Reviewer").Run(); err != nil {
+		return fmt.Errorf("failed to name pane 3: %w", err)
+	}
+
+	// Verify pane names were set correctly (for debugging)
+	ctx9, cancel9 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel9()
+	verifyCmd := exec.CommandContext(ctx9, r.tmuxPath, "list-panes", "-t", target, "-F", "#{pane_index}: #{pane_name}")
+	if out, err := verifyCmd.Output(); err == nil {
+		fmt.Printf("✓ Team session panes named: %s\n", strings.TrimSpace(string(out)))
+	}
+
 	return nil
 }
 

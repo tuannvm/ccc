@@ -660,10 +660,11 @@ Team sessions provide a 3-pane tmux layout where specialized AI agents collabora
    - Messages are prefixed with role: `[Planner]`, `[Executor]`, `[Reviewer]`
    - User routes commands using `/planner`, `/executor`, `/reviewer`
 
-2. **Role Inference**: Hooks identify which pane sent a message by:
-   - Extracting role from transcript path (e.g., `session-planner.jsonl`)
-   - Looking up pane by matching Claude session ID
-   - Fallback to CCC_ROLE environment variable
+2. **Role Determination**: Hooks identify which pane sent a message by:
+   - Primary: Query tmux for active pane name (Planner/Executor/Reviewer)
+   - Fallback 1: Query tmux for active pane index (1=planner, 2=executor, 3=reviewer)
+   - Fallback 2: Extract role from transcript path (e.g., `session-planner.jsonl`)
+   - Store Claude session ID per-pane in `config.TeamSessions[topic_id].Panes[role]`
 
 3. **Dedicated Tmux Session**: Team sessions use `ccc-team` tmux session
    - Isolated from single-pane sessions (in `ccc` session)
@@ -726,6 +727,18 @@ User: /team demo-team
 - **Solution**: Pass `--provider` flag to `ccc run` command in each pane
 - **Impact**: All three panes now correctly use the selected provider
 - **Affects**: CLI (`ccc team new <name> --provider <provider>`), Telegram (`/team <name>@<provider>`)
+
+**Bug #4: Role Name Display Bug** (FIXED - 2026-03-21)
+- **Problem**: Role names displayed incorrectly in Telegram (e.g., planner showing [Executor])
+- **Root Cause**: 
+  - Transcript files named `transcript.jsonl` (not `session-planner.jsonl`) - path inference failed
+  - `os.Getenv("CCC_ROLE")` didn't work (hooks run in ccc service, not pane context)
+  - Random pane assignment caused wrong Claude session ID → role mapping
+- **Solution**: 
+  - Query tmux for active pane index/name to determine role
+  - Name panes during creation: Pane 1="Planner", Pane 2="Executor", Pane 3="Reviewer"
+  - Store Claude session ID in correct pane using tmux query
+- **Impact**: Telegram messages now show correct role prefix `[Planner]`, `[Executor]`, `[Reviewer]`
 
 ### Configuration
 
