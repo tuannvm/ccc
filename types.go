@@ -47,6 +47,8 @@ type Config struct {
 	ChatID        int64  `json:"chat_id"`                    // Private chat for simple commands
 	GroupID       int64  `json:"group_id,omitempty"`         // Group with topics for sessions
 	MultiUserMode bool   `json:"multi_user_mode,omitempty"`  // Allow any group member (default: false = owner only)
+	// API 9.5: Custom emoji IDs for forum topic icons (optional)
+	CustomEmojiIDs map[string]string `json:"custom_emoji_ids,omitempty"` // provider -> emoji_id (e.g., "zai": "5372874709367178364")
 
 	// ========== Sessions ==========
 	Sessions map[string]*SessionInfo `json:"sessions,omitempty"` // session name -> session info
@@ -81,6 +83,7 @@ type TelegramMessage struct {
 		ID       int64  `json:"id"`
 		Username string `json:"username"`
 	} `json:"from"`
+	SenderTag      string            `json:"sender_tag,omitempty"` // API 9.5: Member tag
 	Text           string            `json:"text"`
 	ReplyToMessage *TelegramMessage  `json:"reply_to_message,omitempty"`
 	Voice          *TelegramVoice    `json:"voice,omitempty"`

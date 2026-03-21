@@ -475,41 +475,9 @@ func worktreeColor(baseSessionName string) string {
 }
 
 func createForumTopic(config *Config, name string, providerName string, baseSessionName string) (int64, error) {
-	if config.GroupID == 0 {
-		return 0, fmt.Errorf("no group configured. Add bot to a group with topics enabled and run: ccc setgroup")
-	}
-
-	// Add first letter of provider as prefix (Telegram uses first char as icon)
-	topicName := name
-	if providerName != "" && len(providerName) > 0 {
-		prefix := strings.ToUpper(string(providerName[0]))
-		topicName = fmt.Sprintf("%s %s", prefix, name)
-	}
-
-	params := url.Values{
-		"chat_id": {fmt.Sprintf("%d", config.GroupID)},
-		"name":    {topicName},
-	}
-
-	// Add icon color for worktree sessions to group them by base project
-	if baseSessionName != "" {
-		params.Add("icon_color", worktreeColor(baseSessionName))
-	}
-
-	result, err := telegramAPI(config, "createForumTopic", params)
-	if err != nil {
-		return 0, err
-	}
-	if !result.OK {
-		return 0, fmt.Errorf("failed to create topic: %s", result.Description)
-	}
-
-	var topic TopicResult
-	if err := json.Unmarshal(result.Result, &topic); err != nil {
-		return 0, fmt.Errorf("failed to parse topic result: %w", err)
-	}
-
-	return topic.MessageThreadID, nil
+	// Use createForumTopicWithEmoji for API 9.5 custom emoji support
+	// This automatically handles fallback to letter prefix if emoji is not available
+	return createForumTopicWithEmoji(config, name, providerName, baseSessionName)
 }
 
 func deleteForumTopic(config *Config, topicID int64) error {
@@ -577,4 +545,252 @@ func setBotCommands(botToken string) {
 	if err == nil {
 		resp.Body.Close()
 	}
+}
+
+// ========== API 9.5: Telegram Bot API 9.5 Support ==========
+// https://core.telegram.org/bots/api#march-1-2026
+
+// DateTimeEntity represents a date_time MessageEntity for API 9.5
+// Allows Telegram to display timestamps in the user's locale with automatic formatting
+type DateTimeEntity struct {
+	Type     string `json:"type"`     // "date_time"
+	Offset   int    `json:"offset"`   // UTF-16 code units to start of entity
+	Length   int    `json:"length"`   // Length of entity in UTF-16 code units
+	UnixTime int64  `json:"unix_time"` // Unix timestamp
+	Format   string `json:"date_time_format,omitempty"` // Format string: r|w?[dD]?[tT]?
+}
+
+// ForumTopicIcons represents the result of getForumTopicIconStickers
+type ForumTopicIcons struct {
+	OK     bool      `json:"ok"`
+	Result []Sticker `json:"result,omitempty"`
+}
+
+// Sticker represents a sticker (simplified for icon stickers)
+type Sticker struct {
+	FileID        string `json:"file_id"`
+	CustomEmojiID string `json:"custom_emoji_id,omitempty"`
+	Emoji         string `json:"emoji,omitempty"`
+}
+
+// Common date/time format presets for API 9.5 date_time entities
+const (
+	FormatRelative    = "r"     // Relative time (e.g., "in 5 minutes", "2 hours ago")
+	FormatWeekday     = "w"     // Day of week (e.g., "Monday")
+	FormatShortDate   = "d"     // Short date (e.g., "17.03.22")
+	FormatLongDate    = "D"     // Long date (e.g., "March 17, 2022")
+	FormatShortTime   = "t"     // Short time (e.g., "22:45")
+	FormatLongTime    = "T"     // Long time (e.g., "22:45:00")
+	FormatWeekdayDate = "wd"    // Weekday + short date (e.g., "Monday, 17.03.22")
+	FormatWeekdayTime = "wt"    // Weekday + short time (e.g., "Monday, 22:45")
+	FormatDateTime    = "wDT"   // Full datetime (e.g., "Monday, March 17, 2022 at 22:45:00")
+	FormatShortDT     = "dT"    // Short date + time (e.g., "17.03.22, 22:45")
+)
+
+// getForumTopicIconStickers retrieves custom emoji stickers that can be used as forum topic icons
+func getForumTopicIconStickers(config *Config) ([]Sticker, error) {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getForumTopicIconStickers", config.BotToken)
+	resp, err := telegramGet(config.BotToken, apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result ForumTopicIcons
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if !result.OK {
+		return nil, fmt.Errorf("failed to get forum topic icons")
+	}
+	return result.Result, nil
+}
+
+// createForumTopicWithEmoji creates a forum topic with a custom emoji icon
+// This is an enhanced version of createForumTopic that uses icon_custom_emoji_id instead of letter prefix
+func createForumTopicWithEmoji(config *Config, name string, providerName string, baseSessionName string) (int64, error) {
+	if config.GroupID == 0 {
+		return 0, fmt.Errorf("no group configured")
+	}
+
+	// Determine emoji ID based on provider and whether this is a worktree
+	var emojiID string
+	isWorktree := baseSessionName != ""
+	if isWorktree {
+		emojiID = getEmojiIDForWorktree(config, baseSessionName)
+	} else if providerName != "" {
+		emojiID = getEmojiIDForProvider(config, providerName)
+	}
+
+	// Build topic name - when using emoji, we don't need the letter prefix
+	topicName := name
+
+	params := url.Values{
+		"chat_id": {fmt.Sprintf("%d", config.GroupID)},
+		"name":    {topicName},
+	}
+
+	// Add custom emoji icon if available
+	if emojiID != "" {
+		params.Add("icon_custom_emoji_id", emojiID)
+	} else if providerName != "" && len(providerName) > 0 {
+		// Fallback to letter prefix if no emoji available
+		prefix := strings.ToUpper(string(providerName[0]))
+		topicName = fmt.Sprintf("%s %s", prefix, name)
+		params.Set("name", topicName)
+	}
+
+	// Add icon color for worktree sessions to group them by base project
+	if baseSessionName != "" {
+		params.Add("icon_color", worktreeColor(baseSessionName))
+	}
+
+	result, err := telegramAPI(config, "createForumTopic", params)
+	if err != nil {
+		return 0, err
+	}
+	if !result.OK {
+		return 0, fmt.Errorf("failed to create topic: %s", result.Description)
+	}
+
+	var topic TopicResult
+	if err := json.Unmarshal(result.Result, &topic); err != nil {
+		return 0, fmt.Errorf("failed to parse topic result: %w", err)
+	}
+
+	return topic.MessageThreadID, nil
+}
+
+// sendMessageWithDateTime sends a message with date_time entities
+func sendMessageWithDateTime(config *Config, chatID int64, threadID int64, text string, dateEntities []DateTimeEntity) error {
+	// Build the message with entities
+	type Message struct {
+		ChatID         int64            `json:"chat_id"`
+		Text           string           `json:"text"`
+		Entities       []DateTimeEntity `json:"entities"`
+		MessageThreadID int64           `json:"message_thread_id,omitempty"`
+	}
+
+	msg := Message{
+		ChatID:   chatID,
+		Text:     text,
+		Entities: dateEntities,
+	}
+	if threadID > 0 {
+		msg.MessageThreadID = threadID
+	}
+
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", config.BotToken)
+	resp, err := http.Post(apiURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return redactTokenError(err, config.BotToken)
+	}
+	defer resp.Body.Close()
+
+	var result TelegramResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if !result.OK {
+		return fmt.Errorf("telegram error: %s", result.Description)
+	}
+	return nil
+}
+
+// formatDateTimeEntity creates a DateTimeEntity for a given timestamp
+// The caller is responsible for providing the correct textLength (in UTF-16 code units)
+// that corresponds to the actual placeholder text in the message
+func formatDateTimeEntity(timestamp time.Time, format string, offset int, textLength int) DateTimeEntity {
+	return DateTimeEntity{
+		Type:     "date_time",
+		Offset:   offset,
+		Length:   textLength,
+		UnixTime: timestamp.Unix(),
+		Format:   format,
+	}
+}
+
+// NewDateEntity creates a date entity with a specific format
+// textLength is the UTF-16 length of the placeholder text in the message
+func NewDateEntity(t time.Time, format string, textOffset int, textLength int) DateTimeEntity {
+	return formatDateTimeEntity(t, format, textOffset, textLength)
+}
+
+// formatMessageWithTimestamp adds a timestamp with date_time entity to a message
+// Returns the formatted message text and the entities array
+func formatMessageWithTimestamp(baseMessage string, timestamp time.Time, format string) (string, []DateTimeEntity) {
+	// Use a simple placeholder that will be replaced by Telegram's localized display
+	// The placeholder text itself doesn't matter much - Telegram uses unix_time for display
+	placeholder := "⏰"
+	messageWithTime := fmt.Sprintf("%s\n\n📅 %s", baseMessage, placeholder)
+
+	// Calculate UTF-16 offset where the placeholder starts
+	// Need to account for: baseMessage + "\n\n" + "📅 "
+	baseMsgUtf16 := utf16Len(baseMessage)
+	newlineUtf16 := 2 // "\n\n" = 2 UTF-16 units
+	emojiUtf16 := 2   // "📅" emoji = 1 UTF-16 surrogate pair = 2 units
+	spaceUtf16 := 1   // " " = 1 UTF-16 unit
+	offset := baseMsgUtf16 + newlineUtf16 + emojiUtf16 + spaceUtf16
+
+	// Length is the UTF-16 length of the placeholder
+	placeholderUtf16 := utf16Len(placeholder)
+
+	entity := DateTimeEntity{
+		Type:     "date_time",
+		Offset:   offset,
+		Length:   placeholderUtf16,
+		UnixTime: timestamp.Unix(),
+		Format:   format,
+	}
+
+	return messageWithTime, []DateTimeEntity{entity}
+}
+
+// utf16Len calculates the UTF-16 code unit length of a string
+// This is required because Telegram entity offsets are in UTF-16, not bytes
+func utf16Len(s string) int {
+	len := 0
+	for _, r := range s {
+		if r >= 0x10000 {
+			len += 2 // Surrogate pair for characters outside BMP
+		} else {
+			len += 1
+		}
+	}
+	return len
+}
+
+// sendMessageWithTimestamp sends a message with a timestamp formatted using date_time entity
+func sendMessageWithTimestamp(config *Config, chatID int64, threadID int64, baseMessage string, timestamp time.Time, format string) error {
+	text, entities := formatMessageWithTimestamp(baseMessage, timestamp, format)
+	return sendMessageWithDateTime(config, chatID, threadID, text, entities)
+}
+
+// getEmojiIDForProvider returns the custom emoji ID for a given provider
+// Only returns non-empty if the user has explicitly configured a custom emoji ID
+func getEmojiIDForProvider(config *Config, providerName string) string {
+	// Only use user-configured custom emoji IDs
+	// Built-in placeholder constants are NOT returned to avoid API errors
+	if config.CustomEmojiIDs != nil {
+		if emojiID, ok := config.CustomEmojiIDs[providerName]; ok && emojiID != "" {
+			return emojiID
+		}
+	}
+	return "" // No valid custom emoji configured - will fall back to letter prefix
+}
+
+// getEmojiIDForWorktree returns a consistent emoji ID for worktree sessions
+// Only returns non-empty if the user has explicitly configured a custom emoji ID
+func getEmojiIDForWorktree(config *Config, baseSessionName string) string {
+	// Only use user-configured custom emoji IDs
+	// Built-in placeholder constants are NOT returned to avoid API errors
+	if config.CustomEmojiIDs != nil {
+		if emojiID, ok := config.CustomEmojiIDs["worktree"]; ok && emojiID != "" {
+			return emojiID
+		}
+	}
+	return "" // No valid custom emoji configured - will fall back to letter prefix
 }
