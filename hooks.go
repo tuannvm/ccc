@@ -101,49 +101,6 @@ func clearToolState(sessionName string) {
 	os.Remove(toolStatePath(sessionName))
 }
 
-// inferRoleFromTranscriptPathForPrefix extracts the role from a transcript file path
-// This is a duplicate of the function in session_persist.go to avoid circular dependencies
-// Returns empty string if no role is found
-//
-// Handles multiple transcript naming patterns:
-// - session-planner.jsonl, session_planner.jsonl
-// - planner.jsonl, planner-session.jsonl
-// - session.planner.jsonl (with dot separator)
-func inferRoleFromTranscriptPathForPrefix(transcriptPath string) session.PaneRole {
-	if transcriptPath == "" {
-		return ""
-	}
-	base := filepath.Base(transcriptPath)
-	// Remove extensions - handle multiple extensions safely
-	for {
-		newBase := strings.TrimSuffix(base, ".jsonl")
-		if newBase == base {
-			newBase = strings.TrimSuffix(base, ".json")
-		}
-		if newBase == base {
-			break // No more extensions to remove
-		}
-		base = newBase
-	}
-
-	// Convert to lowercase for case-insensitive matching
-	baseLower := strings.ToLower(base)
-
-	// Check for role keywords anywhere in the filename
-	// Order matters: check for longer substrings first to avoid false positives
-	if strings.Contains(baseLower, "planner") {
-		return session.RolePlanner
-	}
-	if strings.Contains(baseLower, "executor") {
-		return session.RoleExecutor
-	}
-	if strings.Contains(baseLower, "reviewer") {
-		return session.RoleReviewer
-	}
-
-	// No role found in path
-	return ""
-}
 
 // addTextToToolState adds an assistant text block to the tool state, ordered by timestamp.
 func addTextToToolState(sessName string, text string, ts int64) {
@@ -359,7 +316,7 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 		// Fallback 1: Try to infer role from transcript path (same logic as persistClaudeSessionID)
 		if rolePrefix == "" && transcriptPath != "" {
 			hookLog("deliver-unsent: role not found via panes, trying transcript path inference")
-			role := inferRoleFromTranscriptPathForPrefix(transcriptPath)
+			role := inferRoleFromTranscriptPath(transcriptPath)
 			if role != "" {
 				rolePrefixes := map[session.PaneRole]string{
 					session.RolePlanner:  "[Planner] ",
