@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/tuannvm/ccc/session"
 )
@@ -307,18 +308,22 @@ func (tc *TeamCommands) AttachTeam(args []string) error {
 		return fmt.Errorf("team runtime not registered")
 	}
 
-	// Get target for the requested role
+	// Get target for the requested role (e.g., "ccc-team:myproject.2" for executor)
 	target, err := runtime.GetRoleTarget(sessInfo, role)
 	if err != nil {
 		return fmt.Errorf("failed to get target for role %s: %w", role, err)
 	}
 
-	// Attach to tmux session and select the pane
-	if err := attachToTmuxSession("ccc-team"); err != nil {
+	// Extract session name from target (format: "ccc-team:myproject.2" -> "ccc-team:myproject")
+	targetParts := strings.SplitN(target, ".", 2)
+	sessionTarget := targetParts[0] // "ccc-team:myproject"
+
+	// Attach to tmux session and window (this selects the correct window in the ccc-team session)
+	if err := attachToTmuxSession(sessionTarget); err != nil {
 		return fmt.Errorf("failed to attach to tmux: %w", err)
 	}
 
-	// Select the specific pane
+	// Select the specific pane (now that we're in the correct window)
 	exec.Command("tmux", "select-pane", "-t", target).Run()
 
 	fmt.Printf("Attached to team session '%s', role: %s\n", name, role)

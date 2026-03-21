@@ -123,11 +123,18 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 		if info, exists := config.Sessions[currentWindowName]; exists && info != nil && info.ClaudeSessionID == claudeSessionID {
 			return currentWindowName, info.TopicID
 		}
-		// Try direct match in team sessions
+		// Try direct match in team sessions (check Panes map)
 		if config.TeamSessions != nil {
 			for tid, info := range config.TeamSessions {
-				if info != nil && info.SessionName == currentWindowName && info.ClaudeSessionID == claudeSessionID {
-					return info.SessionName, tid
+				if info != nil && info.SessionName == currentWindowName {
+					// For team sessions, check each pane's ClaudeSessionID
+					if info.Panes != nil {
+						for _, pane := range info.Panes {
+							if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+								return info.SessionName, tid
+							}
+						}
+					}
 				}
 			}
 		}
@@ -150,20 +157,28 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 				sanitizedTopicID = info.TopicID
 			}
 		}
-		// Also check team sessions for sanitized match
+		// Also check team sessions for sanitized match (check Panes map)
 		if config.TeamSessions != nil {
 			for tid, info := range config.TeamSessions {
-				if info == nil || info.ClaudeSessionID != claudeSessionID {
+				if info == nil {
 					continue
 				}
-				if tmuxSafeName(info.SessionName) == currentWindowName {
-					if sanitizedMatch != "" {
-						hookLog("WARNING: Ambiguous claude_session_id '%s' and window '%s' matches multiple sessions: %s, %s",
-							claudeSessionID, currentWindowName, sanitizedMatch, info.SessionName)
-						return "", 0
+				// For team sessions, check each pane's ClaudeSessionID
+				if info.Panes != nil {
+					for _, pane := range info.Panes {
+						if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+							if tmuxSafeName(info.SessionName) == currentWindowName {
+								if sanitizedMatch != "" {
+									// Ambiguous! Multiple sessions with same ID sanitize to the same window name
+									hookLog("WARNING: Ambiguous claude_session_id '%s' and window '%s' matches multiple sessions: %s, %s",
+										claudeSessionID, currentWindowName, sanitizedMatch, info.SessionName)
+									return "", 0
+								}
+								sanitizedMatch = info.SessionName
+								sanitizedTopicID = tid
+							}
+						}
 					}
-					sanitizedMatch = info.SessionName
-					sanitizedTopicID = tid
 				}
 			}
 		}
@@ -180,13 +195,20 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 			return name, info.TopicID
 		}
 	}
-	// Fall back to first match in team sessions
+	// Fall back to first match in team sessions (check Panes map)
 	if config.TeamSessions != nil {
 		for tid, info := range config.TeamSessions {
-			if info == nil || info.ClaudeSessionID != claudeSessionID {
+			if info == nil {
 				continue
 			}
-			return info.SessionName, tid
+			// For team sessions, check each pane's ClaudeSessionID
+			if info.Panes != nil {
+				for _, pane := range info.Panes {
+					if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+						return info.SessionName, tid
+					}
+				}
+			}
 		}
 	}
 	return "", 0
