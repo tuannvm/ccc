@@ -30,7 +30,7 @@ func (r *TeamRuntime) EnsureLayout(sess Session, workDir string) error {
 	}
 
 	sessionName := r.getSessionName(sess)
-	target := "ccc:" + sessionName
+	target := "ccc-team:" + sessionName
 
 	// Check if window already exists
 	if r.windowExists(target) {
@@ -49,7 +49,7 @@ func (r *TeamRuntime) EnsureLayout(sess Session, workDir string) error {
 // For team sessions: planner -> :.0, executor -> :.1, reviewer -> :.2
 func (r *TeamRuntime) GetRoleTarget(sess Session, role PaneRole) (string, error) {
 	sessionName := r.getSessionName(sess)
-	target := "ccc:" + sessionName
+	target := "ccc-team:" + sessionName
 
 	// Map role to pane index
 	roleToIndex := map[PaneRole]int{
@@ -174,7 +174,7 @@ func (r *TeamRuntime) killWindow(target string) error {
 // createThreePaneLayout creates a new 3-pane tmux window
 // Layout: Planner (left) | Executor (middle) | Reviewer (right)
 func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error {
-	// Parse target (format: "ccc:sessionname")
+	// Parse target (format: "ccc-team:sessionname")
 	parts := strings.SplitN(target, ":", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid target format: %s", target)
@@ -182,6 +182,11 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 
 	sessName := parts[0]
 	windowName := parts[1]
+
+	// Ensure the ccc-team session exists
+	if err := r.ensureTeamSession(sessName); err != nil {
+		return fmt.Errorf("failed to ensure team session: %w", err)
+	}
 
 	// Create new window (with timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -227,6 +232,43 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	if err := exec.CommandContext(ctx5, r.tmuxPath, "select-layout", "-t", target, "even-horizontal").Run(); err != nil {
 		return fmt.Errorf("failed to equalize panes: %w", err)
 	}
+
+	return nil
+}
+
+// ensureTeamSession ensures the ccc-team tmux session exists
+func (r *TeamRuntime) ensureTeamSession(sessionName string) error {
+	// Check if session exists
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, r.tmuxPath, "list-sessions", "-F", "#{session_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	// Check if ccc-team session already exists
+	sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, sess := range sessions {
+		if sess == sessionName {
+			return nil // Session exists
+		}
+	}
+
+	// Create the session
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	if err := exec.CommandContext(ctx2, r.tmuxPath, "new-session", "-d", "-s", sessionName).Run(); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Enable mouse support
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel3()
+
+	exec.CommandContext(ctx3, r.tmuxPath, "set-option", "-t", sessionName, "mouse", "on").Run()
 
 	return nil
 }
@@ -349,7 +391,7 @@ func (r *TeamRuntime) RefreshPaneIDs(sessionName string) error {
 		return fmt.Errorf("team session not found: %s", sessionName)
 	}
 
-	target := "ccc:" + sessionName
+	target := "ccc-team:" + sessionName
 
 	for i := 0; i < 3; i++ {
 		paneID, err := r.CapturePaneID(target, i)

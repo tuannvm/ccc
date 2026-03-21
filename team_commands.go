@@ -300,7 +300,7 @@ func (tc *TeamCommands) AttachTeam(args []string) error {
 	}
 
 	// Attach to tmux session and select the pane
-	if err := attachToTmuxSession("ccc"); err != nil {
+	if err := attachToTmuxSession("ccc-team"); err != nil {
 		return fmt.Errorf("failed to attach to tmux: %w", err)
 	}
 
@@ -406,7 +406,7 @@ func (tc *TeamCommands) DeleteTeam(args []string) error {
 
 	// Kill the tmux window
 	sessName := getSessionNameFromInfo(sessInfo)
-	target := "ccc:" + sessName
+	target := "ccc-team:" + sessName
 	if err := exec.Command("tmux", "kill-window", "-t", target).Run(); err != nil {
 		// Window might not exist, but that's okay - continue with cleanup
 		listenLog("[team delete] Failed to kill window (may not exist): %v", err)
