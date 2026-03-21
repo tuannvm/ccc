@@ -1,8 +1,8 @@
 # Final Architecture Review: Three-Bot Telegram System
 
 **Date:** 2026-03-20
-**Status:** PRE-IMPLEMENTATION REVIEW
-**Decision:** Three-bot architecture selected as primary approach
+**Status:** ✅ RESOLVED - Fix incorporated into main design
+**Decision:** Three-bot architecture with internal event bus (see multi-bot-design.md)
 
 ---
 

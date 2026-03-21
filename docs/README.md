@@ -6,9 +6,10 @@ All documentation lives in this git repository. This is the single source of tru
 
 | Document | Purpose | Last Updated |
 |----------|---------|--------------|
-| [multi-bot-design.md](multi-bot-design.md) | Complete architecture with internal event bus | 2026-03-20 15:20 |
-| [tmux-architecture.md](tmux-architecture.md) | Tmux 3-pane layout + CCC hooks | 2026-03-20 15:27 |
-| [final-architecture-review.md](final-architecture-review.md) | Bot visibility issue + fix | 2026-03-20 14:33 |
+| [multi-bot-design.md](multi-bot-design.md) | Complete architecture with internal event bus | 2026-03-20 16:00 |
+| [tmux-architecture.md](tmux-architecture.md) | Tmux 3-pane layout + CCC hooks | 2026-03-20 16:00 |
+| [inter-pane-hooks-implementation.md](inter-pane-hooks-implementation.md) | PostResponse/SessionStart hooks action items | 2026-03-20 16:00 |
+| [final-architecture-review.md](final-architecture-review.md) | Bot visibility issue + fix | 2026-03-20 16:00 |
 | [approach-comparison.md](approach-comparison.md) | Single-bot vs three-bot analysis | 2026-03-20 14:13 |
 | [ralph-loop-status.md](ralph-loop-status.md) | Ralph Wiggum iteration findings | 2026-03-20 14:33 |
 

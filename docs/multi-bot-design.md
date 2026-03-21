@@ -816,7 +816,13 @@ func (m *ConversationStateManager) AddReviewFinding(topicID int64, finding Findi
    - your_project_reviewer (token: saved to config as bot_tokens.reviewer)
    ```
 
-2. **CRITICAL: Disable privacy mode for all 3 bots:**
+2. **Privacy mode (recommended: leave ENABLED):**
+   ```
+   With internal event bus architecture, privacy mode can stay ENABLED.
+   Bots receive human @mentions normally; bot-to-bot coordination
+   happens internally via Go channels.
+   ```
+   **Optional:** Disable privacy mode only if you need unqualified message routing (e.g., "fix this" without @mention)
    ```
    /setprivacy
    Select: your_project_planner → "Disable"
@@ -826,10 +832,7 @@ func (m *ConversationStateManager) AddReviewFinding(topicID int64, finding Findi
    Select: your_project_reviewer → "Disable"
    ```
    **Security Note:** Disabling privacy mode allows bots to read ALL group messages.
-   Only do this in private, trusted groups. Consider:
-   - Using a dedicated private group for development
-   - Not adding sensitive channels/groups
-   - BotFather can re-enable privacy anytime if needed
+   Never disable for bots in public groups.
 
 3. **Add all 3 bots to the group** as admins
    - All 3 bots need admin permissions to create topics, edit messages, etc.
