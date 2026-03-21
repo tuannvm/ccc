@@ -1974,6 +1974,16 @@ func listen() error {
 			if isGroup && threadID > 0 {
 				// Reload config to get latest sessions
 				config, _ = loadConfig()
+
+				// Check if this is a team session (NEW: multi-pane support)
+				if config.IsTeamSession(threadID) {
+					// Handle team session routing (goes to specific pane)
+					if handled := handleTeamSessionMessage(config, text, threadID, chatID, threadID); handled {
+						continue
+					}
+					// If handleTeamSessionMessage returns false, fall through to standard handling
+				}
+
 				sessName := getSessionByTopic(config, threadID)
 				if sessName != "" {
 					var target string

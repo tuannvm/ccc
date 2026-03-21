@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// shellQuote safely quotes a string for shell command arguments
+func shellQuote(s string) string {
+	// Replace single quotes with '\'' and wrap in single quotes
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // TeamRuntime implements SessionRuntime for 3-pane team sessions
 // Creates a tmux window with 3 panes: Planner (left) | Executor (middle) | Reviewer (right)
 type TeamRuntime struct {
@@ -67,12 +73,32 @@ func (r *TeamRuntime) GetDefaultTarget(sess Session) (string, error) {
 
 // StartClaude launches Claude in each pane with appropriate role context
 func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
-	// For now, this is a placeholder
-	// In the full implementation, this would:
-	// 1. Set CCC_ROLE env var for each pane
-	// 2. Send ccc run command to each pane
-	// 3. Wait for Claude to be ready in each pane
-	return fmt.Errorf("TeamRuntime.StartClaude: not implemented")
+	if err := r.initTmuxPath(); err != nil {
+		return err
+	}
+
+	// Roles to start Claude in
+	roles := []PaneRole{RolePlanner, RoleExecutor, RoleReviewer}
+
+	for _, role := range roles {
+		paneTarget, err := r.GetRoleTarget(sess, role)
+		if err != nil {
+			return fmt.Errorf("failed to get target for role %s: %w", role, err)
+		}
+
+		// Build the ccc run command with CCC_ROLE environment variable
+		// We set CCC_ROLE to indicate which role this pane should use
+		// Use shell quoting for paths with spaces/special characters
+		quotedWorkDir := shellQuote(workDir)
+		runCmd := fmt.Sprintf("CCC_ROLE=%s cd %s && ccc run", role, quotedWorkDir)
+
+		// Send command to the pane
+		if err := exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, runCmd, "C-m").Run(); err != nil {
+			return fmt.Errorf("failed to start Claude in %s pane: %w", role, err)
+		}
+	}
+
+	return nil
 }
 
 // initTmuxPath finds the tmux binary

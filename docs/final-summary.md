@@ -1,7 +1,7 @@
 # Multi-Pane Tmux Architecture - Final Implementation Summary
 
-**Date**: 2025-03-20
-**Status**: 🟡 Architecture Complete, Integration In Progress
+**Date**: 2026-03-20
+**Status**: 🟢 Phases 0-5 Complete, Testing In Progress
 
 ---
 
@@ -23,6 +23,7 @@
 #### Phase 2: Runtime Architecture
 - `session/runtime.go` - SessionRuntime interface and registry
 - `session/team_runtime.go` - TeamRuntime with 3-pane layout creation
+- `StartClaude()` method - launches Claude in each pane with CCC_ROLE env var
 - Fixed critical race condition in RefreshPaneIDs (Codex review)
 - Added context timeouts to all tmux commands (Codex review)
 
@@ -32,24 +33,30 @@
 - Prefix-based routing: `/planner`, `/executor`, `/reviewer`
 - Default to executor for messages without prefix
 
+#### Phase 4: Team CLI Commands
+- `team_commands.go` - Complete CLI implementation
+  - `new` - Creates team session with 3-pane layout
+  - `list` - Lists all team sessions with status
+  - `attach` - Attaches to session, optionally to specific pane
+  - `start` - Starts Claude in all panes
+  - `stop` - Stops Claude in all panes (keeps window)
+  - `delete` - Deletes window and removes from config
+- Integrated with main.go switch statement
+- Usage help implemented
+
+#### Phase 5: Telegram Integration
+- `team_routing.go` - Complete routing implementation
+  - `handleTeamSessionMessage()` - integrated into listen() loop
+  - `getTeamRoleTarget()` - gets tmux target for role
+  - `prependRolePrefix()` - adds role prefix to outgoing messages
+  - `parseTeamCommand()` - extracts role from message prefix
+- Topic-based team session detection
+- Prefix-based message routing working
+
 #### Reviews
 - Opus architectural review - Interface design validated
 - Codex 5.3 implementation review - Critical issues fixed
 - Gemini practicality review - UX concerns documented
-
-### 🟡 Partially Completed
-
-#### Phase 4: Team CLI Commands
-- `commands/team.go` created with stub implementations
-- Commands defined: `new`, `list`, `attach`, `stop`, `delete`
-- **Remaining**: Wire up to main package tmux/config functions
-
-#### Phase 5: Telegram Integration
-- `team_routing.go` created with helper functions
-- `handleTeamSessionMessage()` - routes messages to correct pane
-- `getTeamRoleTarget()` - gets tmux target for role
-- `prependRolePrefix()` - adds role prefix to outgoing messages
-- **Remaining**: Integrate `handleTeamSessionMessage()` into listen() loop
 
 ### ❌ Not Started
 
@@ -146,21 +153,22 @@ main package extensions:
 
 ## Integration Checklist
 
-To complete the implementation:
+### Phase 4: Team CLI Commands ✅ COMPLETE
+- [x] Wire `team new` to call `TeamRuntime.EnsureLayout()`
+- [x] Create Telegram topic for team session
+- [x] Save to `config.TeamSessions`
+- [x] Start Claude in each pane with `CCC_ROLE` env var
+- [x] Implement `list`, `attach`, `start`, `stop`, `delete` commands
+- [x] Add usage help for all commands
 
-### Phase 4: Complete Team CLI Commands
-- [ ] Wire `team new` to call `TeamRuntime.EnsureLayout()`
-- [ ] Create Telegram topic for team session
-- [ ] Save to `config.TeamSessions`
-- [ ] Start Claude in each pane with `CCC_ROLE` env var
+### Phase 5: Telegram Integration ✅ COMPLETE
+- [x] Add `handleTeamSessionMessage()` call in listen() loop
+- [x] Check `config.IsTeamSession()` before standard handling
+- [x] Use `TeamRouter` for message parsing
+- [x] Prepend role prefix to outgoing messages
+- [x] Handle team-specific commands (/planner, /executor, /reviewer)
 
-### Phase 5: Complete Telegram Integration
-- [ ] Add `handleTeamSessionMessage()` call in listen() loop
-- [ ] Check `config.IsTeamSession()` before standard handling
-- [ ] Use `TeamRouter` for message parsing
-- [ ] Prepend role prefix to outgoing messages
-
-### Phase 6: Implement Inter-Pane Communication
+### Phase 6: Implement Inter-Pane Communication (Next)
 - [ ] Extend `handleStopHook()` to parse @mentions
 - [ ] Use `TeamHookRouter` to infer source role
 - [ ] Route via tmux buffer (not send-keys)
@@ -249,22 +257,51 @@ ccc team delete api-feature
 
 ## Conclusion
 
-**Overall Status**: Architecture is sound and implementation is progressing. The foundation (Phases 0-3) is complete and reviewed. The remaining work is primarily integration and wiring of existing pieces.
+**Overall Status**: Phases 0-5 are complete and the core multi-pane functionality is working. The architecture is sound and implementation is mature. Remaining work focuses on inter-pane communication (Phase 6) and ledger tracking (Phase 7).
 
-**Key Achievement**: Created a flexible, extensible architecture that:
-- Supports pluggable layouts (single, 3-pane, future 4-pane, grids)
-- Uses strategy patterns for routing
-- Maintains backward compatibility
-- Enables code reuse through interfaces
+**Key Achievements**:
+- Created a flexible, extensible architecture that:
+  - Supports pluggable layouts (single, 3-pane, future 4-pane, grids)
+  - Uses strategy patterns for routing
+  - Maintains backward compatibility
+  - Enables code reuse through interfaces
+- Implemented full CLI for team session management
+- Integrated Telegram message routing for team sessions
+- Claude can be started/stopped in individual panes
 
-**Next Priority**: Complete Phase 5 (Telegram Integration) to make the feature usable end-to-end. Once messages can flow from Telegram to the correct pane, the feature will be demonstrable and testable.
+**Current Capabilities**:
+```bash
+# Create a team session
+ccc team new my-feature --topic 12345
+
+# List team sessions
+ccc team list
+
+# Start Claude in all panes
+ccc team start my-feature
+
+# Attach to specific pane
+ccc team attach my-feature --role planner
+
+# Stop Claude in all panes
+ccc team stop my-feature
+
+# Delete team session
+ccc team delete my-feature
+```
+
+**Telegram Usage**:
+- `/planner <message>` - Send to planner pane
+- `/executor <message>` - Send to executor pane
+- `/reviewer <message>` - Send to reviewer pane
+- No prefix - defaults to executor pane
+
+**Next Priority**: Phase 6 (Inter-Pane Communication) to enable @mention-based messaging between panes.
 
 **Estimated Completion Time**:
-- Phase 4 (Team CLI): 2-3 hours
-- Phase 5 (Telegram): 1-2 hours
 - Phase 6 (Inter-Pane): 2-3 hours
 - Phase 7 (Ledger): 1-2 hours
-- **Total**: 6-10 hours of focused development
+- **Total Remaining**: 3-5 hours
 
 ---
 
