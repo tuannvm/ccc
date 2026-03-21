@@ -679,25 +679,34 @@ Team sessions provide a 3-pane tmux layout where specialized AI agents collabora
 User: /team demo-team
        │
        ▼
-1. Create project folder: ~/Projects/demo-team/
+1. Show provider selection keyboard (if no provider specified)
        │
        ▼
-2. Initialize SessionInfo with Type="team", LayoutName="team-3pane"
+2. User selects provider (e.g., "zai", "anthropic")
        │
        ▼
-3. Create Telegram topic for the team
+3. Create project folder: ~/Projects/demo-team/
        │
        ▼
-4. Create 3-pane tmux layout (Planner | Executor | Reviewer)
+4. Initialize SessionInfo with Type="team", LayoutName="team-3pane", ProviderName="zai"
        │
        ▼
-5. Start Claude in all panes with CCC_ROLE environment variable
+5. Create Telegram topic for the team
        │
        ▼
-6. Each pane gets unique:
+6. Create 3-pane tmux layout (Planner | Executor | Reviewer)
+       │
+       ▼
+7. Start Claude in all panes with:
+       - CCC_ROLE environment variable ("planner", "executor", "reviewer")
+       - --provider flag ("zai")
+       │
+       ▼
+8. Each pane gets unique:
    - Claude session ID
    - Transcript file (session-{role}.jsonl)
    - Tmux pane ID (%1, %2, %3)
+   - Provider configuration
 ```
 
 ### Critical Bug Fix History
@@ -711,6 +720,12 @@ User: /team demo-team
 - **Problem**: TeamSessions access could panic with old config files
 - **Solution**: Added defensive nil checks before all TeamSessions iterations
 - **Impact**: Robust handling of legacy configs
+
+**Bug #3: Provider Not Honored** (FIXED - 2026-03-21)
+- **Problem**: Team session panes all used default provider instead of selected provider
+- **Solution**: Pass `--provider` flag to `ccc run` command in each pane
+- **Impact**: All three panes now correctly use the selected provider
+- **Affects**: CLI (`ccc team new <name> --provider <provider>`), Telegram (`/team <name>@<provider>`)
 
 ### Configuration
 

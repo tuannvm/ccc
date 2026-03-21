@@ -5,7 +5,28 @@
 **Reviewer**: Claude Code (Ralph Loop)
 **Scope**: session/, routing/, types.go, team_routing.go, team_commands.go, hooks.go, session_lookup.go, session_persist.go
 
-**Status**: ✅ **ALL ISSUES RESOLVED** (P2 fixed in commit 2026-03-21)
+**Status**: ✅ **ALL ISSUES RESOLVED** (P2 fixed in commit 2026-03-21, critical provider bug fixed in commit e4e3c94)
+
+---
+
+## Critical Bugs Fixed
+
+### 🔴 Provider Selection Bug (Fixed 2026-03-21)
+
+**Issue**: Team session panes didn't honor provider selection - all 3 panes used default provider instead of selected provider.
+
+**Root Cause**: `session/team_runtime.go` wasn't passing `--provider` flag to `ccc run` command.
+
+**Fix** (commit e4e3c94):
+```diff
+- runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run\"", role, shellQuote(workDir))
++ runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run --provider %s\"", role, shellQuote(workDir), sess.GetProviderName())
+```
+
+**Impact**:
+- CLI: `ccc team new <name> --provider <provider>` - now works correctly
+- Telegram: `/team <name>@<provider>` - now works correctly
+- Provider selection keyboard - now works correctly
 
 ---
 
