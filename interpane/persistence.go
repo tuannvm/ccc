@@ -123,7 +123,6 @@ func (s *RoutedState) MarkRouted(requestID string) {
 	s.Requests[requestID] = time.Now()
 }
 
-// IsMentionDelivered checks if a specific mention (requestID + role) was already delivered
 // cleanupOldEntries removes entries older than 1 hour
 func (s *RoutedState) cleanupOldEntries() {
 	cutoff := time.Now().Add(-time.Hour)
