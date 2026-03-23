@@ -72,10 +72,13 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 	// If transcript path indicates a team session, look in TeamSessions first
 	if isTeamFromPath {
 		for _, info := range config.TeamSessions {
-			if info != nil && info.SessionName == sessName {
-				sessInfo = info
-				isTeam = true
-				break
+			if info != nil {
+				infoName := getSessionNameFromInfo(info)
+				if infoName == sessName {
+					sessInfo = info
+					isTeam = true
+					break
+				}
 			}
 		}
 	}

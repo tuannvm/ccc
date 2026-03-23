@@ -97,7 +97,8 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 		// We pass --provider to ensure the correct provider is used for this session
 		// Use the resolved cccPath to ensure the binary is found
 		// Use bash explicitly to avoid shell compatibility issues
-		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec %s run --provider %s\"", role, shellQuote(workDir), shellQuote(r.cccPath), sess.GetProviderName())
+		providerName := sess.GetProviderName()
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec %s run --provider %s\"", role, shellQuote(workDir), shellQuote(r.cccPath), shellQuote(providerName))
 
 		// Clear any existing content in the pane
 		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()
