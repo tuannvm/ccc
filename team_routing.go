@@ -9,6 +9,56 @@ import (
 	"github.com/tuannvm/ccc/session"
 )
 
+// isBuiltinCommand checks if a message is a built-in CCC command that should bypass team routing
+// These commands are handled by CCC directly, not sent to Claude in a team session
+func isBuiltinCommand(text string) bool {
+	// Get the first word (command)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return false
+	}
+
+	command := strings.ToLower(fields[0])
+
+	// List of built-in commands that should bypass team routing
+	builtinCommands := []string{
+		"/stop",
+		"/delete",
+		"/resume",
+		"/pause",
+		"/providers",
+		"/provider",
+		"/new",
+		"/worktree",
+		"/team",
+		"/clean",
+		"/cleanup", // alias for /clean
+		"/c",
+		"/help",
+		"/status",
+		"/stats",
+		"/update",
+		"/version",
+		"/auth",
+		"/restart",
+		"/continue",
+		"/providers", // duplicate check, but harmless
+	}
+
+	for _, cmd := range builtinCommands {
+		if command == cmd || strings.HasPrefix(command, cmd+" ") {
+			return true
+		}
+	}
+
+	return false
+}
+
 // handleTeamSessionMessage routes a Telegram message to the appropriate pane in a team session
 // Returns true if the message was handled (team session), false if not (standard session)
 func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID int64, threadID int64) bool {
@@ -84,11 +134,11 @@ func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error
 	sanitizedName := tmuxSafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
-	// Map role to pane index (tmux uses 1-based indexing)
+	// Map role to pane index (tmux uses 0-based indexing by default)
 	roleToIndex := map[session.PaneRole]int{
-		session.RolePlanner:  1,
-		session.RoleExecutor: 2,
-		session.RoleReviewer: 3,
+		session.RolePlanner:  0,
+		session.RoleExecutor: 1,
+		session.RoleReviewer: 2,
 	}
 
 	index, ok := roleToIndex[role]
@@ -108,9 +158,11 @@ func switchToTeamWindow(sessionName string, role session.PaneRole) error {
 	sanitizedName := tmuxSafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
-	// Select the window to make it active
+	// Select the window to make it active (optional for headless tmux)
+	// In headless environments (no attached client), select-window fails but send-keys still works
 	if err := exec.Command(tmuxPath, "select-window", "-t", target).Run(); err != nil {
-		return fmt.Errorf("failed to select window: %w", err)
+		// Log but don't fail - send-keys will work even if select-window fails
+		listenLog("[team routing] select-window failed (may be headless): %v", err)
 	}
 
 	return nil
@@ -149,9 +201,18 @@ func prependRolePrefix(role session.PaneRole, message string) string {
 // isTeamSessionCommand checks if a text message is a team-specific command
 func isTeamSessionCommand(text string) bool {
 	teamCommands := []string{
+		// Full commands
 		"/planner",
 		"/executor",
 		"/reviewer",
+		// Short aliases (matching layout_registry.go)
+		"/plan",
+		"/p",
+		"/exec",
+		"/e",
+		"/rev",
+		"/r",
+		// @mentions
 		"@planner",
 		"@executor",
 		"@reviewer",

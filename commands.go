@@ -1648,6 +1648,26 @@ func listen() error {
 						providerName = strings.TrimSpace(parts[1])
 					}
 
+					// Check for duplicate team session BEFORE any provider validation or creation
+					teamExists := false
+					var existingTopicID int64
+					for topicID, sessInfo := range config.TeamSessions {
+						if sessInfo != nil {
+							sessName := getSessionNameFromInfo(sessInfo)
+							if sessName == teamName {
+								teamExists = true
+								existingTopicID = topicID
+								break
+							}
+						}
+					}
+
+					// If duplicate exists, warn and skip creation
+					if teamExists {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, existingTopicID))
+						continue
+					}
+
 					// Validate provider if specified using getProvider()
 					if providerName != "" {
 						provider := getProvider(config, providerName)
@@ -1663,17 +1683,6 @@ func listen() error {
 
 					// Always show keyboard if no explicit provider selected
 					if providerName == "" {
-						// Check if team session already exists
-						for topicID, sessInfo := range config.TeamSessions {
-							if sessInfo != nil {
-								sessName := getSessionNameFromInfo(sessInfo)
-								if sessName == teamName {
-									sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
-									continue
-								}
-							}
-						}
-
 						// Build provider selection keyboard using getProviderNames()
 						var buttons [][]InlineKeyboardButton
 
@@ -1693,18 +1702,6 @@ func listen() error {
 						msg := fmt.Sprintf("🤖 Select provider for team '%s':", teamName)
 						sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
 						continue
-					}
-
-					// Direct creation (provider specified or single provider)
-					// Check for existing team session
-					for topicID, sessInfo := range config.TeamSessions {
-						if sessInfo != nil {
-							sessName := getSessionNameFromInfo(sessInfo)
-							if sessName == teamName {
-								sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
-								continue
-							}
-						}
 					}
 
 					// Use provider from arg or default to active provider
@@ -1751,8 +1748,9 @@ func listen() error {
 					// Create Telegram topic
 					topicID, err := createForumTopic(config, teamName, providerName, "")
 					if err != nil {
-						// Cleanup: kill the tmux window we just created
-						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+						// Cleanup: kill the tmux window we just created (sanitize name)
+						sanitizedName := strings.ReplaceAll(teamName, ".", "__")
+						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 						continue
 					}
@@ -1763,9 +1761,10 @@ func listen() error {
 					// Save to config
 					config.SetTeamSession(topicID, sessInfo)
 					if err := saveConfig(config); err != nil {
-						// Cleanup: delete topic and kill window
+						// Cleanup: delete topic and kill window (sanitize name)
+						sanitizedName := strings.ReplaceAll(teamName, ".", "__")
 						deleteForumTopic(config, topicID)
-						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
 						continue
 					}
@@ -2184,11 +2183,17 @@ func listen() error {
 
 				// Check if this is a team session (NEW: multi-pane support)
 				if config.IsTeamSession(threadID) {
-					// Handle team session routing (goes to specific pane)
-					if handled := handleTeamSessionMessage(config, text, threadID, chatID, threadID); handled {
-						continue
+					// Built-in commands that should bypass team routing and be handled by CCC directly
+					if isBuiltinCommand(text) {
+						// Let the command fall through to standard handling below
+						listenLog("[team-session] Bypassing team routing for built-in command: %s", text)
+					} else {
+						// Handle team session routing (goes to specific pane)
+						if handled := handleTeamSessionMessage(config, text, threadID, chatID, threadID); handled {
+							continue
+						}
+						// If handleTeamSessionMessage returns false, fall through to standard handling
 					}
-					// If handleTeamSessionMessage returns false, fall through to standard handling
 				}
 
 				sessName := getSessionByTopic(config, threadID)
@@ -2469,8 +2474,9 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 	// Create Telegram topic
 	topicID, err := createForumTopic(config, teamName, providerName, "")
 	if err != nil {
-		// Cleanup: kill the tmux window we just created
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		// Cleanup: kill the tmux window we just created (sanitize name)
+		sanitizedName := strings.ReplaceAll(teamName, ".", "__")
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 		if cb.Message != nil {
 			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to create topic: %v", err))
@@ -2484,9 +2490,10 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 	// Save to config
 	config.SetTeamSession(topicID, sessInfo)
 	if err := saveConfig(config); err != nil {
-		// Cleanup: delete topic and kill window
+		// Cleanup: delete topic and kill window (sanitize name)
+		sanitizedName := strings.ReplaceAll(teamName, ".", "__")
 		deleteForumTopic(config, topicID)
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 		if cb.Message != nil {
 			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to save config: %v", err))
