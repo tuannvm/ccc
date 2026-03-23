@@ -318,42 +318,8 @@ func (r *Router) ParseMentions(text string, requestID string, incomingHopCount i
 			afterMention := linePattern.ReplaceAllString(line, "")
 			mentionLines = []string{strings.TrimSpace(afterMention)}
 		} else if currentMention != nil {
-			// Check if this line starts a new mention
-			if linePattern.MatchString(line) {
-				// Save current mention and start new one
-				currentMention.Message = strings.TrimSpace(strings.Join(mentionLines, "\n"))
-				currentMention.Context = r.extractContext(text, currentMention.Message)
-				mentions = append(mentions, *currentMention)
-
-				// Start new mention
-				matches := linePattern.FindStringSubmatch(line)
-				roleStr := strings.ToLower(matches[1]) // Normalize to lowercase
-				var role session.PaneRole
-				switch roleStr {
-				case "planner":
-					role = session.RolePlanner
-				case "executor":
-					role = session.RoleExecutor
-				case "reviewer":
-					role = session.RoleReviewer
-				default:
-					currentMention = nil
-					mentionLines = nil
-					continue
-				}
-
-				currentMention = &Mention{
-					RequestID: requestID,
-					Role:      role,
-					HopCount:  incomingHopCount + 1,
-					Message:   "",
-				}
-				afterMention := linePattern.ReplaceAllString(line, "")
-				mentionLines = []string{strings.TrimSpace(afterMention)}
-			} else {
-				// Continue current mention
-				mentionLines = append(mentionLines, line)
-			}
+			// Continue current mention (line didn't match pattern)
+			mentionLines = append(mentionLines, line)
 		}
 	}
 
@@ -582,7 +548,10 @@ func (r *Router) ProcessQueue(sessionName string) (int, error) {
 		if !r.paneHasActivePrompt(msg.ToPaneID) {
 			// Still busy, requeue with updated retry time
 			msg.Retries++
-			r.messageQueue.Enqueue(msg)
+			if err := r.messageQueue.Enqueue(msg); err != nil {
+				// Log error but continue - message will be dropped if queue is full
+				r.logDelivery(msg.Session, session.PaneRole(msg.ToRole), msg.Content, msg.HopCount, "requeue-failed")
+			}
 			continue
 		}
 
@@ -593,8 +562,12 @@ func (r *Router) ProcessQueue(sessionName string) (int, error) {
 		if err := r.sendViaBuffer(msg.ToPaneID, messageWithHeader); err != nil {
 			// Failed to send, requeue with updated retry time
 			msg.Retries++
-			r.messageQueue.Enqueue(msg)
-			r.logDelivery(msg.Session, session.PaneRole(msg.ToRole), msg.Content, msg.HopCount, "retry-failed")
+			if enqueueErr := r.messageQueue.Enqueue(msg); enqueueErr != nil {
+				// Log error but continue - message will be dropped if queue is full
+				r.logDelivery(msg.Session, session.PaneRole(msg.ToRole), msg.Content, msg.HopCount, "requeue-failed")
+			} else {
+				r.logDelivery(msg.Session, session.PaneRole(msg.ToRole), msg.Content, msg.HopCount, "retry-failed")
+			}
 			continue
 		}
 

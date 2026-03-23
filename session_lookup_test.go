@@ -121,8 +121,8 @@ func TestFindSessionByWindowNameSanitizedMatch(t *testing.T) {
 	}
 }
 
-// TestFindSessionByWindowNameAmbiguous tests ambiguous match detection
-func TestFindSessionByWindowNameAmbiguous(t *testing.T) {
+// TestFindSessionByWindowNameExactAndSanitized tests exact and sanitized match behavior
+func TestFindSessionByWindowNameExactAndSanitized(t *testing.T) {
 	config := &Config{
 		Sessions: map[string]*SessionInfo{
 			// "my.project" and "my.project" would be the same key, so we need a real ambiguous scenario

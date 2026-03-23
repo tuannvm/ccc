@@ -4,6 +4,7 @@ package interpane
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -123,14 +124,6 @@ func (s *RoutedState) MarkRouted(requestID string) {
 }
 
 // IsMentionDelivered checks if a specific mention (requestID + role) was already delivered
-func (s *RoutedState) IsMentionDelivered(requestID string, role string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	key := requestID + ":" + role
-	_, exists := s.DeliveredMentions[key]
-	return exists
-}
-
 // cleanupOldEntries removes entries older than 1 hour
 func (s *RoutedState) cleanupOldEntries() {
 	cutoff := time.Now().Add(-time.Hour)
@@ -226,7 +219,8 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) error {
 	}
 
 	// Calculate retry delay with exponential backoff
-	delay := time.Duration(msg.Retries+1) * baseRetryDelay
+	// delay = base * 2^retries, capped at maxRetryDelay
+	delay := time.Duration(float64(baseRetryDelay) * math.Pow(2, float64(msg.Retries)))
 	if delay > maxRetryDelay {
 		delay = maxRetryDelay
 	}

@@ -259,7 +259,10 @@ func TestDeleteTeamWindow(t *testing.T) {
 	DeleteTeamWindow(sessionName)
 
 	// Verify it's gone
-	if _, exists := ActiveTeamSessions[sessionName]; exists {
+	teamSessionsMutex.RLock()
+	_, exists := ActiveTeamSessions[sessionName]
+	teamSessionsMutex.RUnlock()
+	if exists {
 		t.Error("Team session was not deleted")
 	}
 

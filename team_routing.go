@@ -30,24 +30,19 @@ func isBuiltinCommand(text string) bool {
 		"/stop",
 		"/delete",
 		"/resume",
-		"/pause",
 		"/providers",
 		"/provider",
 		"/new",
 		"/worktree",
 		"/team",
-		"/clean",
-		"/cleanup", // alias for /clean
+		"/cleanup",
 		"/c",
-		"/help",
-		"/status",
 		"/stats",
 		"/update",
 		"/version",
 		"/auth",
 		"/restart",
 		"/continue",
-		"/providers", // duplicate check, but harmless
 	}
 
 	for _, cmd := range builtinCommands {
@@ -180,86 +175,4 @@ func getSessionNameFromInfo(info *SessionInfo) string {
 		return path[idx+1:]
 	}
 	return path
-}
-
-// prependRolePrefix adds the role name prefix to outgoing messages from team sessions
-func prependRolePrefix(role session.PaneRole, message string) string {
-	// Map role to display name
-	roleNames := map[session.PaneRole]string{
-		session.RolePlanner:  "[Planner]",
-		session.RoleExecutor: "[Executor]",
-		session.RoleReviewer: "[Reviewer]",
-		session.RoleStandard: "", // No prefix for standard sessions
-	}
-
-	if prefix, ok := roleNames[role]; ok && prefix != "" {
-		return prefix + " " + message
-	}
-	return message
-}
-
-// isTeamSessionCommand checks if a text message is a team-specific command
-func isTeamSessionCommand(text string) bool {
-	teamCommands := []string{
-		// Full commands
-		"/planner",
-		"/executor",
-		"/reviewer",
-		// Short aliases (matching layout_registry.go)
-		"/plan",
-		"/p",
-		"/exec",
-		"/e",
-		"/rev",
-		"/r",
-		// @mentions
-		"@planner",
-		"@executor",
-		"@reviewer",
-	}
-
-	textLower := strings.ToLower(strings.TrimSpace(text))
-	for _, cmd := range teamCommands {
-		if strings.HasPrefix(textLower, cmd+" ") || textLower == cmd {
-			return true
-		}
-	}
-
-	return false
-}
-
-// parseTeamCommand extracts the role and message from a team command
-// Returns: role, message, isTeamCommand
-func parseTeamCommand(text string) (session.PaneRole, string, bool) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return session.RoleExecutor, text, false
-	}
-
-	// Check for command prefixes
-	fields := strings.Fields(text)
-	if len(fields) == 0 {
-		return session.RoleExecutor, text, false
-	}
-
-	prefix := strings.ToLower(fields[0])
-
-	// Map prefixes to roles - only full role names
-	prefixToRole := map[string]session.PaneRole{
-		"/planner":   session.RolePlanner,
-		"@planner":  session.RolePlanner,
-		"/executor":  session.RoleExecutor,
-		"@executor":  session.RoleExecutor,
-		"/reviewer":  session.RoleReviewer,
-		"@reviewer":  session.RoleReviewer,
-	}
-
-	if role, ok := prefixToRole[prefix]; ok {
-		// Strip the prefix from the message
-		message := strings.Join(fields[1:], " ")
-		return role, message, true
-	}
-
-	// No team command prefix - goes to executor by default
-	return session.RoleExecutor, text, false
 }

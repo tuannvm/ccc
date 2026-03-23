@@ -368,7 +368,9 @@ func (tc *TeamCommands) AttachTeam(args []string) error {
 		exec.Command("tmux", "select-pane", "-t", target).Run()
 
 		// Wait for attach to complete
-		cmd.Wait()
+		if err := cmd.Wait(); err != nil {
+			return fmt.Errorf("tmux attach failed: %w", err)
+		}
 	}
 
 	fmt.Printf("Attached to team session '%s', role: %s\n", name, role)

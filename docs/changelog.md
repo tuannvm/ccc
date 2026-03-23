@@ -9,7 +9,7 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
   - `@planner`, `@executor`, `@reviewer` mentions route messages to target panes via tmux
   - Automatic deduplication prevents duplicate delivery of the same request
   - Hop count tracking prevents infinite message loops (max 5 hops)
-  - Message queuing when target pane is busy (max 10 messages per role)
+  - Message queuing when target pane is busy (max 25 messages per role, 75 global)
   - Persistent routing state survives restarts via `.config/ccc/sessions/<name>/interpane/`
   - Full test coverage for mention parsing, role inference, and message queue management
 - **Worktree auto-generation**: `/worktree` command now supports auto-generating worktree names
