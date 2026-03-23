@@ -149,10 +149,12 @@ func prependRolePrefix(role session.PaneRole, message string) string {
 // isTeamSessionCommand checks if a text message is a team-specific command
 func isTeamSessionCommand(text string) bool {
 	teamCommands := []string{
-		"/planner", "/plan", "/p",
-		"/executor", "/exec", "/e",
-		"/reviewer", "/rev", "/r",
-		"@planner", "@executor", "@reviewer",
+		"/planner",
+		"/executor",
+		"/reviewer",
+		"@planner",
+		"@executor",
+		"@reviewer",
 	}
 
 	textLower := strings.ToLower(strings.TrimSpace(text))
@@ -181,19 +183,13 @@ func parseTeamCommand(text string) (session.PaneRole, string, bool) {
 
 	prefix := strings.ToLower(fields[0])
 
-	// Map prefixes to roles
+	// Map prefixes to roles - only full role names
 	prefixToRole := map[string]session.PaneRole{
 		"/planner":   session.RolePlanner,
-		"/plan":      session.RolePlanner,
-		"/p":         session.RolePlanner,
-		"@planner":   session.RolePlanner,
+		"@planner":  session.RolePlanner,
 		"/executor":  session.RoleExecutor,
-		"/exec":      session.RoleExecutor,
-		"/e":         session.RoleExecutor,
 		"@executor":  session.RoleExecutor,
 		"/reviewer":  session.RoleReviewer,
-		"/rev":       session.RoleReviewer,
-		"/r":         session.RoleReviewer,
 		"@reviewer":  session.RoleReviewer,
 	}
 
