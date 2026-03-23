@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannvm/ccc/interpane"
 	"github.com/tuannvm/ccc/session"
 )
 
@@ -261,11 +263,216 @@ func handleStopHook() error {
 	hookLog("stop-hook: sent=%d", sent)
 	clearToolState(sessName)
 
+	// Phase 6: Inter-pane communication - check for @mentions in team sessions
+	// Do this BEFORE spawning retry subprocess to avoid race condition on state files
+	if config.IsTeamSession(topicID) {
+		hookLog("stop-hook: checking for @mentions in team session")
+		if err := routeMentions(config, sessName, topicID, hookData.TranscriptPath, hookData.SessionID); err != nil {
+			hookLog("stop-hook: failed to route mentions: %v", err)
+		}
+	}
+
 	// Background retry: transcript may not be flushed yet when stop hook fires.
-	// Spawn a detached subprocess that retries 3 times at 2-second intervals.
+	// Spawn AFTER mention routing to avoid race condition on state files.
 	// (goroutines die when the hook process exits, so we need a separate process)
 	cmd := exec.Command(cccPath, "hook-stop-retry", sessName, fmt.Sprintf("%d", topicID), hookData.TranscriptPath)
 	cmd.Start()
+
+	return nil
+}
+
+// routeMentions extracts @mentions from the transcript and routes them to target panes
+// This enables inter-pane communication for team sessions
+func routeMentions(config *Config, sessName string, topicID int64, transcriptPath string, claudeSessionID string) error {
+	router := interpane.NewRouter()
+	return routeMentionsWithRouter(config, sessName, topicID, transcriptPath, claudeSessionID, router)
+}
+
+// routeMentionsWithRouter is the same as routeMentions but accepts a router instance
+// This allows sharing router state (deduplication tracking) across multiple calls
+func routeMentionsWithRouter(config *Config, sessName string, topicID int64, transcriptPath string, claudeSessionID string, router *interpane.Router) error {
+	if transcriptPath == "" {
+		hookLog("route-mentions: empty transcript path")
+		return nil
+	}
+
+	// Initialize router with session directory for persistence
+	home, _ := os.UserHomeDir()
+	sessionDir := filepath.Join(home, ".config", "ccc", "sessions", tmuxSafeName(sessName), "interpane")
+	if err := router.InitSession(sessionDir); err != nil {
+		hookLog("route-mentions: failed to initialize router: %v", err)
+		// Non-fatal, continue without persistence
+	}
+
+	// Read the transcript to extract assistant's last response
+	blocks := extractRecentAssistantTexts(transcriptPath, 5)
+	if len(blocks) == 0 {
+		hookLog("route-mentions: no assistant texts found in transcript")
+		return nil
+	}
+
+	// Parse @mentions from each block with deduplication
+	type mentionWithRequestID struct {
+		mention   interpane.Mention
+		requestID string
+	}
+	// Group mentions by requestID to track complete vs partial delivery
+	mentionsByRequest := make(map[string][]mentionWithRequestID)
+
+	for _, block := range blocks {
+		// Check if this request was already routed
+		requestID := fmt.Sprintf("interpane:%s:%s", sessName, block.requestID)
+		if router.IsAlreadyRouted(requestID) {
+			hookLog("route-mentions: skipping already routed request %s", requestID)
+			continue
+		}
+
+		// Parse mentions from this block
+		mentions := router.ParseMentions(block.text, requestID, block.hopCount)
+
+		// Group mentions by requestID
+		for _, mention := range mentions {
+			mentionsByRequest[requestID] = append(mentionsByRequest[requestID], mentionWithRequestID{
+				mention:   mention,
+				requestID: requestID,
+			})
+		}
+	}
+
+	if len(mentionsByRequest) == 0 {
+		hookLog("route-mentions: no @mentions found")
+		return nil
+	}
+
+	// Get team session info
+	sessInfo, exists := config.GetTeamSession(topicID)
+	if !exists || sessInfo == nil {
+		hookLog("route-mentions: team session not found for topicID=%d", topicID)
+		return fmt.Errorf("team session not found")
+	}
+
+	// Infer source role from Claude session ID (for logging and self-targeting prevention)
+	sourceRole := inferRoleFromSessionInfo(sessInfo, claudeSessionID)
+	roleFromSessionID := sourceRole != ""
+	if sourceRole == "" {
+		// Fallback: try to infer from transcript path
+		sourceRole = inferRoleFromTranscriptPath(transcriptPath)
+	}
+	roleFromTranscriptPath := sourceRole != "" && !roleFromSessionID
+	if sourceRole == "" {
+		// Last resort: use executor as default, but mark as unreliable
+		sourceRole = session.RoleExecutor
+	}
+	hookLog("route-mentions: routing from role=%s claude_session_id=%s", sourceRole, claudeSessionID)
+
+	// Determine if we have reliable source role info (for self-targeting check)
+	// Only treat claudeSessionID as reliable when inference actually succeeded (roleFromSessionID)
+	// OR when successfully inferred from transcript path
+	// Do NOT treat the default executor fallback as reliable
+	haveReliableSourceRole := roleFromSessionID || roleFromTranscriptPath
+
+	// Track delivery success by requestID
+	// Only mark as routed if ALL mentions for that request succeeded
+	successfullyRouted := make(map[string]bool)
+
+	// Route each mention to the target pane
+	for requestID, items := range mentionsByRequest {
+		allSucceeded := true
+		anyFailed := false
+
+		// Set current request ID for queue deduplication
+		router.SetCurrentRequestID(requestID)
+
+		for _, item := range items {
+			mention := item.mention
+
+			// Skip self-targeting mentions (prevent loops)
+			// Only apply this check when we have reliable source role info
+			if haveReliableSourceRole && mention.Role == sourceRole {
+				hookLog("route-mentions: skipping self-targeting mention @%s from %s", mention.Role, sourceRole)
+				continue
+			}
+
+			// Skip mentions that are already queued (prevents duplicate queuing during retry)
+			if router.IsMentionQueued(requestID, mention.Role) {
+				hookLog("route-mentions: skipping already queued mention @%s for request %s", mention.Role, requestID)
+				continue
+			}
+
+			// Get the mention key for deduplication
+			mentionKey := mention.MentionKey()
+
+			// Skip mentions that were already delivered (prevents duplicate delivery during retry)
+			if router.IsMentionDelivered(mentionKey) {
+				hookLog("route-mentions: skipping already delivered mention @%s for request %s (key=%s)", mention.Role, requestID, truncate(mentionKey, 40))
+				continue
+			}
+
+			hookLog("route-mentions: @%s -> %s: msg=%q hops=%d", mention.Role, sessName, truncate(mention.Message, 80), mention.HopCount)
+
+			// Get target pane info
+			targetPane, ok := sessInfo.Panes[mention.Role]
+			if !ok || targetPane == nil {
+				hookLog("route-mentions: target pane not found for role=%s", mention.Role)
+				allSucceeded = false
+				anyFailed = true
+				continue
+			}
+
+			// Route the message with the hop count from the mention
+			if err := router.RouteToPane(sessName, targetPane.PaneID, mention.Role, mention.Message, mention.HopCount); err != nil {
+				if interpane.IsQueued(err) {
+					// Message was queued (pane busy), don't mark as delivered yet
+					hookLog("route-mentions: queued mention @%s for request %s", mention.Role, requestID)
+				} else {
+					hookLog("route-mentions: failed to route to %s: %v", mention.Role, err)
+					allSucceeded = false
+					anyFailed = true
+				}
+			} else {
+				// Message was delivered immediately, mark as delivered (for retry deduplication)
+				if err := router.MarkMentionDelivered(mentionKey); err != nil {
+					hookLog("route-mentions: failed to mark mention as delivered: %v", err)
+				}
+			}
+		}
+
+		// Clear current request ID after routing this batch
+		router.ClearCurrentRequestID()
+
+		// Mark request as routed only if ALL mentions were delivered (not queued)
+		// If any mentions are queued or failed, don't mark as routed - we'll retry later
+		// This prevents permanent message loss for queued or failed mentions
+		if allSucceeded && !router.IsRequestQueued(requestID) {
+			// All mentions were delivered immediately, none queued or failed
+			successfullyRouted[requestID] = true
+			hookLog("route-mentions: marking request %s as routed (all delivered immediately)", requestID)
+		} else if anyFailed {
+			hookLog("route-mentions: partial failure for request %s, will retry (has_failed=true)", requestID)
+		} else {
+			// Some mentions are queued, none failed - will retry when queue is processed
+			hookLog("route-mentions: request %s has queued mentions, will retry after queue processing", requestID)
+		}
+	}
+
+	// Mark successfully delivered requests as routed
+	for requestID := range successfullyRouted {
+		if err := router.MarkAsRouted(requestID); err != nil {
+			hookLog("route-mentions: failed to mark request as routed: %v", err)
+		}
+		// Clear mention-level delivery tracking for this request (no longer needed)
+		if err := router.ClearDeliveredMentionsForRequest(requestID); err != nil {
+			hookLog("route-mentions: failed to clear delivered mentions: %v", err)
+		}
+	}
+
+	// Process queued messages that are ready for retry
+	delivered, err := router.ProcessQueue(sessName)
+	if err != nil {
+		hookLog("route-mentions: failed to process queue: %v", err)
+	} else if delivered > 0 {
+		hookLog("route-mentions: delivered %d queued messages", delivered)
+	}
 
 	return nil
 }
@@ -403,11 +610,13 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 type assistantTextBlock struct {
 	requestID string
 	text      string
+	hopCount  int // Hop count from the user prompt that preceded this assistant response
 }
 
 // extractRecentAssistantTexts reads the last N assistant entries from the
 // transcript and returns their text blocks. The caller uses ledger dedup
 // to avoid resending previously delivered messages.
+// Now also extracts hop count for each assistant block based on its preceding user prompt.
 func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assistantTextBlock {
 	if transcriptPath == "" {
 		hookLog("extract: empty transcript path")
@@ -438,8 +647,8 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 		Text string `json:"text"`
 	}
 
-	// Read only the tail of the file (last 512KB) to avoid scanning the entire transcript
-	const tailBytes = 512 * 1024
+	// Read a larger portion to capture user/assistant pairs (2MB instead of 512KB)
+	const tailBytes = 2 * 1024 * 1024
 	fi, err := f.Stat()
 	if err != nil {
 		return nil
@@ -460,12 +669,20 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 		}
 	}
 
-	type entry struct {
+	// Scan entries in order, tracking hop count from user prompts
+	type assistantEntry struct {
 		requestID string
 		content   json.RawMessage
+		hopCount  int
 	}
 
-	var entries []entry
+	type userEntry struct {
+		hopCount int
+	}
+
+	var assistantEntries []assistantEntry
+	var userEntries []userEntry
+
 	for _, line := range bytes.Split(tailData, []byte("\n")) {
 		if len(line) == 0 {
 			continue
@@ -474,44 +691,81 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 		if json.Unmarshal(line, &tl) != nil {
 			continue
 		}
-		if tl.Type != "assistant" || tl.Message.Role != "assistant" {
-			continue
+
+		if tl.Type == "user" && tl.Message.Role == "user" {
+			// Extract hop count from user prompt
+			hopCount := 0
+			var contentBlocks []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(tl.Message.Content, &contentBlocks) == nil {
+				for _, cb := range contentBlocks {
+					if cb.Type == "text" {
+						lines := strings.Split(cb.Text, "\n")
+						for _, line := range lines {
+							if strings.HasPrefix(line, interpane.HopCountHeader) {
+								var hops int
+								if _, err := fmt.Sscanf(line, interpane.HopCountHeader+" %d", &hops); err == nil {
+									hopCount = hops
+								}
+								break // Found hop count, stop looking
+							}
+						}
+						if hopCount > 0 {
+							break // Found hop count, stop looking through blocks
+						}
+					}
+				}
+			}
+			// Record this user prompt's hop count
+			// It will apply to the next assistant response(s) until another user prompt
+			userEntries = append(userEntries, userEntry{hopCount: hopCount})
+		} else if tl.Type == "assistant" && tl.Message.Role == "assistant" {
+			if tl.IsApiErrorMessage {
+				continue
+			}
+			// Fall back to uuid or message.id for ZAI format
+			rid := tl.RequestID
+			if rid == "" {
+				rid = tl.UUID
+			}
+			if rid == "" {
+				rid = tl.Message.ID
+			}
+			if rid == "" {
+				continue
+			}
+			// Determine hop count from the most recent user prompt
+			hopCount := 0
+			if len(userEntries) > 0 {
+				// Use the last user entry's hop count
+				hopCount = userEntries[len(userEntries)-1].hopCount
+			}
+			assistantEntries = append(assistantEntries, assistantEntry{
+				requestID: rid,
+				content:   tl.Message.Content,
+				hopCount:  hopCount,
+			})
 		}
-		if tl.IsApiErrorMessage {
-			continue
-		}
-		// Fall back to uuid or message.id for ZAI format
-		rid := tl.RequestID
-		if rid == "" {
-			rid = tl.UUID
-		}
-		if rid == "" {
-			rid = tl.Message.ID
-		}
-		if rid == "" {
-			continue
-		}
-		entries = append(entries, entry{
-			requestID: rid,
-			content:   tl.Message.Content,
-		})
 	}
 
-	// Take only the tail
-	if len(entries) > tailCount {
-		entries = entries[len(entries)-tailCount:]
+	// Take only the tail count of assistant entries
+	if len(assistantEntries) > tailCount {
+		assistantEntries = assistantEntries[len(assistantEntries)-tailCount:]
 	}
 
 	// For each requestId, keep only the last entry's text (later entries
 	// supersede earlier ones for the same request, e.g. streaming updates)
 	type ridText struct {
 		requestID string
+		hopCount  int
 		texts     []string
 	}
 	seen := make(map[string]int) // requestID -> index in result
 	var ordered []ridText
 
-	for _, e := range entries {
+	for _, e := range assistantEntries {
 		var blocks []contentBlock
 		if json.Unmarshal(e.content, &blocks) != nil {
 			continue
@@ -531,35 +785,66 @@ func extractRecentAssistantTexts(transcriptPath string, tailCount int) []assista
 		}
 		if idx, ok := seen[e.requestID]; ok {
 			ordered[idx].texts = texts // overwrite with later entry
+			ordered[idx].hopCount = e.hopCount // update hop count too
 		} else {
 			seen[e.requestID] = len(ordered)
-			ordered = append(ordered, ridText{requestID: e.requestID, texts: texts})
+			ordered = append(ordered, ridText{requestID: e.requestID, hopCount: e.hopCount, texts: texts})
 		}
 	}
 
 	var result []assistantTextBlock
 	for _, rt := range ordered {
 		for _, t := range rt.texts {
-			result = append(result, assistantTextBlock{requestID: rt.requestID, text: t})
+			result = append(result, assistantTextBlock{requestID: rt.requestID, text: t, hopCount: rt.hopCount})
 		}
 	}
 	return result
 }
 
 // handleStopRetry is a background process spawned by stop hook.
-// It retries transcript reading 3 times at 2-second intervals to catch
+// It retries transcript reading multiple times at 2-second intervals to catch
 // messages that weren't flushed when the stop hook first fired.
+// Runs long enough to cover the base message queue retry delay (10s).
 func handleStopRetry(sessName string, topicID int64, transcriptPath string) error {
 	config, err := loadConfig()
 	if err != nil || config == nil {
 		return nil
 	}
-	for i := 0; i < 3; i++ {
+
+	// Track mention routing state across retries
+	router := interpane.NewRouter()
+
+	// Run for 12 seconds (6 attempts * 2 seconds) to cover base queue delay (10s)
+	// This ensures queued messages get a chance to be delivered
+	for i := 0; i < 6; i++ {
 		time.Sleep(2 * time.Second)
 		// Note: retry doesn't have access to claudeSessionID, pass empty string
 		n := deliverUnsentTexts(config, sessName, topicID, transcriptPath, false, "")
-		hookLog("stop-retry: %d/3 sent=%d session=%s", i+1, n, sessName)
+		hookLog("stop-retry: %d/6 sent=%d session=%s", i+1, n, sessName)
+
+		// Phase 6: Also check for @mentions in team sessions during retry
+		// This catches late-flushed assistant text that contains @mentions
+		if config.IsTeamSession(topicID) {
+			hookLog("stop-retry: checking for late-flushed @mentions")
+			if err := routeMentionsWithRouter(config, sessName, topicID, transcriptPath, "", router); err != nil {
+				hookLog("stop-retry: failed to route mentions: %v", err)
+			}
+		}
 	}
+
+	// Final queue pass: wait for any late-discovered queued messages to become ready
+	// Messages discovered on the last pass (12s) have a 10s retry delay, so they're ready at 22s
+	if config.IsTeamSession(topicID) {
+		hookLog("stop-retry: final queue pass for late-discovered messages")
+		time.Sleep(12 * time.Second) // Wait from 12s to 24s (covers 10s retry + buffer)
+		delivered, err := router.ProcessQueue(sessName)
+		if err != nil {
+			hookLog("stop-retry: final queue pass failed: %v", err)
+		} else if delivered > 0 {
+			hookLog("stop-retry: final queue pass delivered %d messages", delivered)
+		}
+	}
+
 	return nil
 }
 
@@ -1403,4 +1688,96 @@ func hookLog(format string, args ...interface{}) {
 	}
 	defer f.Close()
 	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+}
+
+// inferRoleFromSessionInfo infers the role from Claude session ID using session info
+func inferRoleFromSessionInfo(sessInfo *SessionInfo, claudeSessionID string) session.PaneRole {
+	if claudeSessionID == "" || sessInfo == nil || sessInfo.Panes == nil {
+		return ""
+	}
+
+	// Match Claude session ID to panes
+	for role, pane := range sessInfo.Panes {
+		if pane != nil && pane.ClaudeSessionID == claudeSessionID {
+			return role
+		}
+	}
+
+	return ""
+}
+
+// extractHopCountFromTranscript extracts the hop count from the most recent user prompt
+// that has a CCC-Hops header. This correctly handles multi-turn conversations by
+// tracking the current hop count as we scan the transcript from beginning to end.
+// Returns 0 if the message is not from another pane (original user message)
+func extractHopCountFromTranscript(transcriptPath string) int {
+	if transcriptPath == "" {
+		return 0
+	}
+
+	// Open the transcript file
+	f, err := os.Open(transcriptPath)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	// Track the current hop count as we scan the transcript
+	// User prompts with CCC-Hops header set the count; prompts without header reset to 0
+	currentHopCount := 0
+
+	type entry struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+
+	// Use a custom scanner with larger buffer to handle large transcript lines
+	// Default scanner buffer is 64KB, which may not be enough for large prompts
+	const maxScanTokenSize = 10 * 1024 * 1024 // 10 MiB
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, maxScanTokenSize)
+	scanner.Buffer(buf, maxScanTokenSize)
+
+	for scanner.Scan() {
+		var e entry
+		if json.Unmarshal(scanner.Bytes(), &e) != nil {
+			continue
+		}
+		if e.Type != "user" || e.Message.Role != "user" {
+			continue
+		}
+
+		// Check for hop count header in user prompt
+		hasHeader := false
+		for _, content := range e.Message.Content {
+			if content.Type == "text" {
+				// Look for "CCC-Hops: N" header
+				lines := strings.Split(content.Text, "\n")
+				for _, line := range lines {
+					if strings.HasPrefix(line, interpane.HopCountHeader) {
+						var hops int
+						if _, err := fmt.Sscanf(line, interpane.HopCountHeader+" %d", &hops); err == nil {
+							// Update current hop count (applies to subsequent assistant responses)
+							currentHopCount = hops
+							hasHeader = true
+						}
+					}
+				}
+			}
+		}
+
+		// If this user prompt doesn't have a hop count header, reset to 0
+		// This prevents hop count leakage across unrelated turns
+		if !hasHeader {
+			currentHopCount = 0
+		}
+	}
+
+	return currentHopCount
 }

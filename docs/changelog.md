@@ -19,6 +19,13 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
   - Higher rate limits than traditional editMessageText
   - Configurable via `enable_streaming` in config.json
   - Thread-safe implementation with atomic state management
+- **Inter-pane communication for team sessions**: Team sessions now support @mention-based routing between planner, executor, and reviewer panes
+  - `@planner`, `@executor`, `@reviewer` mentions route messages to target panes via tmux
+  - Automatic deduplication prevents duplicate delivery of the same request
+  - Hop count tracking prevents infinite message loops (max 5 hops)
+  - Message queuing when target pane is busy (max 10 messages per role)
+  - Persistent routing state survives restarts via `.config/ccc/sessions/<name>/interpane/`
+  - Full test coverage for mention parsing, role inference, and message queue management
 - **Worktree auto-generation**: `/worktree` command now supports auto-generating worktree names
   - Run `/worktree` in a session topic to let Claude Code generate a unique name
   - Generated names follow Claude's adjective-noun-noun pattern (e.g., `merry-wishing-crystal`)
