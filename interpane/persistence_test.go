@@ -173,8 +173,8 @@ func TestMessageQueueMaxSize(t *testing.T) {
 		Messages: []QueuedMessage{},
 	}
 
-	// Fill queue to max
-	for i := 0; i < maxQueueSize; i++ {
+	// Fill one role to its per-role limit
+	for i := 0; i < maxQueueSizePerRole; i++ {
 		msg := QueuedMessage{
 			Session:  "test-session",
 			ToPaneID: "%0",
@@ -184,11 +184,11 @@ func TestMessageQueueMaxSize(t *testing.T) {
 		}
 		err := queue.Enqueue(msg)
 		if err != nil {
-			t.Fatalf("Enqueue() error at %d: %v", i, err)
+			t.Fatalf("Enqueue() error at %d for planner: %v", i, err)
 		}
 	}
 
-	// Try to add one more
+	// Try to add one more to the same role - should fail
 	msg := QueuedMessage{
 		Session:  "test-session",
 		ToPaneID: "%0",
@@ -198,7 +198,68 @@ func TestMessageQueueMaxSize(t *testing.T) {
 	}
 	err := queue.Enqueue(msg)
 	if err == nil {
-		t.Error("Enqueue() did not return error when queue is full")
+		t.Error("Enqueue() did not return error when role queue is full")
+	}
+
+	// But we should still be able to add to a different role
+	msg2 := QueuedMessage{
+		Session:  "test-session",
+		ToPaneID: "%1",
+		ToRole:   "executor",
+		Content:  "different role",
+		HopCount: 1,
+	}
+	err = queue.Enqueue(msg2)
+	if err != nil {
+		t.Errorf("Enqueue() returned error for different role: %v", err)
+	}
+
+	// Fill executor to its limit
+	for i := 1; i < maxQueueSizePerRole; i++ {
+		msg := QueuedMessage{
+			Session:  "test-session",
+			ToPaneID: "%1",
+			ToRole:   "executor",
+			Content:  "test message",
+			HopCount: 1,
+		}
+		err := queue.Enqueue(msg)
+		if err != nil {
+			t.Fatalf("Enqueue() error at %d for executor: %v", i, err)
+		}
+	}
+
+	// Fill reviewer to its limit
+	for i := 0; i < maxQueueSizePerRole; i++ {
+		msg := QueuedMessage{
+			Session:  "test-session",
+			ToPaneID: "%2",
+			ToRole:   "reviewer",
+			Content:  "test message",
+			HopCount: 1,
+		}
+		err := queue.Enqueue(msg)
+		if err != nil {
+			t.Fatalf("Enqueue() error at %d for reviewer: %v", i, err)
+		}
+	}
+
+	// Now the queue should be at global limit (3 * maxQueueSizePerRole)
+	if len(queue.Messages) != maxQueueSize {
+		t.Errorf("Queue size = %d, want %d", len(queue.Messages), maxQueueSize)
+	}
+
+	// Any more messages should fail due to global limit
+	msg3 := QueuedMessage{
+		Session:  "test-session",
+		ToPaneID: "%0",
+		ToRole:   "planner",
+		Content:  "global overflow",
+		HopCount: 1,
+	}
+	err = queue.Enqueue(msg3)
+	if err == nil {
+		t.Error("Enqueue() did not return error when global queue is full")
 	}
 }
 

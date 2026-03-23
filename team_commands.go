@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/tuannvm/ccc/session"
 )
@@ -79,10 +80,19 @@ func (tc *TeamCommands) printUsage() error {
 // NewTeam creates a new team session with 3 panes
 func (tc *TeamCommands) NewTeam(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: ccc team new <name>")
+		return fmt.Errorf("usage: ccc team new <name> [--provider <provider>]")
 	}
 
 	name := args[0]
+
+	// Parse optional --provider argument
+	providerName := ""
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--provider" && i+1 < len(args) {
+			providerName = args[i+1]
+			i++ // Skip next arg
+		}
+	}
 
 	// Load config
 	config, err := loadConfig()
@@ -100,10 +110,18 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 		}
 	}
 
-	// Get provider
-	providerName := config.ActiveProvider
-	if providerName == "" {
-		providerName = "anthropic"
+	// Validate provider if specified
+	if providerName != "" {
+		provider := getProvider(config, providerName)
+		if provider == nil {
+			return fmt.Errorf("unknown provider '%s'", providerName)
+		}
+	} else {
+		// Use active provider as default
+		providerName = config.ActiveProvider
+		if providerName == "" {
+			providerName = "anthropic"
+		}
 	}
 
 	// Resolve working directory - create folder with team name
@@ -148,8 +166,9 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	// Local setup succeeded - now create Telegram topic
 	topicID, err := createForumTopic(config, name, providerName, "")
 	if err != nil {
-		// Cleanup: kill the tmux window we just created
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+name).Run()
+		// Cleanup: kill the tmux window we just created (sanitize name)
+		sanitizedName := strings.ReplaceAll(name, ".", "__")
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
@@ -159,9 +178,10 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	// Save to config
 	config.SetTeamSession(topicID, sessInfo)
 	if err := saveConfig(config); err != nil {
-		// Cleanup: delete topic and kill window
+		// Cleanup: delete topic and kill window (sanitize name)
+		sanitizedName := strings.ReplaceAll(name, ".", "__")
 		deleteForumTopic(config, topicID)
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+name).Run()
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
@@ -314,17 +334,42 @@ func (tc *TeamCommands) AttachTeam(args []string) error {
 		return fmt.Errorf("failed to get target for role %s: %w", role, err)
 	}
 
-	// Extract session name from target (format: "ccc-team:myproject.2" -> "ccc-team:myproject")
-	targetParts := strings.SplitN(target, ".", 2)
-	sessionTarget := targetParts[0] // "ccc-team:myproject"
+	// For team sessions, we need to attach to the ccc-team session and select the window
+	// Target format: "ccc-team:myproject.2" where "myproject" is the window name
+	sanitizedName := tmuxSafeName(name)
+	teamWindow := "ccc-team:" + sanitizedName
 
-	// Attach to tmux session and window (this selects the correct window in the ccc-team session)
-	if err := attachToTmuxSession(sessionTarget); err != nil {
-		return fmt.Errorf("failed to attach to tmux: %w", err)
+	// Check if inside tmux already
+	if os.Getenv("TMUX") != "" {
+		// Inside tmux: select the window in ccc-team session
+		if err := exec.Command("tmux", "select-window", "-t", teamWindow).Run(); err != nil {
+			return fmt.Errorf("failed to select team window: %w", err)
+		}
+		// Select the specific pane
+		if err := exec.Command("tmux", "select-pane", "-t", target).Run(); err != nil {
+			return fmt.Errorf("failed to select pane: %w", err)
+		}
+	} else {
+		// Outside tmux: attach to ccc-team session, then select window and pane
+		// We need to attach to the session first, then select the window and pane
+		cmd := exec.Command("tmux", "attach-session", "-t", "ccc-team")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		// Start attach in background
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to attach to tmux: %w", err)
+		}
+
+		// Give tmux a moment to attach, then select the window and pane
+		time.Sleep(100 * time.Millisecond)
+		exec.Command("tmux", "select-window", "-t", teamWindow).Run()
+		exec.Command("tmux", "select-pane", "-t", target).Run()
+
+		// Wait for attach to complete
+		cmd.Wait()
 	}
-
-	// Select the specific pane (now that we're in the correct window)
-	exec.Command("tmux", "select-pane", "-t", target).Run()
 
 	fmt.Printf("Attached to team session '%s', role: %s\n", name, role)
 	return nil
@@ -423,12 +468,21 @@ func (tc *TeamCommands) DeleteTeam(args []string) error {
 		return fmt.Errorf("team session not found: %s", name)
 	}
 
-	// Kill the tmux window
+	// Kill the tmux window (sanitize session name for tmux)
 	sessName := getSessionNameFromInfo(sessInfo)
-	target := "ccc-team:" + sessName
+	sanitizedName := strings.ReplaceAll(sessName, ".", "__")
+	target := "ccc-team:" + sanitizedName
 	if err := exec.Command("tmux", "kill-window", "-t", target).Run(); err != nil {
 		// Window might not exist, but that's okay - continue with cleanup
 		listenLog("[team delete] Failed to kill window (may not exist): %v", err)
+	}
+
+	// Delete the Telegram topic
+	if topicID > 0 && config.GroupID > 0 {
+		if err := deleteForumTopic(config, topicID); err != nil {
+			listenLog("[team delete] Failed to delete topic: %v", err)
+			// Continue with cleanup even if topic deletion fails
+		}
 	}
 
 	// Remove from config

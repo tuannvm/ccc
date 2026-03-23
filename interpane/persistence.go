@@ -44,7 +44,8 @@ const (
 	// State filenames
 	routedStateFile    = "routed-mentions.json"
 	messageQueueFile   = "queued-messages.jsonl"
-	maxQueueSize       = 100
+	maxQueueSizePerRole = 25 // Per-role queue limit (planner/executor/reviewer)
+	maxQueueSize       = 75  // Global queue limit (3 roles × 25)
 	maxRetries         = 5
 	baseRetryDelay     = 10 * time.Second
 	maxRetryDelay      = 5 * time.Minute
@@ -200,8 +201,20 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	// Check per-role limit (primary constraint)
+	roleCount := 0
+	for _, m := range q.Messages {
+		if m.ToRole == msg.ToRole {
+			roleCount++
+		}
+	}
+	if roleCount >= maxQueueSizePerRole {
+		return fmt.Errorf("message queue full for role %s (max %d per role)", msg.ToRole, maxQueueSizePerRole)
+	}
+
+	// Check global limit as a failsafe
 	if len(q.Messages) >= maxQueueSize {
-		return fmt.Errorf("message queue full (max %d)", maxQueueSize)
+		return fmt.Errorf("message queue full (max %d globally)", maxQueueSize)
 	}
 
 	// For new messages (ID is empty), initialize fields

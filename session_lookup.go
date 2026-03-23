@@ -101,7 +101,9 @@ func getSessionByTopic(config *Config, topicID int64) string {
 	if config.TeamSessions != nil {
 		for tid, info := range config.TeamSessions {
 			if info != nil && tid == topicID {
-				return info.SessionName
+				// Use getSessionNameFromInfo for backward compatibility
+				// It falls back to path basename if SessionName is empty
+				return getSessionNameFromInfo(info)
 			}
 		}
 	}

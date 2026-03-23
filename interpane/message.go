@@ -188,16 +188,17 @@ func (r *Router) IsRequestQueued(requestID string) bool {
 	return false
 }
 
-// IsMentionQueued checks if a specific mention (requestID + toRole) is already in the queue
-func (r *Router) IsMentionQueued(requestID string, toRole session.PaneRole) bool {
+// IsMentionQueued checks if a specific mention (requestID + toRole + content) is already in the queue
+func (r *Router) IsMentionQueued(requestID string, toRole session.PaneRole, content string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.messageQueue == nil {
 		return false
 	}
-	// Check if any message in the queue matches this request ID and role
+	// Check if any message in the queue matches this request ID, role, AND content
+	// This allows multiple mentions to the same role with different content
 	for _, msg := range r.messageQueue.Messages {
-		if msg.RequestID == requestID && msg.ToRole == string(toRole) {
+		if msg.RequestID == requestID && msg.ToRole == string(toRole) && msg.Content == content {
 			return true
 		}
 	}
@@ -478,15 +479,25 @@ func (r *Router) paneHasActivePrompt(paneTarget string) bool {
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line != "" {
-			// Check for Claude's prompt
+			// Check for Claude's prompt (❯ indicates ready for input)
+			// But must avoid false positives from shell prompts and tool output
 			if strings.Contains(line, "❯") {
-				// Require Claude-specific context
-				if strings.Contains(content, "How can I help") ||
-					strings.Contains(strings.ToLower(content), "claude") ||
-					strings.Contains(content, "Bash:") ||
-					strings.Contains(content, "function:") {
-					return true
+				// Exclude obvious shell prompts ending with $, %, #, >
+				trimmed := strings.TrimRight(line, " ")
+				if len(trimmed) > 0 {
+					lastChar := trimmed[len(trimmed)-1]
+					if lastChar == '$' || lastChar == '%' || lastChar == '#' ||
+					   lastChar == '>' || lastChar == ';' {
+						return false
+					}
 				}
+				// Also exclude lines that look like shell command output
+				// (e.g., "user@host:~ ❯" from powerlevel10k)
+				if strings.Contains(trimmed, "@") && strings.Contains(trimmed, ":") {
+					return false
+				}
+				// Has ❯ and doesn't look like a shell prompt → Claude is ready
+				return true
 			}
 			break
 		}
