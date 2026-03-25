@@ -252,7 +252,11 @@ func handleStopHook() error {
 	}
 
 	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
-	if sessName == "" || config.GroupID == 0 || topicID == 0 {
+	if config.GroupID == 0 {
+		hookLog("stop-hook: no group_id configured, skipping message delivery")
+		return nil
+	}
+	if sessName == "" || topicID == 0 {
 		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s sessName=%s topicID=%d groupID=%d",
 			hookData.Cwd, hookData.SessionID, sessName, topicID, config.GroupID)
 		hookLog("stop-hook: available sessions: %d", len(config.Sessions))
@@ -266,6 +270,9 @@ func handleStopHook() error {
 		// and the session lookup fails due to missing session_id or tmux mismatch
 		bestMatch := ""
 		bestMatchLen := 0
+		bestMatchTopicID := int64(0)
+
+		// Check regular sessions
 		for name, info := range config.Sessions {
 			if info == nil || info.Path == "" || info.TopicID == 0 {
 				// Skip sessions without valid topic IDs to prevent dumping to main chat
@@ -278,6 +285,26 @@ func handleStopHook() error {
 				if pathLen > bestMatchLen {
 					bestMatch = name
 					bestMatchLen = pathLen
+					bestMatchTopicID = info.TopicID
+				}
+			}
+		}
+
+		// Check team sessions
+		if config.TeamSessions != nil {
+			for tid, info := range config.TeamSessions {
+				if info == nil || info.Path == "" || tid == 0 {
+					// Skip sessions without valid topic IDs
+					continue
+				}
+				// Check if CWD matches session path exactly or starts with path + "/"
+				if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
+					pathLen := len(info.Path)
+					if pathLen > bestMatchLen {
+						bestMatch = info.SessionName
+						bestMatchLen = pathLen
+						bestMatchTopicID = tid
+					}
 				}
 			}
 		}
@@ -285,7 +312,7 @@ func handleStopHook() error {
 		if bestMatch != "" {
 			hookLog("stop-hook: using best match session by CWD: %s (path match length: %d)", bestMatch, bestMatchLen)
 			sessName = bestMatch
-			topicID = config.Sessions[bestMatch].TopicID
+			topicID = bestMatchTopicID
 		} else {
 			hookLog("stop-hook: no suitable session found, skipping message delivery")
 			return nil
