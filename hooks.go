@@ -267,7 +267,8 @@ func handleStopHook() error {
 		bestMatch := ""
 		bestMatchLen := 0
 		for name, info := range config.Sessions {
-			if info == nil || info.Path == "" {
+			if info == nil || info.Path == "" || info.TopicID == 0 {
+				// Skip sessions without valid topic IDs to prevent dumping to main chat
 				continue
 			}
 			// Check if CWD matches session path exactly or starts with path + "/"
