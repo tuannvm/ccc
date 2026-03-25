@@ -635,16 +635,22 @@ func createForumTopicWithEmoji(config *Config, name string, providerName string,
 	// Add custom emoji icon if available
 	if emojiID != "" {
 		params.Add("icon_custom_emoji_id", emojiID)
-	} else if providerName != "" && len(providerName) > 0 {
-		// Fallback to letter prefix if no emoji available
-		prefix := strings.ToUpper(string(providerName[0]))
-		topicName = fmt.Sprintf("%s %s", prefix, name)
-		params.Set("name", topicName)
-	}
+		// Note: icon_color is mutually exclusive with icon_custom_emoji_id
+		// We cannot use both, so we skip icon_color when using custom emoji
+	} else {
+		// No custom emoji available - use fallbacks
+		if providerName != "" && len(providerName) > 0 {
+			// Add letter prefix for provider identification
+			prefix := strings.ToUpper(string(providerName[0]))
+			topicName = fmt.Sprintf("%s %s", prefix, name)
+			params.Set("name", topicName)
+		}
 
-	// Add icon color for worktree sessions to group them by base project
-	if baseSessionName != "" {
-		params.Add("icon_color", worktreeColor(baseSessionName))
+		// Add icon color for worktree sessions to group them by base project
+		// This applies even when providerName is empty (e.g., worktree for default session)
+		if baseSessionName != "" {
+			params.Add("icon_color", worktreeColor(baseSessionName))
+		}
 	}
 
 	result, err := telegramAPI(config, "createForumTopic", params)
@@ -771,12 +777,44 @@ func sendMessageWithTimestamp(config *Config, chatID int64, threadID int64, base
 	return sendMessageWithDateTime(config, chatID, threadID, text, entities)
 }
 
+// normalizeProviderAlias converts provider aliases to canonical names
+// This ensures that custom emoji lookups work regardless of which alias was used
+func normalizeProviderAlias(providerName string) string {
+	// Map common aliases to canonical provider names
+	// These should match the documented aliases in API_9_5_FEATURES.md
+	switch strings.ToLower(providerName) {
+	case "z":
+		return "zai"
+	case "d", "ds":
+		return "deepseek"
+	case "m":
+		return "minimax"
+	case "c", "anthropic":
+		return "claude"
+	default:
+		return strings.ToLower(providerName)
+	}
+}
+
 // getEmojiIDForProvider returns the custom emoji ID for a given provider
 // Only returns non-empty if the user has explicitly configured a custom emoji ID
+// Supports provider aliases (z→zai, d/ds→deepseek, m→minimax, c/anthropic→claude)
 func getEmojiIDForProvider(config *Config, providerName string) string {
+	if providerName == "" {
+		return ""
+	}
+
+	// Normalize the provider name to handle aliases
+	canonicalName := normalizeProviderAlias(providerName)
+
 	// Only use user-configured custom emoji IDs
 	// Built-in placeholder constants are NOT returned to avoid API errors
 	if config.CustomEmojiIDs != nil {
+		// Try canonical name first
+		if emojiID, ok := config.CustomEmojiIDs[canonicalName]; ok && emojiID != "" {
+			return emojiID
+		}
+		// Fall back to original providerName (in case user configured with alias)
 		if emojiID, ok := config.CustomEmojiIDs[providerName]; ok && emojiID != "" {
 			return emojiID
 		}
@@ -805,13 +843,11 @@ func sendDraftMessage(config *Config, chatID int64, threadID int64, text string)
 	const maxDraftLen = 4096 // Telegram message length limit
 
 	// Truncate if over limit (draft updates must fit within message size limit)
-	// Use rune-aware truncation to avoid cutting through UTF-8 sequences
-	if len(text) > maxDraftLen {
-		// Convert to runes for safe UTF-8 truncation
-		runes := []rune(text)
-		if len(runes) > maxDraftLen-3 {
-			text = string(runes[:maxDraftLen-3]) + "..."
-		}
+	// Use rune count for the check to handle multilingual text and emoji correctly
+	// CJK characters and emoji use multiple bytes but count as single characters
+	runes := []rune(text)
+	if len(runes) > maxDraftLen-3 {
+		text = string(runes[:maxDraftLen-3]) + "..."
 	}
 
 	params := url.Values{
