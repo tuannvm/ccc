@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -936,4 +937,177 @@ func streamAndFinalize(config *Config, chatID int64, threadID int64, text <-chan
 
 	// Finalize with permanent message
 	return finalizeStream(config, chatID, threadID, finalText, parseMode)
+}
+
+// ========== Streaming Integration Helpers ==========
+
+// sendStreamingMessage sends a message with optional streaming
+// If enableStreaming is true, uses sendMessageDraft for real-time typing effect
+// Otherwise, falls back to standard sendMessageGetID
+func sendStreamingMessage(config *Config, chatID int64, threadID int64, text string, enableStreaming bool) (int64, error) {
+	if !enableStreaming {
+		// Fallback to standard message sending
+		return sendMessageGetID(config, chatID, threadID, text)
+	}
+
+	// Streaming mode: send as single chunk then finalize
+	chunks := make(chan string, 1)
+	chunks <- text
+	close(chunks)
+
+	return streamAndFinalize(config, chatID, threadID, chunks, "Markdown")
+}
+
+// BufferedStreamer accumulates text chunks and streams them
+// Use this when you receive multiple text blocks and want to stream them as one response
+type BufferedStreamer struct {
+	config         *Config
+	chatID         int64
+	threadID       int64
+	enabled        bool
+	textBuilder    strings.Builder
+	chunkChan      chan string
+	flushTimer     *time.Timer
+	flushInterval  time.Duration
+	doneChan       chan bool         // Signals goroutine to stop
+	finalizeDone   chan struct{}     // Signals when finalization is complete
+	lastFlush      time.Time
+	minChunkSize   int
+	finalMessageID int64             // Stores the message ID from finalization
+	finalizeErr    error             // Stores finalization error
+	mu             sync.Mutex        // Protects finalMessageID, finalizeErr, and concurrent Add
+}
+
+// NewBufferedStreamer creates a new buffered streamer
+func NewBufferedStreamer(config *Config, chatID int64, threadID int64, enabled bool) *BufferedStreamer {
+	bs := &BufferedStreamer{
+		config:        config,
+		chatID:        chatID,
+		threadID:      threadID,
+		enabled:       enabled,
+		chunkChan:     make(chan string, 100),
+		doneChan:      make(chan bool),
+		finalizeDone:  make(chan struct{}),
+		flushInterval: 100 * time.Millisecond, // Flush every 100ms
+		minChunkSize:  10,                    // Or after 10 characters
+	}
+	return bs
+}
+
+// Start begins the background streaming goroutine
+func (bs *BufferedStreamer) Start() {
+	if !bs.enabled {
+		return // Streaming disabled
+	}
+
+	go func() {
+		ticker := time.NewTicker(bs.flushInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case chunk := <-bs.chunkChan:
+				bs.textBuilder.WriteString(chunk)
+				bs.lastFlush = time.Now()
+
+				// Flush if we have enough content or timer fires
+				if bs.textBuilder.Len() >= bs.minChunkSize {
+					bs.sendDraft()
+				}
+
+			case <-ticker.C:
+				// Periodic flush
+				if time.Since(bs.lastFlush) >= bs.flushInterval && bs.textBuilder.Len() > 0 {
+					bs.sendDraft()
+				}
+
+			case <-bs.doneChan:
+				// Done - drain remaining chunks first, then finalize
+				for {
+					select {
+					case chunk := <-bs.chunkChan:
+						bs.textBuilder.WriteString(chunk)
+					default:
+						// No more chunks - finalize and exit
+						bs.finalize()
+						close(bs.finalizeDone)
+						return
+					}
+				}
+			}
+		}
+	}()
+}
+
+// Add adds a text chunk to the stream
+// Safe for concurrent use - multiple goroutines can call Add() simultaneously
+func (bs *BufferedStreamer) Add(text string) {
+	// Always buffer text, even when streaming disabled
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	if !bs.enabled {
+		// Streaming disabled - just accumulate in buffer
+		bs.textBuilder.WriteString(text)
+		return
+	}
+
+	// Non-blocking send - if channel is full, drop the chunk
+	// This prevents deadlock if Done() has already closed doneChan
+	select {
+	case bs.chunkChan <- text:
+		// Chunk sent successfully
+	default:
+		// Channel full or goroutine exited - silently drop
+	}
+}
+
+// sendDraft sends the current accumulated text as a draft update
+func (bs *BufferedStreamer) sendDraft() {
+	if bs.textBuilder.Len() == 0 {
+		return
+	}
+
+	currentText := bs.textBuilder.String()
+	if err := sendDraftMessage(bs.config, bs.chatID, bs.threadID, currentText); err != nil {
+		// Draft failures are non-critical
+	}
+}
+
+// finalize converts the draft to a permanent message and stores the message ID
+func (bs *BufferedStreamer) finalize() {
+	finalText := bs.textBuilder.String()
+	if finalText == "" {
+		return
+	}
+
+	msgID, err := finalizeStream(bs.config, bs.chatID, bs.threadID, finalText, "Markdown")
+
+	// Store the message ID and error for Done() to retrieve
+	bs.mu.Lock()
+	bs.finalMessageID = msgID
+	bs.finalizeErr = err
+	bs.mu.Unlock()
+}
+
+// Done finalizes the stream and returns the message ID
+func (bs *BufferedStreamer) Done() (int64, error) {
+	if !bs.enabled {
+		// Not streaming enabled - send normally
+		if bs.textBuilder.Len() == 0 {
+			return 0, nil
+		}
+		return sendMessageGetID(bs.config, bs.chatID, bs.threadID, bs.textBuilder.String())
+	}
+
+	// Signal goroutine to finalize (goroutine owns channel lifecycle)
+	close(bs.doneChan)
+
+	// Wait for finalization to complete (proper synchronization)
+	<-bs.finalizeDone
+
+	// Return the stored message ID and error from finalize()
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	return bs.finalMessageID, bs.finalizeErr
 }

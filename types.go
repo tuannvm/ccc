@@ -130,6 +130,8 @@ type Config struct {
 	MultiUserMode bool   `json:"multi_user_mode,omitempty"`  // Allow any group member (default: false = owner only)
 	// API 9.5: Custom emoji IDs for forum topic icons (optional)
 	CustomEmojiIDs map[string]string `json:"custom_emoji_ids,omitempty"` // provider -> emoji_id (e.g., "zai": "5372874709367178364")
+	// API 9.5: Enable streaming responses for real-time typing effect
+	EnableStreaming bool `json:"enable_streaming,omitempty"` // Use sendMessageDraft for AI responses
 
 	// ========== Sessions ==========
 	Sessions map[string]*SessionInfo `json:"sessions,omitempty"` // session name -> session info (single-pane sessions)
