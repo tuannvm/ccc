@@ -256,6 +256,12 @@ func handleStopHook() error {
 		hookLog("stop-hook: no group_id configured, skipping message delivery")
 		return nil
 	}
+	// If session was found but has no topic ID, skip delivery (private chat sessions)
+	// Do NOT fall back to CWD matching as this could misroute to a different session
+	if sessName != "" && topicID == 0 {
+		hookLog("stop-hook: session found but no topic_id, skipping message delivery: sess=%s", sessName)
+		return nil
+	}
 	if sessName == "" || topicID == 0 {
 		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s sessName=%s topicID=%d groupID=%d",
 			hookData.Cwd, hookData.SessionID, sessName, topicID, config.GroupID)
