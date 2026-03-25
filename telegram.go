@@ -1132,7 +1132,11 @@ func (bs *BufferedStreamer) Start() {
 				}
 
 			case <-bs.doneChan:
-				// Done - drain remaining chunks first, then finalize
+				// Done - give in-flight Add() calls time to observe the shutdown
+				time.Sleep(10 * time.Millisecond)
+
+				// Drain remaining chunks that were already in-flight
+				// Then finalize - the defer will set state = 2 on goroutine exit
 				for {
 					select {
 					case chunk := <-bs.chunkChan:
@@ -1235,22 +1239,21 @@ func (bs *BufferedStreamer) Done() (int64, error) {
 		}
 
 		bs.mu.Lock()
+		defer bs.mu.Unlock()
+
 		if bs.textBuilder.Len() == 0 {
-			bs.mu.Unlock()
 			bs.state.Store(2) // Transition to finalized
 			return 0, nil
 		}
 		text := bs.textBuilder.String()
-		bs.mu.Unlock()
 
-		// Send without holding the lock to allow concurrent Add() during network call
+		// Send while holding lock to prevent concurrent Add() modifications
+		// This blocks Add() during the network call, preventing race condition
 		msgID, err := sendMessageGetID(bs.config, bs.chatID, bs.threadID, text)
 
-		// Store result for idempotency before marking as finalized
-		bs.mu.Lock()
+		// Store result for idempotency
 		bs.finalMessageID = msgID
 		bs.finalizeErr = err
-		bs.mu.Unlock()
 
 		// Mark as finalized to prevent further Add() writes
 		bs.state.Store(2)
