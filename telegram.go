@@ -1063,8 +1063,7 @@ type BufferedStreamer struct {
 	minChunkSize   int
 	finalMessageID int64             // Stores the message ID from finalization
 	finalizeErr    error             // Stores finalization error
-	running        atomic.Bool       // Indicates if goroutine is processing
-	finalized      atomic.Bool       // Indicates if finalization is complete
+	state          atomic.Int32      // 0=not started, 1=running, 2=finalized
 	mu             sync.Mutex        // Protects finalMessageID, finalizeErr, and concurrent Add
 }
 
@@ -1075,14 +1074,16 @@ func NewBufferedStreamer(config *Config, chatID int64, threadID int64, enabled b
 		chatID:        chatID,
 		threadID:      threadID,
 		enabled:       enabled,
-		chunkChan:     make(chan string, 1000), // Increased buffer to prevent data loss
+		chunkChan:     make(chan string, 5000), // Large buffer to prevent chunk loss under load
+		                                         // Non-blocking send drops chunks when full to avoid blocking producers
+		                                         // Trade-off: possible data loss vs blocking command execution
+		                                         // 5000 slots should be sufficient for typical AI response streaming
 		doneChan:      make(chan bool),
 		finalizeDone:  make(chan struct{}),
 		flushInterval: 100 * time.Millisecond, // Flush every 100ms
 		minChunkSize:  10,                    // Or after 10 characters
 	}
-	bs.running.Store(false)
-	bs.finalized.Store(false)
+	bs.state.Store(0) // 0 = not started
 	return bs
 }
 
@@ -1092,9 +1093,14 @@ func (bs *BufferedStreamer) Start() {
 		return // Streaming disabled
 	}
 
-	bs.running.Store(true)
+	// Try to transition from "not started" (0) to "running" (1)
+	// If this fails, we're already finalized (2) or running (1)
+	if !bs.state.CompareAndSwap(0, 1) {
+		return // Already started or finalized
+	}
+
 	go func() {
-		defer bs.running.Store(false)
+		defer bs.state.Store(2) // Transition to finalized when goroutine exits
 		defer close(bs.finalizeDone)
 
 		ticker := time.NewTicker(bs.flushInterval)
@@ -1145,32 +1151,34 @@ func (bs *BufferedStreamer) Add(text string) {
 		return
 	}
 
-	// Check if goroutine is still running
-	if bs.running.Load() {
+	// Check current state
+	state := bs.state.Load()
+
+	if state == 1 {
 		// Goroutine is running - try non-blocking send
-		// If channel is full, drop the chunk to avoid blocking producer
-		// The 1000-slot buffer should be sufficient for normal operation
 		select {
 		case bs.chunkChan <- text:
 			// Chunk sent successfully
 			return
 		default:
 			// Channel full - drop the chunk to avoid blocking
-			// This is rare with 1000 buffer and fast draining
 			return
 		}
 	}
 
-	// Goroutine is not running - check if finalization is complete
-	if bs.finalized.Load() {
-		// Message already sent - cannot accept more chunks
-		// Silently drop to prevent data corruption
+	// State is 0 (not started) or 2 (finalized)
+	if state == 2 {
+		// Already finalized - drop the chunk
 		return
 	}
 
-	// Goroutine has not started yet - write to buffer with mutex
-	// This is safe because only this code can write before goroutine starts
+	// State is 0 (not started) - write to buffer with mutex
+	// Double-check state after acquiring mutex
 	bs.mu.Lock()
+	if bs.state.Load() != 0 {
+		bs.mu.Unlock()
+		return
+	}
 	bs.textBuilder.WriteString(text)
 	bs.mu.Unlock()
 }
@@ -1201,9 +1209,6 @@ func (bs *BufferedStreamer) finalize() {
 	bs.finalMessageID = msgID
 	bs.finalizeErr = err
 	bs.mu.Unlock()
-
-	// Mark as finalized to prevent further Add() writes
-	bs.finalized.Store(true)
 }
 
 // Done finalizes the stream and returns the message ID
@@ -1213,7 +1218,7 @@ func (bs *BufferedStreamer) Done() (int64, error) {
 		bs.mu.Lock()
 		if bs.textBuilder.Len() == 0 {
 			bs.mu.Unlock()
-			bs.finalized.Store(true)
+			bs.state.Store(2) // Transition to finalized
 			return 0, nil
 		}
 		text := bs.textBuilder.String()
@@ -1223,11 +1228,29 @@ func (bs *BufferedStreamer) Done() (int64, error) {
 		msgID, err := sendMessageGetID(bs.config, bs.chatID, bs.threadID, text)
 
 		// Mark as finalized to prevent further Add() writes
-		bs.finalized.Store(true)
+		bs.state.Store(2)
 		return msgID, err
 	}
 
-	// Signal goroutine to finalize (goroutine owns channel lifecycle)
+	// Try to transition from "not started" (0) to "finalized" (2)
+	// This handles the case where Done() is called before Start()
+	if bs.state.CompareAndSwap(0, 2) {
+		// Successfully transitioned - finalize directly
+		bs.mu.Lock()
+		defer bs.mu.Unlock()
+
+		if bs.textBuilder.Len() == 0 {
+			return 0, nil
+		}
+
+		text := bs.textBuilder.String()
+		msgID, err := finalizeStream(bs.config, bs.chatID, bs.threadID, text, "Markdown")
+		bs.finalMessageID = msgID
+		bs.finalizeErr = err
+		return msgID, err
+	}
+
+	// State is 1 (running) - signal goroutine to finalize
 	close(bs.doneChan)
 
 	// Wait for finalization to complete (proper synchronization)
