@@ -5,6 +5,12 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 ## [Unreleased]
 
 ### Added
+- **Telegram Bot API 9.5 streaming**: Real-time typing effect for AI responses
+  - Uses `sendMessageDraft` API method for smooth character-by-character updates
+  - No "edited" tag appears on messages
+  - Higher rate limits than traditional editMessageText
+  - Configurable via `enable_streaming` in config.json
+  - Thread-safe implementation with atomic state management
 - **Worktree auto-generation**: `/worktree` command now supports auto-generating worktree names
   - Run `/worktree` in a session topic to let Claude Code generate a unique name
   - Generated names follow Claude's adjective-noun-noun pattern (e.g., `merry-wishing-crystal`)

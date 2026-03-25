@@ -77,6 +77,7 @@ The main configuration file is stored at:
 | `oauth_token` | string | - | Claude Code OAuth token |
 | `otp_secret` | string | - | TOTP secret for permission approval |
 | `active_provider` | string | (empty) | Default provider for new sessions (empty = builtin) |
+| `enable_streaming` | bool | `false` | Enable real-time streaming for AI responses (typing effect) |
 | `providers` | map | `{}` | Named provider configurations |
 
 ## Session Configuration
