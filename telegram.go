@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -986,10 +987,33 @@ func sendStreamingMessage(config *Config, chatID int64, threadID int64, text str
 		return sendMessageGetID(config, chatID, threadID, text)
 	}
 
-	// Streaming mode: send as single chunk then finalize
-	chunks := make(chan string, 1)
-	chunks <- text
-	close(chunks)
+	// For long messages, break into chunks to show progress
+	// Short messages are sent as-is for efficiency
+	const chunkSize = 100 // Send every 100 characters for typing effect
+
+	if len(text) <= chunkSize {
+		// Short message - send as single chunk
+		chunks := make(chan string, 1)
+		chunks <- text
+		close(chunks)
+		return streamAndFinalize(config, chatID, threadID, chunks, "Markdown")
+	}
+
+	// Long message - stream incrementally
+	chunks := make(chan string, 10)
+	go func() {
+		defer close(chunks)
+		runes := []rune(text)
+		for i := 0; i < len(runes); i += chunkSize {
+			end := i + chunkSize
+			if end > len(runes) {
+				end = len(runes)
+			}
+			chunks <- string(runes[i:end])
+			// Small delay between chunks for natural typing effect
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
 
 	return streamAndFinalize(config, chatID, threadID, chunks, "Markdown")
 }
@@ -1011,6 +1035,7 @@ type BufferedStreamer struct {
 	minChunkSize   int
 	finalMessageID int64             // Stores the message ID from finalization
 	finalizeErr    error             // Stores finalization error
+	running        atomic.Bool       // Indicates if goroutine is processing
 	mu             sync.Mutex        // Protects finalMessageID, finalizeErr, and concurrent Add
 }
 
@@ -1021,12 +1046,13 @@ func NewBufferedStreamer(config *Config, chatID int64, threadID int64, enabled b
 		chatID:        chatID,
 		threadID:      threadID,
 		enabled:       enabled,
-		chunkChan:     make(chan string, 100),
+		chunkChan:     make(chan string, 1000), // Increased buffer to prevent data loss
 		doneChan:      make(chan bool),
 		finalizeDone:  make(chan struct{}),
 		flushInterval: 100 * time.Millisecond, // Flush every 100ms
 		minChunkSize:  10,                    // Or after 10 characters
 	}
+	bs.running.Store(false)
 	return bs
 }
 
@@ -1036,7 +1062,11 @@ func (bs *BufferedStreamer) Start() {
 		return // Streaming disabled
 	}
 
+	bs.running.Store(true)
 	go func() {
+		defer bs.running.Store(false)
+		defer close(bs.finalizeDone)
+
 		ticker := time.NewTicker(bs.flushInterval)
 		defer ticker.Stop()
 
@@ -1066,7 +1096,6 @@ func (bs *BufferedStreamer) Start() {
 					default:
 						// No more chunks - finalize and exit
 						bs.finalize()
-						close(bs.finalizeDone)
 						return
 					}
 				}
@@ -1078,24 +1107,33 @@ func (bs *BufferedStreamer) Start() {
 // Add adds a text chunk to the stream
 // Safe for concurrent use - multiple goroutines can call Add() simultaneously
 func (bs *BufferedStreamer) Add(text string) {
-	// Always buffer text, even when streaming disabled
-	bs.mu.Lock()
-	defer bs.mu.Unlock()
-
 	if !bs.enabled {
 		// Streaming disabled - just accumulate in buffer
+		bs.mu.Lock()
 		bs.textBuilder.WriteString(text)
+		bs.mu.Unlock()
 		return
 	}
 
-	// Non-blocking send - if channel is full, drop the chunk
-	// This prevents deadlock if Done() has already closed doneChan
-	select {
-	case bs.chunkChan <- text:
-		// Chunk sent successfully
-	default:
-		// Channel full or goroutine exited - silently drop
+	// Check if goroutine is still running
+	if bs.running.Load() {
+		// Goroutine is running - try non-blocking send
+		// If channel is full or goroutine is shutting down, fall back to buffer
+		select {
+		case bs.chunkChan <- text:
+			// Chunk sent successfully
+			return
+		default:
+			// Channel full - fall through to direct buffer write
+			// This prevents deadlock when channel fills up
+		}
 	}
+
+	// Either goroutine is not running, or channel is full
+	// Fall back to direct buffer write (safe with mutex)
+	bs.mu.Lock()
+	bs.textBuilder.WriteString(text)
+	bs.mu.Unlock()
 }
 
 // sendDraft sends the current accumulated text as a draft update
