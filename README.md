@@ -90,6 +90,7 @@ That's it! 🎉
 - 📁 **Multi-Session** — Multiple projects, each in its own topic
 - 🌳 **Git Worktrees** — Auto-generated sessions with color grouping
 - 🔄 **Seamless Handoff** — Start on phone, continue on PC
+- ⚡ **Streaming Responses** — Real-time typing effect for AI messages
 - 📤 **File Transfer** — Send files to your phone
 - 🎤 **Voice Messages** — Auto-transcribed voice notes
 - 🔒 **100% Self-Hosted** — Runs on your machine, no cloud
@@ -111,6 +112,7 @@ That's it! 🎉
 | [**Architecture**](docs/architecture.md) | System design, data flow |
 | [**Troubleshooting**](docs/troubleshooting.md) | Common issues & solutions |
 | [**Changelog**](docs/changelog.md) | Version history |
+| [**API 9.5 Features**](API_9_5_FEATURES.md) | Telegram Bot API 9.5 integration |
 
 ## Requirements
 
