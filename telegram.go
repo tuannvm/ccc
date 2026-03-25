@@ -1036,6 +1036,7 @@ type BufferedStreamer struct {
 	finalMessageID int64             // Stores the message ID from finalization
 	finalizeErr    error             // Stores finalization error
 	running        atomic.Bool       // Indicates if goroutine is processing
+	finalized      atomic.Bool       // Indicates if finalization is complete
 	mu             sync.Mutex        // Protects finalMessageID, finalizeErr, and concurrent Add
 }
 
@@ -1053,6 +1054,7 @@ func NewBufferedStreamer(config *Config, chatID int64, threadID int64, enabled b
 		minChunkSize:  10,                    // Or after 10 characters
 	}
 	bs.running.Store(false)
+	bs.finalized.Store(false)
 	return bs
 }
 
@@ -1130,6 +1132,13 @@ func (bs *BufferedStreamer) Add(text string) {
 	}
 
 	// Either goroutine is not running, or channel is full
+	// Check if finalization is complete before writing to buffer
+	if bs.finalized.Load() {
+		// Message already sent - cannot accept more chunks
+		// Silently drop to prevent data corruption
+		return
+	}
+
 	// Fall back to direct buffer write (safe with mutex)
 	bs.mu.Lock()
 	bs.textBuilder.WriteString(text)
@@ -1162,16 +1171,30 @@ func (bs *BufferedStreamer) finalize() {
 	bs.finalMessageID = msgID
 	bs.finalizeErr = err
 	bs.mu.Unlock()
+
+	// Mark as finalized to prevent further Add() writes
+	bs.finalized.Store(true)
 }
 
 // Done finalizes the stream and returns the message ID
 func (bs *BufferedStreamer) Done() (int64, error) {
 	if !bs.enabled {
 		// Not streaming enabled - send normally
+		bs.mu.Lock()
 		if bs.textBuilder.Len() == 0 {
+			bs.mu.Unlock()
+			bs.finalized.Store(true)
 			return 0, nil
 		}
-		return sendMessageGetID(bs.config, bs.chatID, bs.threadID, bs.textBuilder.String())
+		text := bs.textBuilder.String()
+		bs.mu.Unlock()
+
+		// Send without holding the lock to allow concurrent Add() during network call
+		msgID, err := sendMessageGetID(bs.config, bs.chatID, bs.threadID, text)
+
+		// Mark as finalized to prevent further Add() writes
+		bs.finalized.Store(true)
+		return msgID, err
 	}
 
 	// Signal goroutine to finalize (goroutine owns channel lifecycle)
