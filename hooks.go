@@ -270,8 +270,9 @@ func handleStopHook() error {
 			if info == nil || info.Path == "" {
 				continue
 			}
-			// Check if CWD starts with session path
-			if strings.HasPrefix(hookData.Cwd, info.Path) {
+			// Check if CWD matches session path exactly or starts with path + "/"
+			// This prevents /repo from matching /repo-copy or /repo2
+			if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
 				pathLen := len(info.Path)
 				if pathLen > bestMatchLen {
 					bestMatch = name
