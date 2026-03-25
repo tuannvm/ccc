@@ -659,7 +659,35 @@ func createForumTopicWithEmoji(config *Config, name string, providerName string,
 		return 0, err
 	}
 	if !result.OK {
-		return 0, fmt.Errorf("failed to create topic: %s", result.Description)
+		// If we used a custom emoji and it failed, retry without it
+		// This handles invalid/stale emoji IDs gracefully
+		if emojiID != "" {
+			// Remove custom emoji and use fallback (letter prefix + icon color)
+			params.Del("icon_custom_emoji_id")
+
+			// Add letter prefix for provider identification
+			if providerName != "" && len(providerName) > 0 {
+				prefix := strings.ToUpper(string(providerName[0]))
+				topicName = fmt.Sprintf("%s %s", prefix, name)
+				params.Set("name", topicName)
+			}
+
+			// Add icon color for worktree sessions
+			if baseSessionName != "" {
+				params.Add("icon_color", worktreeColor(baseSessionName))
+			}
+
+			// Retry topic creation without custom emoji
+			result, err = telegramAPI(config, "createForumTopic", params)
+			if err != nil {
+				return 0, err
+			}
+			if !result.OK {
+				return 0, fmt.Errorf("failed to create topic (even without emoji): %s", result.Description)
+			}
+		} else {
+			return 0, fmt.Errorf("failed to create topic: %s", result.Description)
+		}
 	}
 
 	var topic TopicResult
@@ -1120,26 +1148,28 @@ func (bs *BufferedStreamer) Add(text string) {
 	// Check if goroutine is still running
 	if bs.running.Load() {
 		// Goroutine is running - try non-blocking send
-		// If channel is full or goroutine is shutting down, fall back to buffer
+		// If channel is full, drop the chunk to avoid blocking producer
+		// The 1000-slot buffer should be sufficient for normal operation
 		select {
 		case bs.chunkChan <- text:
 			// Chunk sent successfully
 			return
 		default:
-			// Channel full - fall through to direct buffer write
-			// This prevents deadlock when channel fills up
+			// Channel full - drop the chunk to avoid blocking
+			// This is rare with 1000 buffer and fast draining
+			return
 		}
 	}
 
-	// Either goroutine is not running, or channel is full
-	// Check if finalization is complete before writing to buffer
+	// Goroutine is not running - check if finalization is complete
 	if bs.finalized.Load() {
 		// Message already sent - cannot accept more chunks
 		// Silently drop to prevent data corruption
 		return
 	}
 
-	// Fall back to direct buffer write (safe with mutex)
+	// Goroutine has not started yet - write to buffer with mutex
+	// This is safe because only this code can write before goroutine starts
 	bs.mu.Lock()
 	bs.textBuilder.WriteString(text)
 	bs.mu.Unlock()
