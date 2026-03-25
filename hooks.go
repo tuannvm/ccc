@@ -222,27 +222,72 @@ func readHookStdin() ([]byte, error) {
 }
 
 func handleStopHook() error {
-	defer func() { recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			hookLog("stop-hook: panic recovered: %v", r)
+		}
+	}()
+
+	hookLog("stop-hook: *** FUNCTION CALLED ***")
 
 	rawData, _ := readHookStdin()
 	if len(rawData) == 0 {
+		hookLog("stop-hook: no stdin data")
 		return nil
 	}
 
 	hookData, err := parseHookData(rawData)
 	if err != nil {
+		hookLog("stop-hook: failed to parse hook data: %v", err)
 		return nil
 	}
 
+	hookLog("stop-hook: received data: cwd=%s session_id=%s transcript=%s stop_active=%v",
+		hookData.Cwd, hookData.SessionID, hookData.TranscriptPath, hookData.StopHookActive)
+
 	config, err := loadConfig()
 	if err != nil || config == nil {
+		hookLog("stop-hook: failed to load config: %v", err)
 		return nil
 	}
 
 	sessName, topicID := findSession(config, hookData.Cwd, hookData.SessionID)
 	if sessName == "" || config.GroupID == 0 || topicID == 0 {
-		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s", hookData.Cwd, hookData.SessionID)
-		return nil
+		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s sessName=%s topicID=%d groupID=%d",
+			hookData.Cwd, hookData.SessionID, sessName, topicID, config.GroupID)
+		hookLog("stop-hook: available sessions: %d", len(config.Sessions))
+		for name, info := range config.Sessions {
+			hookLog("stop-hook:   - %s: topic=%d path=%s claude_id=%s",
+				name, info.TopicID, info.Path, info.ClaudeSessionID)
+		}
+
+		// Try to find the best matching session by CWD prefix
+		// This handles cases where a skill is invoked directly in Claude Code
+		// and the session lookup fails due to missing session_id or tmux mismatch
+		bestMatch := ""
+		bestMatchLen := 0
+		for name, info := range config.Sessions {
+			if info == nil || info.Path == "" {
+				continue
+			}
+			// Check if CWD starts with session path
+			if strings.HasPrefix(hookData.Cwd, info.Path) {
+				pathLen := len(info.Path)
+				if pathLen > bestMatchLen {
+					bestMatch = name
+					bestMatchLen = pathLen
+				}
+			}
+		}
+
+		if bestMatch != "" {
+			hookLog("stop-hook: using best match session by CWD: %s (path match length: %d)", bestMatch, bestMatchLen)
+			sessName = bestMatch
+			topicID = config.Sessions[bestMatch].TopicID
+		} else {
+			hookLog("stop-hook: no suitable session found, skipping message delivery")
+			return nil
+		}
 	}
 
 	// Persist claude session ID to config for future lookups
