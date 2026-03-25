@@ -1048,6 +1048,13 @@ func sendStreamingMessage(config *Config, chatID int64, threadID int64, text str
 
 // BufferedStreamer accumulates text chunks and streams them
 // Use this when you receive multiple text blocks and want to stream them as one response
+//
+// Thread-safety: Add() can be called concurrently from multiple goroutines.
+// Done() is idempotent and can be called multiple times safely.
+//
+// Trade-off: Uses non-blocking sends to avoid blocking producers. If chunks are
+// added faster than the goroutine can drain them (extremely rare with 5000-slot buffer),
+// chunks will be dropped. This prevents blocking the caller during Telegram backpressure.
 type BufferedStreamer struct {
 	config         *Config
 	chatID         int64
@@ -1058,6 +1065,7 @@ type BufferedStreamer struct {
 	flushTimer     *time.Timer
 	flushInterval  time.Duration
 	doneChan       chan bool         // Signals goroutine to stop
+	doneChanOnce   sync.Once         // Ensures doneChan is only closed once
 	finalizeDone   chan struct{}     // Signals when finalization is complete
 	lastFlush      time.Time
 	minChunkSize   int
@@ -1156,12 +1164,16 @@ func (bs *BufferedStreamer) Add(text string) {
 
 	if state == 1 {
 		// Goroutine is running - try non-blocking send
+		// If channel is full, drop the chunk to avoid blocking the producer
+		// Trade-off: Possible data loss vs blocking command execution
+		// The 5000-slot buffer should prevent this in normal operation
 		select {
 		case bs.chunkChan <- text:
 			// Chunk sent successfully
 			return
 		default:
-			// Channel full - drop the chunk to avoid blocking
+			// Channel full - drop chunk to avoid blocking producer
+			// This is rare with 5000 buffer and should only occur under extreme load
 			return
 		}
 	}
@@ -1215,6 +1227,13 @@ func (bs *BufferedStreamer) finalize() {
 func (bs *BufferedStreamer) Done() (int64, error) {
 	if !bs.enabled {
 		// Not streaming enabled - send normally
+		// Check if already finalized first for idempotency
+		if bs.state.Load() == 2 {
+			bs.mu.Lock()
+			defer bs.mu.Unlock()
+			return bs.finalMessageID, bs.finalizeErr
+		}
+
 		bs.mu.Lock()
 		if bs.textBuilder.Len() == 0 {
 			bs.mu.Unlock()
@@ -1226,6 +1245,12 @@ func (bs *BufferedStreamer) Done() (int64, error) {
 
 		// Send without holding the lock to allow concurrent Add() during network call
 		msgID, err := sendMessageGetID(bs.config, bs.chatID, bs.threadID, text)
+
+		// Store result for idempotency before marking as finalized
+		bs.mu.Lock()
+		bs.finalMessageID = msgID
+		bs.finalizeErr = err
+		bs.mu.Unlock()
 
 		// Mark as finalized to prevent further Add() writes
 		bs.state.Store(2)
@@ -1250,8 +1275,20 @@ func (bs *BufferedStreamer) Done() (int64, error) {
 		return msgID, err
 	}
 
+	// Check if already finalized (state == 2)
+	// This handles the case where Done() is called multiple times
+	if bs.state.Load() == 2 {
+		// Already finalized - return stored message ID and error
+		bs.mu.Lock()
+		defer bs.mu.Unlock()
+		return bs.finalMessageID, bs.finalizeErr
+	}
+
 	// State is 1 (running) - signal goroutine to finalize
-	close(bs.doneChan)
+	// Use sync.Once to ensure doneChan is only closed once
+	bs.doneChanOnce.Do(func() {
+		close(bs.doneChan)
+	})
 
 	// Wait for finalization to complete (proper synchronization)
 	<-bs.finalizeDone
