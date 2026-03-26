@@ -262,6 +262,12 @@ func handleStopHook() error {
 		hookLog("stop-hook: session found but no topic_id, skipping message delivery: sess=%s", sessName)
 		return nil
 	}
+
+	// Track whether we used CWD fallback (for later persist logic)
+	// Save original session name to detect if CWD fallback changed it
+	usedCwdFallback := false
+	originalSessName := sessName
+
 	if sessName == "" || topicID == 0 {
 		hookLog("stop-hook: no matching session found: cwd=%s session_id=%s sessName=%s topicID=%d groupID=%d",
 			hookData.Cwd, hookData.SessionID, sessName, topicID, config.GroupID)
@@ -275,10 +281,19 @@ func handleStopHook() error {
 		// This handles cases where a skill is invoked directly in Claude Code
 		// and the session lookup fails due to missing session_id or tmux mismatch
 		//
-		// NOTE: This fallback is primarily for CCC sessions where the session_id
-		// hasn't been persisted yet (e.g., during skill invocations). The path
-		// matching requirement (CWD must match session path) prevents most
-		// orphaned hooks from ad-hoc Claude Code runs.
+		// IMPORTANT: Only use CWD fallback when we have evidence this is a CCC session:
+		// - The transcript path exists and is valid (indicates a CCC session)
+		// This prevents orphaned hooks from ad-hoc Claude Code runs from being
+		// misrouted to unrelated Telegram topics.
+		if hookData.TranscriptPath == "" {
+			hookLog("stop-hook: no transcript path available, skipping CWD fallback to prevent orphaned hook leakage")
+			return nil
+		}
+		// Verify the transcript file actually exists
+		if _, err := os.Stat(hookData.TranscriptPath); os.IsNotExist(err) {
+			hookLog("stop-hook: transcript file does not exist, skipping CWD fallback: %s", hookData.TranscriptPath)
+			return nil
+		}
 
 		bestMatch := ""
 		bestMatchLen := 0
@@ -333,6 +348,8 @@ func handleStopHook() error {
 			hookLog("stop-hook: using best match session by CWD: %s (path match length: %d)", bestMatch, bestMatchLen)
 			sessName = bestMatch
 			topicID = bestMatchTopicID
+			// Mark as CWD fallback if the session name changed
+			usedCwdFallback = (sessName != originalSessName)
 		} else {
 			hookLog("stop-hook: no suitable session found, skipping message delivery")
 			return nil
@@ -340,7 +357,14 @@ func handleStopHook() error {
 	}
 
 	// Persist claude session ID to config for future lookups
-	persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
+	// IMPORTANT: Only persist if we found the session through normal lookup
+	// (session_id or tmux match). Do NOT persist CWD fallback guesses as they
+	// could be from orphaned hooks and would corrupt the real session's ID.
+	if !usedCwdFallback {
+		persistClaudeSessionID(config, sessName, hookData.SessionID, hookData.TranscriptPath)
+	} else {
+		hookLog("stop-hook: using CWD fallback session %s, NOT persisting session_id to prevent corruption", sessName)
+	}
 
 	hookLog("stop-hook: session=%s claude_session_id=%s transcript=%s", sessName, hookData.SessionID, hookData.TranscriptPath)
 
