@@ -283,8 +283,10 @@ func handleStopHook() error {
 		bestMatch := ""
 		bestMatchLen := 0
 		bestMatchTopicID := int64(0)
+		bestMatchIsTeam := false
 
-		// Check regular sessions first (preferred over team sessions for same path)
+		// Check regular sessions and team sessions together
+		// Choose the longest path match, preferring regular sessions for ties
 		for name, info := range config.Sessions {
 			if info == nil || info.Path == "" || info.TopicID == 0 {
 				// Skip sessions without valid topic IDs to prevent dumping to main chat
@@ -294,17 +296,18 @@ func handleStopHook() error {
 			// This prevents /repo from matching /repo-copy or /repo2
 			if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
 				pathLen := len(info.Path)
-				if pathLen > bestMatchLen {
+				// Prefer longer matches; for ties, prefer regular sessions over team sessions
+				if pathLen > bestMatchLen || (pathLen == bestMatchLen && bestMatchIsTeam) {
 					bestMatch = name
 					bestMatchLen = pathLen
 					bestMatchTopicID = info.TopicID
+					bestMatchIsTeam = false
 				}
 			}
 		}
 
-		// Check team sessions only if no regular session matched
-		// This provides deterministic tie-breaking when paths overlap
-		if bestMatch == "" && config.TeamSessions != nil {
+		// Check team sessions
+		if config.TeamSessions != nil {
 			for tid, info := range config.TeamSessions {
 				if info == nil || info.Path == "" || tid == 0 {
 					// Skip sessions without valid topic IDs
@@ -313,10 +316,12 @@ func handleStopHook() error {
 				// Check if CWD matches session path exactly or starts with path + "/"
 				if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
 					pathLen := len(info.Path)
+					// Only choose team session if path is strictly longer (not tie)
 					if pathLen > bestMatchLen {
 						bestMatch = info.SessionName
 						bestMatchLen = pathLen
 						bestMatchTopicID = tid
+						bestMatchIsTeam = true
 					}
 				}
 			}
