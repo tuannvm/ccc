@@ -274,11 +274,20 @@ func handleStopHook() error {
 		// Try to find the best matching session by CWD prefix
 		// This handles cases where a skill is invoked directly in Claude Code
 		// and the session lookup fails due to missing session_id or tmux mismatch
+		//
+		// IMPORTANT: Only use CWD fallback when we have a valid session_id that
+		// might not be persisted yet. This prevents ad-hoc Claude Code runs from
+		// leaking into unrelated Telegram topics.
+		if hookData.SessionID == "" {
+			hookLog("stop-hook: no session_id available, skipping CWD fallback to prevent orphaned hook leakage")
+			return nil
+		}
+
 		bestMatch := ""
 		bestMatchLen := 0
 		bestMatchTopicID := int64(0)
 
-		// Check regular sessions
+		// Check regular sessions first (preferred over team sessions for same path)
 		for name, info := range config.Sessions {
 			if info == nil || info.Path == "" || info.TopicID == 0 {
 				// Skip sessions without valid topic IDs to prevent dumping to main chat
@@ -296,8 +305,9 @@ func handleStopHook() error {
 			}
 		}
 
-		// Check team sessions
-		if config.TeamSessions != nil {
+		// Check team sessions only if no regular session matched
+		// This provides deterministic tie-breaking when paths overlap
+		if bestMatch == "" && config.TeamSessions != nil {
 			for tid, info := range config.TeamSessions {
 				if info == nil || info.Path == "" || tid == 0 {
 					// Skip sessions without valid topic IDs
