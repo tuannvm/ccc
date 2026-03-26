@@ -268,11 +268,17 @@ func handleStopHook() error {
 	usedCwdFallback := false
 
 	// Detect if findSession() used internal CWD matching by checking if the stored
-	// claude_session_id matches the incoming session_id. If they don't match, it means
-	// findSession() fell back to CWD matching (the least reliable method).
+	// claude_session_id matches the incoming session_id.
+	//
+	// Important: Only mark as CWD fallback when:
+	// 1. The stored claude_session_id is non-empty (session was previously persisted)
+	// 2. AND it doesn't match the incoming session_id (real mismatch, not a new session)
+	//
+	// This allows new sessions (with empty stored_id) to persist correctly while
+	// blocking orphaned hooks from corrupting existing sessions.
 	if sessName != "" && hookData.SessionID != "" {
 		// Check regular sessions
-		if sess, ok := config.Sessions[sessName]; ok && sess.ClaudeSessionID != hookData.SessionID {
+		if sess, ok := config.Sessions[sessName]; ok && sess.ClaudeSessionID != "" && sess.ClaudeSessionID != hookData.SessionID {
 			hookLog("stop-hook: findSession used internal CWD fallback for session %s (stored_id=%s != incoming_id=%s), marking as usedCwdFallback",
 				sessName, sess.ClaudeSessionID, hookData.SessionID)
 			usedCwdFallback = true
@@ -281,17 +287,26 @@ func handleStopHook() error {
 		if topicID != 0 && config.TeamSessions != nil {
 			if teamSess, ok := config.TeamSessions[topicID]; ok && teamSess.SessionName == sessName {
 				// For team sessions, check if any pane has a matching claude_session_id
+				// If at least one pane has a non-empty stored_id that doesn't match,
+				// it indicates CWD fallback was used.
+				hasNonEmptyStoredID := false
 				matchedBySessionID := false
 				if teamSess.Panes != nil {
 					for _, pane := range teamSess.Panes {
-						if pane != nil && pane.ClaudeSessionID == hookData.SessionID {
-							matchedBySessionID = true
-							break
+						if pane != nil {
+							if pane.ClaudeSessionID != "" {
+								hasNonEmptyStoredID = true
+							}
+							if pane.ClaudeSessionID == hookData.SessionID {
+								matchedBySessionID = true
+								break
+							}
 						}
 					}
 				}
-				if !matchedBySessionID {
-					hookLog("stop-hook: findSession used internal CWD fallback for team session %s (incoming_id=%s matches no pane), marking as usedCwdFallback",
+				// Mark as CWD fallback only if we have non-empty stored IDs but none matched
+				if hasNonEmptyStoredID && !matchedBySessionID {
+					hookLog("stop-hook: findSession used internal CWD fallback for team session %s (incoming_id=%s matches no pane with stored ID), marking as usedCwdFallback",
 						sessName, hookData.SessionID)
 					usedCwdFallback = true
 				}
