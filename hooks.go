@@ -316,8 +316,9 @@ func handleStopHook() error {
 				// Check if CWD matches session path exactly or starts with path + "/"
 				if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
 					pathLen := len(info.Path)
-					// Only choose team session if path is strictly longer (not tie)
-					if pathLen > bestMatchLen {
+					// Prefer longer matches; for ties, prefer team sessions over regular sessions
+					// This ensures team session responses go to the correct topic
+					if pathLen > bestMatchLen || (pathLen == bestMatchLen && !bestMatchIsTeam) {
 						bestMatch = info.SessionName
 						bestMatchLen = pathLen
 						bestMatchTopicID = tid
