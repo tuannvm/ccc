@@ -275,8 +275,12 @@ func handleStopHook() error {
 			hookData.Cwd, hookData.SessionID, sessName, topicID, config.GroupID)
 		hookLog("stop-hook: available sessions: %d", len(config.Sessions))
 		for name, info := range config.Sessions {
-			hookLog("stop-hook:   - %s: topic=%d path=%s claude_id=%s",
-				name, info.TopicID, info.Path, info.ClaudeSessionID)
+			if info == nil {
+				hookLog("stop-hook:   - %s: <nil>", name)
+			} else {
+				hookLog("stop-hook:   - %s: topic=%d path=%s claude_id=%s",
+					name, info.TopicID, info.Path, info.ClaudeSessionID)
+			}
 		}
 
 		// Try to find the best matching session by CWD prefix
