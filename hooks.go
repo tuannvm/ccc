@@ -311,7 +311,8 @@ func handleStopHook() error {
 			}
 			// Check if CWD matches session path exactly or starts with path + "/"
 			// This prevents /repo from matching /repo-copy or /repo2
-			if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
+			// Also check suffix for worktree sessions (e.g., /path/to/worktrees/session-name)
+			if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") || strings.HasSuffix(hookData.Cwd, "/"+name) {
 				pathLen := len(info.Path)
 				// Prefer longer matches; for ties, prefer regular sessions over team sessions
 				if pathLen > bestMatchLen || (pathLen == bestMatchLen && bestMatchIsTeam) {
