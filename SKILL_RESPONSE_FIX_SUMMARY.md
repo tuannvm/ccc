@@ -101,6 +101,29 @@ if bestMatch != "" {
 tail -f ~/Library/Caches/ccc/hook-debug.log | grep "stop-hook:"
 ```
 
+## Ralph Loop Implementation History
+
+### Iteration 1
+- **Codex Review**: Found 2 P1 critical issues
+- **Fixes Applied**:
+  1. Orphaned hook prevention (transcript path validation)
+  2. Session ID corruption prevention (conditional persistence)
+- **Commit**: `a87ff01 fix: prevent orphaned hooks and session ID corruption in CWD fallback`
+
+### Iteration 2
+- **Codex Review**: Passed with no critical issues
+- **Status**: Implementation verified safe and internally consistent
+
+## Implementation Status
+
+✅ **Complete** - All critical fixes implemented and verified:
+- CWD fallback session matching with path boundary protection
+- Orphaned hook prevention via transcript validation
+- Session ID corruption prevention via conditional persistence
+- Team session support with correct tie-breaking semantics
+- Zero-topic session filtering
+- Comprehensive diagnostic logging
+
 ## Claude Code 2.1.83 Compatibility
 
 ### Relevant Changes
