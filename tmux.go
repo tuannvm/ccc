@@ -1168,10 +1168,20 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		listenLog("sendToTmuxWithDelay: text did not appear in pane after timeout, sending Enter anyway")
 	}
 
+	// Dismiss autocomplete popup that bracketed paste may trigger
+	time.Sleep(100 * time.Millisecond)
+	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Escape").Run(); err != nil {
+		listenLog("sendToTmuxWithDelay: failed to send Escape: %v", err)
+	}
+
 	// Send Enter to execute the prompt
-	// Single Enter is sufficient for normal prompt execution
-	// The TUI will process the command and display results
-	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "C-m").Run(); err != nil {
+	// Claude Code 2.1.84+ requires double Enter to submit
+	time.Sleep(50 * time.Millisecond)
+	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+		return err
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
 		return err
 	}
 
