@@ -275,13 +275,10 @@ func handleStopHook() error {
 		// This handles cases where a skill is invoked directly in Claude Code
 		// and the session lookup fails due to missing session_id or tmux mismatch
 		//
-		// IMPORTANT: Only use CWD fallback when we have a valid session_id that
-		// might not be persisted yet. This prevents ad-hoc Claude Code runs from
-		// leaking into unrelated Telegram topics.
-		if hookData.SessionID == "" {
-			hookLog("stop-hook: no session_id available, skipping CWD fallback to prevent orphaned hook leakage")
-			return nil
-		}
+		// NOTE: This fallback is primarily for CCC sessions where the session_id
+		// hasn't been persisted yet (e.g., during skill invocations). The path
+		// matching requirement (CWD must match session path) prevents most
+		// orphaned hooks from ad-hoc Claude Code runs.
 
 		bestMatch := ""
 		bestMatchLen := 0
