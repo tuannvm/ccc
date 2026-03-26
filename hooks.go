@@ -263,57 +263,11 @@ func handleStopHook() error {
 		return nil
 	}
 
-	// Track whether we used CWD fallback (for later persist logic)
-	// This prevents persisting incorrect session_ids from orphaned hooks
+	// Track whether we used outer CWD fallback (for later persist logic)
+	// Save original session name to detect if outer CWD fallback changed it
+	// Note: We cannot reliably detect internal CWD fallback within findSession()
+	// (tmux vs CWD), so we only track the outer fallback here.
 	usedCwdFallback := false
-
-	// Detect if findSession() used internal CWD matching by checking if the stored
-	// claude_session_id matches the incoming session_id.
-	//
-	// Important: Only mark as CWD fallback when:
-	// 1. The stored claude_session_id is non-empty (session was previously persisted)
-	// 2. AND it doesn't match the incoming session_id (real mismatch, not a new session)
-	//
-	// This allows new sessions (with empty stored_id) to persist correctly while
-	// blocking orphaned hooks from corrupting existing sessions.
-	if sessName != "" && hookData.SessionID != "" {
-		// Check regular sessions
-		if sess, ok := config.Sessions[sessName]; ok && sess.ClaudeSessionID != "" && sess.ClaudeSessionID != hookData.SessionID {
-			hookLog("stop-hook: findSession used internal CWD fallback for session %s (stored_id=%s != incoming_id=%s), marking as usedCwdFallback",
-				sessName, sess.ClaudeSessionID, hookData.SessionID)
-			usedCwdFallback = true
-		}
-		// Check team sessions (topicID is the team session ID for team sessions)
-		if topicID != 0 && config.TeamSessions != nil {
-			if teamSess, ok := config.TeamSessions[topicID]; ok && teamSess.SessionName == sessName {
-				// For team sessions, check if any pane has a matching claude_session_id
-				// If at least one pane has a non-empty stored_id that doesn't match,
-				// it indicates CWD fallback was used.
-				hasNonEmptyStoredID := false
-				matchedBySessionID := false
-				if teamSess.Panes != nil {
-					for _, pane := range teamSess.Panes {
-						if pane != nil {
-							if pane.ClaudeSessionID != "" {
-								hasNonEmptyStoredID = true
-							}
-							if pane.ClaudeSessionID == hookData.SessionID {
-								matchedBySessionID = true
-								break
-							}
-						}
-					}
-				}
-				// Mark as CWD fallback only if we have non-empty stored IDs but none matched
-				if hasNonEmptyStoredID && !matchedBySessionID {
-					hookLog("stop-hook: findSession used internal CWD fallback for team session %s (incoming_id=%s matches no pane with stored ID), marking as usedCwdFallback",
-						sessName, hookData.SessionID)
-					usedCwdFallback = true
-				}
-			}
-		}
-	}
-
 	originalSessName := sessName
 
 	if sessName == "" || topicID == 0 {
@@ -329,17 +283,12 @@ func handleStopHook() error {
 		// This handles cases where a skill is invoked directly in Claude Code
 		// and the session lookup fails due to missing session_id or tmux mismatch
 		//
-		// IMPORTANT: Only use CWD fallback when we have evidence this is a CCC session:
-		// - The transcript path exists and is valid (indicates a CCC session)
-		// This prevents orphaned hooks from ad-hoc Claude Code runs from being
-		// misrouted to unrelated Telegram topics.
+		// IMPORTANT: Only use CWD fallback when we have a transcript path (indicates a CCC session).
+		// This prevents orphaned hooks from ad-hoc Claude Code runs from being misrouted.
+		// Note: We don't check if the file exists yet because the transcript might not be
+		// flushed when the Stop hook fires. The retry logic handles delayed transcript availability.
 		if hookData.TranscriptPath == "" {
 			hookLog("stop-hook: no transcript path available, skipping CWD fallback to prevent orphaned hook leakage")
-			return nil
-		}
-		// Verify the transcript file actually exists
-		if _, err := os.Stat(hookData.TranscriptPath); os.IsNotExist(err) {
-			hookLog("stop-hook: transcript file does not exist, skipping CWD fallback: %s", hookData.TranscriptPath)
 			return nil
 		}
 
