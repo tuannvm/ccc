@@ -1318,3 +1318,164 @@ func TestBaselinePathUtilities(t *testing.T) {
 		t.Errorf("expandPath(absolute): got %q, want '/absolute/path'", path)
 	}
 }
+
+// TestCWDFallbackPathPrefixCollision tests that CWD matching doesn't match
+// /repo to /repo-copy or /repo2 (path boundary protection)
+func TestCWDFallbackPathPrefixCollision(t *testing.T) {
+	config := &Config{
+		Sessions: map[string]*SessionInfo{
+			"repo": {
+				Path:    "/home/user/repo",
+				TopicID: 100,
+			},
+			"repo-copy": {
+				Path:    "/home/user/repo-copy",
+				TopicID: 200,
+			},
+		},
+	}
+
+	// Test exact match to /repo
+	sessName, topicID := findSessionByCwd(config, "/home/user/repo")
+	if sessName != "repo" {
+		t.Errorf("CWD('/home/user/repo'): got %q, want 'repo'", sessName)
+	}
+	if topicID != 100 {
+		t.Errorf("topicID: got %d, want 100", topicID)
+	}
+
+	// Test exact match to /repo-copy
+	sessName, topicID = findSessionByCwd(config, "/home/user/repo-copy")
+	if sessName != "repo-copy" {
+		t.Errorf("CWD('/home/user/repo-copy'): got %q, want 'repo-copy'", sessName)
+	}
+	if topicID != 200 {
+		t.Errorf("topicID: got %d, want 200", topicID)
+	}
+
+	// Test subdirectory of /repo (should match repo, not repo-copy)
+	sessName, topicID = findSessionByCwd(config, "/home/user/repo/subdir")
+	if sessName != "repo" {
+		t.Errorf("CWD('/home/user/repo/subdir'): got %q, want 'repo'", sessName)
+	}
+	if topicID != 100 {
+		t.Errorf("topicID: got %d, want 100", topicID)
+	}
+
+	// Test subdirectory of /repo-copy (should match repo-copy)
+	sessName, topicID = findSessionByCwd(config, "/home/user/repo-copy/subdir")
+	if sessName != "repo-copy" {
+		t.Errorf("CWD('/home/user/repo-copy/subdir'): got %q, want 'repo-copy'", sessName)
+	}
+	if topicID != 200 {
+		t.Errorf("topicID: got %d, want 200", topicID)
+	}
+}
+
+// TestCWDFallbackZeroTopicID documents behavior with zero-topic sessions
+// Note: findSessionByCwd() matches zero-topic sessions, but the Stop hook
+// logic filters them out (see hooks.go lines 354-358)
+func TestCWDFallbackZeroTopicID(t *testing.T) {
+	config := &Config{
+		Sessions: map[string]*SessionInfo{
+			"private-session": {
+				Path:    "/home/user/private",
+				TopicID: 0, // Private chat, no topic
+			},
+			"topic-session": {
+				Path:    "/home/user/topic",
+				TopicID: 100,
+			},
+		},
+	}
+
+	// findSessionByCwd() DOES match zero-topic sessions (returns them)
+	// The Stop hook logic is responsible for filtering these out
+	sessName, topicID := findSessionByCwd(config, "/home/user/private")
+	if sessName != "private-session" {
+		t.Errorf("CWD('/home/user/private') with TopicID=0: got %q, want 'private-session' (findSessionByCwd matches all)", sessName)
+	}
+	if topicID != 0 {
+		t.Errorf("topicID: got %d, want 0", topicID)
+	}
+
+	// Normal topic session should match
+	sessName, topicID = findSessionByCwd(config, "/home/user/topic")
+	if sessName != "topic-session" {
+		t.Errorf("CWD('/home/user/topic'): got %q, want 'topic-session'", sessName)
+	}
+	if topicID != 100 {
+		t.Errorf("topicID: got %d, want 100", topicID)
+	}
+
+	// Document: Stop hook logic filters TopicID == 0 before using CWD fallback
+	// See hooks.go: "if info.TopicID == 0 { continue }"
+}
+
+// TestCWDFallbackTeamSessions tests team session CWD matching and tie-breaking
+func TestCWDFallbackTeamSessions(t *testing.T) {
+	config := &Config{
+		Sessions: map[string]*SessionInfo{
+			"regular": {
+				Path:    "/home/user/project",
+				TopicID: 100,
+			},
+		},
+		TeamSessions: map[int64]*SessionInfo{
+			200: {
+				SessionName: "team-session",
+				Path:        "/home/user/project",
+			},
+			300: {
+				SessionName: "other-team",
+				Path:        "/home/user/other-project",
+			},
+		},
+	}
+
+	// When path lengths are equal, regular session should win (tie-breaking)
+	sessName, topicID := findSessionByCwd(config, "/home/user/project")
+	if sessName != "regular" {
+		t.Errorf("CWD('/home/user/project') tie-break: got %q, want 'regular'", sessName)
+	}
+	if topicID != 100 {
+		t.Errorf("topicID: got %d, want 100", topicID)
+	}
+
+	// Team session with longer path should win
+	sessName, topicID = findSessionByCwd(config, "/home/user/other-project/subdir")
+	if sessName != "other-team" {
+		t.Errorf("CWD('/home/user/other-project/subdir'): got %q, want 'other-team'", sessName)
+	}
+	if topicID != 300 {
+		t.Errorf("topicID: got %d, want 300", topicID)
+	}
+}
+
+// TestCWDFallbackNilSessions tests that nil session entries don't cause panics
+func TestCWDFallbackNilSessions(t *testing.T) {
+	config := &Config{
+		Sessions: map[string]*SessionInfo{
+			"valid": {
+				Path:    "/home/user/valid",
+				TopicID: 100,
+			},
+			"nil-entry": nil, // Simulates a corrupted config
+		},
+	}
+
+	// Should not panic and should find the valid session
+	sessName, topicID := findSessionByCwd(config, "/home/user/valid")
+	if sessName != "valid" {
+		t.Errorf("CWD with nil entry in map: got %q, want 'valid'", sessName)
+	}
+	if topicID != 100 {
+		t.Errorf("topicID: got %d, want 100", topicID)
+	}
+
+	// Non-existent path should return empty
+	sessName, topicID = findSessionByCwd(config, "/nonexistent")
+	if sessName != "" {
+		t.Errorf("CWD('/nonexistent'): got %q, want empty", sessName)
+	}
+}
