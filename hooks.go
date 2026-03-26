@@ -287,6 +287,7 @@ func handleStopHook() error {
 
 		// Check regular sessions and team sessions together
 		// Choose the longest path match, preferring regular sessions for ties
+		// This matches the semantics of findSessionByCwd()
 		for name, info := range config.Sessions {
 			if info == nil || info.Path == "" || info.TopicID == 0 {
 				// Skip sessions without valid topic IDs to prevent dumping to main chat
@@ -316,9 +317,9 @@ func handleStopHook() error {
 				// Check if CWD matches session path exactly or starts with path + "/"
 				if hookData.Cwd == info.Path || strings.HasPrefix(hookData.Cwd, info.Path+"/") {
 					pathLen := len(info.Path)
-					// Prefer longer matches; for ties, prefer team sessions over regular sessions
-					// This ensures team session responses go to the correct topic
-					if pathLen > bestMatchLen || (pathLen == bestMatchLen && !bestMatchIsTeam) {
+					// Only choose team session if path is strictly longer (not tie)
+					// This ensures team sessions don't override regular sessions at same path
+					if pathLen > bestMatchLen {
 						bestMatch = info.SessionName
 						bestMatchLen = pathLen
 						bestMatchTopicID = tid
