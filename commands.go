@@ -1831,21 +1831,89 @@ func listen() error {
 				// /new <name>[@provider] - create brand new session + topic
 				if arg != "" {
 					// Parse provider from argument: name@provider or name --provider provider
-					sessionName := arg
+					// For git URLs, only --provider syntax is supported (since @ is part of SSH URLs)
 					providerName := ""
+					sessionInput := arg
 
-					// Check for @provider syntax
-					if idx := strings.Index(arg, "@"); idx > 0 {
-						sessionName = arg[:idx]
-						providerName = strings.TrimSpace(arg[idx+1:])
-					} else if strings.Contains(arg, " --provider ") {
-						// Check for --provider syntax
+					if strings.Contains(arg, " --provider ") {
 						parts := strings.SplitN(arg, " --provider ", 2)
-						sessionName = strings.TrimSpace(parts[0])
+						sessionInput = strings.TrimSpace(parts[0])
 						providerName = strings.TrimSpace(parts[1])
+					} else if !isGitURL(arg) {
+						// @provider syntax only for non-git URLs (to avoid breaking SSH/authenticated URLs)
+						if idx := strings.Index(arg, "@"); idx > 0 {
+							sessionInput = arg[:idx]
+							providerName = strings.TrimSpace(arg[idx+1:])
+						}
 					}
 
-					// Validate provider if specified using getProvider()
+					// Check if sessionInput is a git URL
+					gitURL := ""
+					sessionName := sessionInput
+
+					if isGitURL(sessionInput) {
+						gitURL = sessionInput
+						sessionName = extractRepoName(sessionInput)
+
+						// Validate sessionName was extracted successfully
+						if sessionName == "" {
+							sendMessage(config, chatID, threadID, "❌ Invalid git URL: could not extract repository name")
+							continue
+						}
+
+						// Validate provider BEFORE cloning to avoid unnecessary work
+						if providerName != "" {
+							provider := getProvider(config, providerName)
+							if provider == nil {
+								// List available providers
+								available := getProviderNames(config)
+								msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
+									providerName, strings.Join(available, ", "))
+								sendMessage(config, chatID, threadID, msg)
+								continue
+							}
+						}
+
+						// Check if session already exists with a custom path - use it instead of default
+						workDir := filepath.Join(getProjectsDir(config), sessionName)
+						existing, exists := config.Sessions[sessionName]
+						if exists && existing != nil && existing.Path != "" {
+							workDir = existing.Path
+						}
+
+						sendMessage(config, chatID, threadID, fmt.Sprintf("📥 Cloning %s into session '%s'...", gitURL, sessionName))
+
+						// Use context with timeout to prevent blocking indefinitely
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+
+						result, err := cloneRepo(ctx, gitURL, workDir)
+						cancel() // Clean up context immediately
+
+						if err != nil {
+							// Check for specific error types
+							errMsg := fmt.Sprintf("❌ Failed to clone repository: %v", err)
+							if strings.Contains(err.Error(), "directory exists but is not a git repository") {
+								errMsg = fmt.Sprintf("⚠️ Directory exists but is not a git repository: %s\n\nPlease remove or rename it and try again.", workDir)
+							} else if strings.Contains(err.Error(), "different git repository") {
+								errMsg = fmt.Sprintf("⚠️ Directory exists as a different git repository.\n\n%s\n\nIf you want to use this directory, remove it and try again.", err.Error())
+							} else if strings.Contains(err.Error(), "no origin remote") {
+								errMsg = fmt.Sprintf("⚠️ Directory is a git repository but has no origin remote: %s\n\nPlease remove or use a different session name.", workDir)
+							} else if strings.Contains(err.Error(), "context deadline exceeded") {
+								errMsg = fmt.Sprintf("⏱️ Cloning timed out after 5 minutes. The repository may be very large or the network may be slow.")
+							}
+							sendMessage(config, chatID, threadID, errMsg)
+							continue
+						}
+
+						// Send appropriate message based on clone result
+						if result == CloneResultCloned {
+							sendMessage(config, chatID, threadID, "✅ Repository cloned")
+						} else if result == CloneResultAlreadyExists {
+							sendMessage(config, chatID, threadID, "✅ Repository ready (using existing clone)")
+						}
+					}
+
+					// Validate provider if specified (for non-git URLs or after git clone)
 					if providerName != "" {
 						provider := getProvider(config, providerName)
 						if provider == nil {

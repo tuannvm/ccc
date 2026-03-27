@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -79,4 +82,192 @@ func expandPath(path string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
+}
+
+// isGitURL detects if the input string is a git repository URL
+func isGitURL(s string) bool {
+	// HTTPS URLs
+	if strings.HasPrefix(s, "https://") {
+		return true
+	}
+	// SSH URLs (git@host:user/repo.git or ssh://git@host/repo)
+	if strings.HasPrefix(s, "git@") || strings.HasPrefix(s, "ssh://") {
+		return true
+	}
+	// Git protocol
+	if strings.HasPrefix(s, "git://") {
+		return true
+	}
+	// SCP-style SSH URLs (user@host:path/repo.git) - detect pattern: contains @ followed by : later
+	// This catches formats like alice@git.example.com:team/repo.git
+	if atIdx := strings.Index(s, "@"); atIdx > 0 {
+		// Check if there's a colon after the @ sign (but not part of a protocol like http://)
+		if colonIdx := strings.Index(s[atIdx:], ":"); colonIdx > 0 {
+			// Make sure there's no :// before the @ (which would indicate a protocol)
+			if !strings.Contains(s[:atIdx], "://") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// extractRepoName extracts the repository name from a git URL
+// Handles URLs like:
+// - https://github.com/user/repo.git -> user-repo
+// - https://github.com/user/repo -> user-repo
+// - https://github.com/user/repo/ -> user-repo (trailing slash handled)
+// - https://gitlab.com/org/subgroup/repo.git -> subgroup-repo
+// - git@github.com:user/repo.git -> user-repo
+// - git@github.com:user/repo -> user-repo
+// - alice@git.example.com:team/repo.git -> team-repo (generic SCP URLs)
+// Returns empty string for malformed URLs or unsafe paths (., .., contains slashes)
+func extractRepoName(url string) string {
+	// Remove .git suffix if present
+	url = strings.TrimSuffix(url, ".git")
+
+	// Remove trailing slashes to handle URLs like "https://github.com/user/repo/"
+	url = strings.TrimSuffix(url, "/")
+
+	var org, repoName string
+
+	// For SSH URLs with colon (SCP-style: user@host:path/repo), find the last colon
+	if atIdx := strings.Index(url, "@"); atIdx > 0 {
+		// Check if there's a colon after the @ (SCP-style URL)
+		afterAt := url[atIdx+1:]
+		if colonIdx := strings.Index(afterAt, ":"); colonIdx > 0 {
+			// Check if this is SCP-style (colon before slash, not a URL with port)
+			slashIdx := strings.Index(afterAt, "/")
+			if slashIdx == -1 || colonIdx < slashIdx {
+				// SCP-style: user@host:path/repo
+				pathPart := afterAt[colonIdx+1:] // Get everything after the colon (e.g., "user/repo")
+				// Split the path to get org and repo name
+				parts := strings.Split(pathPart, "/")
+				if len(parts) > 0 {
+					repoName = parts[len(parts)-1]
+				}
+				if len(parts) > 1 {
+					// Get the segment before the repo name
+					org = parts[len(parts)-2]
+				}
+			}
+		}
+	}
+
+	// If we didn't find SCP-style colon, handle HTTPS and SSH-with-slash formats
+	if repoName == "" {
+		if idx := strings.LastIndex(url, "/"); idx > 0 {
+			repoName = url[idx+1:] // Get the repo name
+			// Get everything before the repo name
+			beforeRepo := url[:idx]
+			// Find the previous slash to get the org/user
+			if orgIdx := strings.LastIndex(beforeRepo, "/"); orgIdx >= 0 {
+				org = beforeRepo[orgIdx+1:]
+			}
+		}
+	}
+
+	// Validate: require at least 2 path segments (org/user + repo name)
+	// Reject malformed URLs like "https://github.com/repo.git" (missing org/user)
+	if repoName == "" || org == "" {
+		return ""
+	}
+
+	// Combine org and repo name
+	result := org + "-" + repoName
+
+	// Reject path traversal components and unsafe values
+	if result == "." || result == ".." || strings.Contains(result, "/") || strings.Contains(result, "\\") {
+		return ""
+	}
+
+	return result
+}
+
+// CloneResult represents the outcome of a clone operation
+type CloneResult int
+
+const (
+	// CloneResultCloned indicates a new repository was cloned
+	CloneResultCloned CloneResult = iota
+	// CloneResultAlreadyExists indicates the repository already exists as the same git repo
+	CloneResultAlreadyExists
+)
+
+// cloneRepo clones a git repository to the specified path
+// Returns (CloneResult, nil) on success, with CloneResult indicating if it was newly cloned or already existed
+// Returns an error if cloning fails or if directory exists with unexpected content
+// Uses context for timeout control to prevent blocking indefinitely
+func cloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error) {
+	// Check if directory already exists
+	if _, err := os.Stat(targetPath); err == nil {
+		// Directory exists, check if it's a git repo
+		gitCmd := exec.CommandContext(ctx, "git", "-C", targetPath, "rev-parse", "--git-dir")
+		if err := gitCmd.Run(); err != nil {
+			// Directory exists but is not a git repository - unsafe to proceed
+			return CloneResultCloned, fmt.Errorf("directory exists but is not a git repository: %s", targetPath)
+		}
+
+		// It is a git repo - verify remote matches to avoid silently using wrong repo
+		// Get the origin remote URL
+		gitCmd = exec.CommandContext(ctx, "git", "-C", targetPath, "remote", "get-url", "origin")
+		output, err := gitCmd.Output()
+		if err != nil {
+			// Directory is a git repo but has no origin remote - unsafe to proceed
+			return CloneResultCloned, fmt.Errorf("directory is a git repository but has no origin remote: %s", targetPath)
+		}
+
+		existingRemote := strings.TrimSpace(string(output))
+		// Normalize URLs for comparison (remove .git suffix, trailing slashes, normalize protocols)
+		normalizeURL := func(u string) string {
+			u = strings.TrimSuffix(u, ".git")
+			u = strings.TrimSuffix(u, "/")
+			// Remove protocol prefixes FIRST (before handling SSH @ syntax)
+			u = strings.TrimPrefix(u, "https://")
+			u = strings.TrimPrefix(u, "http://")
+			u = strings.TrimPrefix(u, "ssh://")
+			u = strings.TrimPrefix(u, "git://")
+			// Convert SSH URLs to HTTPS-like format for comparison
+			// Handles: git@github.com:user/repo, alice@git.example.com:team/repo (SCP-style with colon)
+			//          git@github.com/user/repo, alice@git.example.com/team/repo (SSH-style with slash)
+			if atIdx := strings.Index(u, "@"); atIdx > 0 {
+				afterAt := u[atIdx+1:]
+				// Check if this is SCP-style (has colon before any slash)
+				colonIdx := strings.Index(afterAt, ":")
+				slashIdx := strings.Index(afterAt, "/")
+				if colonIdx > 0 && (slashIdx == -1 || colonIdx < slashIdx) {
+					// SCP-style: user@host:path -> host/path
+					u = afterAt // Strip username@
+					u = u[:colonIdx] + "/" + u[colonIdx+1:] // Replace colon with slash
+				} else if slashIdx > 0 {
+					// SSH-style with slash: user@host/path -> host/path
+					u = afterAt // Strip username@, path already has slashes
+				}
+			}
+			return u
+		}
+
+		if normalizeURL(existingRemote) != normalizeURL(url) {
+			// Different remote - warn but don't fail (user may have intentionally forked/renamed)
+			// Return a specific error that caller can handle
+			return CloneResultCloned, fmt.Errorf("directory exists as a different git repository (has %s, want %s)", existingRemote, url)
+		}
+
+		// Same repository, skip cloning
+		return CloneResultAlreadyExists, nil
+	}
+
+	// Create parent directory if needed
+	parentDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return CloneResultCloned, err
+	}
+
+	// Clone the repository
+	gitCmd := exec.CommandContext(ctx, "git", "clone", url, targetPath)
+	if err := gitCmd.Run(); err != nil {
+		return CloneResultCloned, err
+	}
+
+	return CloneResultCloned, nil
 }
