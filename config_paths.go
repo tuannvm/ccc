@@ -51,8 +51,9 @@ func getProjectsDir(config *Config) string {
 		}
 		return config.ProjectsDir
 	}
+	// Default to ~/Projects
 	home, _ := os.UserHomeDir()
-	return home
+	return filepath.Join(home, "Projects")
 }
 
 // resolveProjectPath resolves the full path for a project
@@ -110,6 +111,93 @@ func isGitURL(s string) bool {
 		}
 	}
 	return false
+}
+
+// redactGitURL removes credentials from git URLs for safe display
+// Handles: https://user:pass@host/repo, https://token@host/repo, git@host:repo
+// Returns a safe URL with credentials removed
+func redactGitURL(url string) string {
+	// HTTPS URLs with credentials (https://user:pass@host/... or https://token@host/...)
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
+		// Find the @ after the protocol prefix
+		rest := url
+		if strings.HasPrefix(rest, "https://") {
+			rest = rest[8:]
+		} else if strings.HasPrefix(rest, "http://") {
+			rest = rest[7:]
+		}
+
+		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
+			// Found credentials - extract host and rebuild URL
+			hostPart := rest[atIdx+1:]
+			if strings.HasPrefix(url, "https://") {
+				return "https://" + hostPart
+			}
+			return "http://" + hostPart
+		}
+	}
+
+	// SSH URLs (git@host:repo or ssh://git@host/repo)
+	// These are already safe (no credentials), just return as-is
+	// SCP-style URLs like user@host:repo are also safe (user is not a password)
+
+	return url
+}
+
+// redactGitURLsInText finds and redacts credentials in any git URLs within text
+// Returns text with HTTPS credentials removed
+func redactGitURLsInText(text string) string {
+	// Look for https:// or http:// URLs with @ (indicating credentials)
+	// This pattern matches URLs like: https://user:pass@host/path or https://token@host/path
+	result := text
+
+	// Find all HTTPS/HTTP URLs with credentials
+words:
+	for {
+		// Find next https:// or http://
+		var prefixIdx int = -1
+		prefixLen := 0
+
+		if idx := strings.Index(result, "https://"); idx >= 0 {
+			prefixIdx = idx
+			prefixLen = 8
+		} else if idx := strings.Index(result, "http://"); idx >= 0 {
+			prefixIdx = idx
+			prefixLen = 7
+		}
+
+		if prefixIdx == -1 {
+			break // No more URLs
+		}
+
+		// Find end of URL (space or end of string)
+		urlStart := prefixIdx
+		urlEnd := strings.IndexAny(result[prefixIdx:], " \n")
+		if urlEnd == -1 {
+			urlEnd = len(result)
+		} else {
+			urlEnd += prefixIdx
+		}
+
+		url := result[urlStart:urlEnd]
+
+		// Check if URL contains @ (has credentials)
+		if atIdx := strings.Index(url, "@"); atIdx > prefixLen {
+			// Rebuild URL without credentials
+			credLessURL := redactGitURL(url)
+			result = result[:urlStart] + credLessURL + result[urlEnd:]
+			continue words
+		}
+
+		// No credentials in this URL, continue searching after it
+		result = result[:urlStart] + url + result[urlEnd:]
+		if urlEnd >= len(result) {
+			break
+		}
+		result = result[urlEnd:]
+	}
+
+	return result
 }
 
 // extractRepoName extracts the repository name from a git URL
@@ -220,8 +308,7 @@ func cloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error)
 		existingRemote := strings.TrimSpace(string(output))
 		// Normalize URLs for comparison (remove .git suffix, trailing slashes, normalize protocols)
 		normalizeURL := func(u string) string {
-			u = strings.TrimSuffix(u, ".git")
-			u = strings.TrimSuffix(u, "/")
+			u = strings.TrimSuffix(strings.TrimSuffix(u, "/"), ".git")
 			// Remove protocol prefixes FIRST (before handling SSH @ syntax)
 			u = strings.TrimPrefix(u, "https://")
 			u = strings.TrimPrefix(u, "http://")

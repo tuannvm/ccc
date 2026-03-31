@@ -1122,7 +1122,7 @@ func listen() error {
 				text = strings.TrimSpace(text)
 			}
 
-			listenLog("[%s] @%s: %s", msg.Chat.Type, msg.From.Username, text)
+			listenLog("[%s] @%s: %s", msg.Chat.Type, msg.From.Username, redactGitURLsInText(text))
 
 			// Handle OTP code responses (for permission approval)
 			if isOTPEnabled(config) && !strings.HasPrefix(text, "/") {
@@ -1881,7 +1881,8 @@ func listen() error {
 							workDir = existing.Path
 						}
 
-						sendMessage(config, chatID, threadID, fmt.Sprintf("📥 Cloning %s into session '%s'...", gitURL, sessionName))
+						displayURL := redactGitURL(gitURL)
+						sendMessage(config, chatID, threadID, fmt.Sprintf("📥 Cloning %s into session '%s'...", displayURL, sessionName))
 
 						// Use context with timeout to prevent blocking indefinitely
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1895,7 +1896,7 @@ func listen() error {
 							if strings.Contains(err.Error(), "directory exists but is not a git repository") {
 								errMsg = fmt.Sprintf("⚠️ Directory exists but is not a git repository: %s\n\nPlease remove or rename it and try again.", workDir)
 							} else if strings.Contains(err.Error(), "different git repository") {
-								errMsg = fmt.Sprintf("⚠️ Directory exists as a different git repository.\n\n%s\n\nIf you want to use this directory, remove it and try again.", err.Error())
+								errMsg = "⚠️ Directory exists as a different git repository.\n\nPlease remove it or pick a different session name."
 							} else if strings.Contains(err.Error(), "no origin remote") {
 								errMsg = fmt.Sprintf("⚠️ Directory is a git repository but has no origin remote: %s\n\nPlease remove or use a different session name.", workDir)
 							} else if strings.Contains(err.Error(), "context deadline exceeded") {
