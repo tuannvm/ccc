@@ -155,34 +155,41 @@ func redactGitURL(url string) string {
 }
 
 // redactGitURLsInText finds and redacts credentials in any git URLs within text
-// Returns text with HTTPS credentials removed
+// Returns text with credentials removed from HTTP/HTTPS/SSH URLs
 func redactGitURLsInText(text string) string {
 	var result strings.Builder
 	remaining := text
 
 	for {
-		// Find next https:// or http:// (whichever comes first)
+		// Find next https://, http://, or ssh:// (whichever comes first)
 		var prefixIdx int = -1
 		prefixLen := 0
 
 		httpsIdx := strings.Index(remaining, "https://")
 		httpIdx := strings.Index(remaining, "http://")
+		sshIdx := strings.Index(remaining, "ssh://")
 
 		// Pick the earliest match
-		if httpsIdx >= 0 && httpIdx >= 0 {
-			if httpsIdx < httpIdx {
-				prefixIdx = httpsIdx
+	 earliestIdx := -1
+		if httpsIdx >= 0 && (earliestIdx == -1 || httpsIdx < earliestIdx) {
+			earliestIdx = httpsIdx
+		}
+		if httpIdx >= 0 && (earliestIdx == -1 || httpIdx < earliestIdx) {
+			earliestIdx = httpIdx
+		}
+		if sshIdx >= 0 && (earliestIdx == -1 || sshIdx < earliestIdx) {
+			earliestIdx = sshIdx
+		}
+
+		if earliestIdx >= 0 {
+			prefixIdx = earliestIdx
+			if prefixIdx == httpsIdx {
 				prefixLen = 8
-			} else {
-				prefixIdx = httpIdx
+			} else if prefixIdx == httpIdx {
 				prefixLen = 7
+			} else if prefixIdx == sshIdx {
+				prefixLen = 6
 			}
-		} else if httpsIdx >= 0 {
-			prefixIdx = httpsIdx
-			prefixLen = 8
-		} else if httpIdx >= 0 {
-			prefixIdx = httpIdx
-			prefixLen = 7
 		}
 
 		if prefixIdx == -1 {
