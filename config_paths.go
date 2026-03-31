@@ -87,8 +87,8 @@ func expandPath(path string) string {
 
 // isGitURL detects if the input string is a git repository URL
 func isGitURL(s string) bool {
-	// HTTPS URLs
-	if strings.HasPrefix(s, "https://") {
+	// HTTPS and HTTP URLs
+	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
 		return true
 	}
 	// SSH URLs (git@host:user/repo.git or ssh://git@host/repo)
@@ -210,11 +210,22 @@ func redactGitURLsInText(text string) string {
 
 		url := remaining[urlStart:urlEnd]
 
-		// Check if URL might have credentials (@ before first /)
-		// This is a quick check - redactGitURL will do the full validation
-		slashIdx := strings.Index(url, "/")
+		// Check if URL might have credentials (@ in authority part, before path)
+		// We need to skip past the protocol (://) before looking for /
+		authorityStart := 0
+		if idx := strings.Index(url, "://"); idx >= 0 {
+			authorityStart = idx + 3 // Skip past "://"
+		}
+
+		// Find first / after protocol start
+		pathStart := strings.Index(url[authorityStart:], "/")
+		if pathStart >= 0 {
+			pathStart += authorityStart // Make it absolute to url
+		}
+
 		atIdx := strings.Index(url, "@")
-		mightHaveCreds := atIdx > 0 && (slashIdx == -1 || atIdx < slashIdx)
+		// URL might have creds if @ exists and is before the path
+		mightHaveCreds := atIdx > 0 && (pathStart == -1 || atIdx < pathStart)
 
 		if mightHaveCreds {
 			// Try to redact - redactGitURL will validate and only redact if appropriate
