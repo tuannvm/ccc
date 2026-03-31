@@ -237,7 +237,7 @@ func redactGitURLsInText(text string) string {
 // - https://github.com/user/repo.git -> user-repo
 // - https://github.com/user/repo -> user-repo
 // - https://github.com/user/repo/ -> user-repo (trailing slash handled)
-// - https://gitlab.com/org/subgroup/repo.git -> subgroup-repo
+// - https://gitlab.com/org/subgroup/repo.git -> org-subgroup-repo (full namespace)
 // - git@github.com:user/repo.git -> user-repo
 // - git@github.com:user/repo -> user-repo
 // - alice@git.example.com:team/repo.git -> team-repo (generic SCP URLs)
@@ -249,7 +249,8 @@ func extractRepoName(url string) string {
 	// Remove trailing slashes to handle URLs like "https://github.com/user/repo/"
 	url = strings.TrimSuffix(url, "/")
 
-	var org, repoName string
+	var namespace []string
+	var repoName string
 
 	// For SSH URLs with colon (SCP-style: user@host:path/repo), find the last colon
 	if atIdx := strings.Index(url, "@"); atIdx > 0 {
@@ -260,15 +261,15 @@ func extractRepoName(url string) string {
 			slashIdx := strings.Index(afterAt, "/")
 			if slashIdx == -1 || colonIdx < slashIdx {
 				// SCP-style: user@host:path/repo
-				pathPart := afterAt[colonIdx+1:] // Get everything after the colon (e.g., "user/repo")
-				// Split the path to get org and repo name
+				pathPart := afterAt[colonIdx+1:] // Get everything after the colon (e.g., "user/repo" or "org/team/repo")
+				// Split the path to get namespace parts and repo name
 				parts := strings.Split(pathPart, "/")
 				if len(parts) > 0 {
 					repoName = parts[len(parts)-1]
 				}
 				if len(parts) > 1 {
-					// Get the segment before the repo name
-					org = parts[len(parts)-2]
+					// Get all segments except the last as namespace
+					namespace = parts[:len(parts)-1]
 				}
 			}
 		}
@@ -280,21 +281,43 @@ func extractRepoName(url string) string {
 			repoName = url[idx+1:] // Get the repo name
 			// Get everything before the repo name
 			beforeRepo := url[:idx]
-			// Find the previous slash to get the org/user
-			if orgIdx := strings.LastIndex(beforeRepo, "/"); orgIdx >= 0 {
-				org = beforeRepo[orgIdx+1:]
+			// Find the first slash after the host to get the full namespace
+			// First, find the host (everything after :// and before the first /)
+			hostEnd := -1
+			if protoIdx := strings.Index(beforeRepo, "://"); protoIdx >= 0 {
+				hostEnd = strings.Index(beforeRepo[protoIdx+3:], "/")
+				if hostEnd >= 0 {
+					hostEnd += protoIdx + 3
+				}
+			}
+
+			var namespaceStr string
+			if hostEnd >= 0 && hostEnd < idx {
+				namespaceStr = beforeRepo[hostEnd+1:]
+			} else {
+				namespaceStr = beforeRepo
+			}
+
+			if namespaceStr != "" {
+				namespace = strings.Split(namespaceStr, "/")
 			}
 		}
 	}
 
-	// Validate: require at least 2 path segments (org/user + repo name)
+	// Validate: require at least 2 path segments (at least one namespace level + repo name)
 	// Reject malformed URLs like "https://github.com/repo.git" (missing org/user)
-	if repoName == "" || org == "" {
+	if repoName == "" || len(namespace) == 0 {
 		return ""
 	}
 
-	// Combine org and repo name
-	result := org + "-" + repoName
+	// Combine namespace parts with hyphens, then add repo name
+	// e.g., ["org", "subgroup"] + "repo" -> "org-subgroup-repo"
+	var result string
+	if len(namespace) > 0 {
+		result = strings.Join(namespace, "-") + "-" + repoName
+	} else {
+		result = repoName
+	}
 
 	// Reject path traversal components and unsafe values
 	if result == "." || result == ".." || strings.Contains(result, "/") || strings.Contains(result, "\\") {
