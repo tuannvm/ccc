@@ -190,7 +190,7 @@ words:
 		}
 
 		// No credentials in this URL, continue searching after it
-		result = result[:urlStart] + url + result[urlEnd:]
+		// Move past this URL and keep looking for more URLs
 		if urlEnd >= len(result) {
 			break
 		}
@@ -314,9 +314,8 @@ func cloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error)
 			u = strings.TrimPrefix(u, "http://")
 			u = strings.TrimPrefix(u, "ssh://")
 			u = strings.TrimPrefix(u, "git://")
-			// Convert SSH URLs to HTTPS-like format for comparison
-			// Handles: git@github.com:user/repo, alice@git.example.com:team/repo (SCP-style with colon)
-			//          git@github.com/user/repo, alice@git.example.com/team/repo (SSH-style with slash)
+			// Strip credentials from all URLs (user@ or user:pass@)
+			// Handles: git@host:path, token@host/path, user:pass@host/path
 			if atIdx := strings.Index(u, "@"); atIdx > 0 {
 				afterAt := u[atIdx+1:]
 				// Check if this is SCP-style (has colon before any slash)
@@ -326,8 +325,8 @@ func cloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error)
 					// SCP-style: user@host:path -> host/path
 					u = afterAt // Strip username@
 					u = u[:colonIdx] + "/" + u[colonIdx+1:] // Replace colon with slash
-				} else if slashIdx > 0 {
-					// SSH-style with slash: user@host/path -> host/path
+				} else {
+					// HTTPS-style or SSH-style with slash: user@host/path -> host/path
 					u = afterAt // Strip username@, path already has slashes
 				}
 			}
