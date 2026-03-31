@@ -238,6 +238,7 @@ func redactGitURLsInText(text string) string {
 // - https://github.com/user/repo -> user-repo
 // - https://github.com/user/repo/ -> user-repo (trailing slash handled)
 // - https://gitlab.com/org/subgroup/repo.git -> org-subgroup-repo (full namespace)
+// - ssh://git@host:2222/user/repo.git -> user-repo (SSH with port)
 // - git@github.com:user/repo.git -> user-repo
 // - git@github.com:user/repo -> user-repo
 // - alice@git.example.com:team/repo.git -> team-repo (generic SCP URLs)
@@ -252,24 +253,48 @@ func extractRepoName(url string) string {
 	var namespace []string
 	var repoName string
 
+	// Handle ssh:// URLs (including those with ports like ssh://git@host:2222/path)
+	if strings.HasPrefix(url, "ssh://") {
+		// Strip ssh:// prefix and parse as standard URL path
+		rest := url[6:] // Strip "ssh://"
+		// Find the path part (everything after the host:port or host)
+		if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
+			pathPart := rest[slashIdx+1:] // Get path after host/port
+			parts := strings.Split(pathPart, "/")
+			if len(parts) > 0 {
+				repoName = parts[len(parts)-1]
+			}
+			if len(parts) > 1 {
+				namespace = parts[:len(parts)-1]
+			}
+		}
+		// If we found a repo name, skip to validation
+		if repoName != "" {
+			goto validateAndReturn
+		}
+	}
+
 	// For SSH URLs with colon (SCP-style: user@host:path/repo), find the last colon
-	if atIdx := strings.Index(url, "@"); atIdx > 0 {
-		// Check if there's a colon after the @ (SCP-style URL)
-		afterAt := url[atIdx+1:]
-		if colonIdx := strings.Index(afterAt, ":"); colonIdx > 0 {
-			// Check if this is SCP-style (colon before slash, not a URL with port)
-			slashIdx := strings.Index(afterAt, "/")
-			if slashIdx == -1 || colonIdx < slashIdx {
-				// SCP-style: user@host:path/repo
-				pathPart := afterAt[colonIdx+1:] // Get everything after the colon (e.g., "user/repo" or "org/team/repo")
-				// Split the path to get namespace parts and repo name
-				parts := strings.Split(pathPart, "/")
-				if len(parts) > 0 {
-					repoName = parts[len(parts)-1]
-				}
-				if len(parts) > 1 {
-					// Get all segments except the last as namespace
-					namespace = parts[:len(parts)-1]
+	// Only apply if NOT an ssh:// URL (those are handled above)
+	if !strings.HasPrefix(url, "ssh://") {
+		if atIdx := strings.Index(url, "@"); atIdx > 0 {
+			// Check if there's a colon after the @ (SCP-style URL)
+			afterAt := url[atIdx+1:]
+			if colonIdx := strings.Index(afterAt, ":"); colonIdx > 0 {
+				// Check if this is SCP-style (colon before slash, not a URL with port)
+				slashIdx := strings.Index(afterAt, "/")
+				if slashIdx == -1 || colonIdx < slashIdx {
+					// SCP-style: user@host:path/repo
+					pathPart := afterAt[colonIdx+1:] // Get everything after the colon (e.g., "user/repo" or "org/team/repo")
+					// Split the path to get namespace parts and repo name
+					parts := strings.Split(pathPart, "/")
+					if len(parts) > 0 {
+						repoName = parts[len(parts)-1]
+					}
+					if len(parts) > 1 {
+						// Get all segments except the last as namespace
+						namespace = parts[:len(parts)-1]
+					}
 				}
 			}
 		}
@@ -304,6 +329,7 @@ func extractRepoName(url string) string {
 		}
 	}
 
+validateAndReturn:
 	// Validate: require at least 2 path segments (at least one namespace level + repo name)
 	// Reject malformed URLs like "https://github.com/repo.git" (missing org/user)
 	if repoName == "" || len(namespace) == 0 {
