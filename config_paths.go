@@ -114,32 +114,42 @@ func isGitURL(s string) bool {
 }
 
 // redactGitURL removes credentials from git URLs for safe display
-// Handles: https://user:pass@host/repo, https://token@host/repo, git@host:repo
+// Handles: https://user:pass@host/repo, https://token@host/repo, ssh://user:pass@host/repo
 // Returns a safe URL with credentials removed
 func redactGitURL(url string) string {
-	// HTTPS URLs with credentials (https://user:pass@host/... or https://token@host/...)
+	// HTTPS/HTTP URLs with credentials
 	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
 		// Find the @ after the protocol prefix
 		rest := url
+		protocol := ""
 		if strings.HasPrefix(rest, "https://") {
 			rest = rest[8:]
+			protocol = "https://"
 		} else if strings.HasPrefix(rest, "http://") {
 			rest = rest[7:]
+			protocol = "http://"
 		}
 
 		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
 			// Found credentials - extract host and rebuild URL
 			hostPart := rest[atIdx+1:]
-			if strings.HasPrefix(url, "https://") {
-				return "https://" + hostPart
-			}
-			return "http://" + hostPart
+			return protocol + hostPart
 		}
 	}
 
-	// SSH URLs (git@host:repo or ssh://git@host/repo)
-	// These are already safe (no credentials), just return as-is
-	// SCP-style URLs like user@host:repo are also safe (user is not a password)
+	// SSH URLs with credentials (ssh://user:pass@host/repo)
+	if strings.HasPrefix(url, "ssh://") {
+		rest := url[6:] // Strip "ssh://"
+		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
+			// Found credentials - extract host and rebuild URL
+			hostPart := rest[atIdx+1:]
+			return "ssh://" + hostPart
+		}
+	}
+
+	// SCP-style URLs (git@host:repo or user@host:repo)
+	// These are already safe (@ is the standard format, not a credential)
+	// git@, user@ format doesn't include passwords
 
 	return url
 }
@@ -151,15 +161,27 @@ func redactGitURLsInText(text string) string {
 	remaining := text
 
 	for {
-		// Find next https:// or http://
+		// Find next https:// or http:// (whichever comes first)
 		var prefixIdx int = -1
 		prefixLen := 0
 
-		if idx := strings.Index(remaining, "https://"); idx >= 0 {
-			prefixIdx = idx
+		httpsIdx := strings.Index(remaining, "https://")
+		httpIdx := strings.Index(remaining, "http://")
+
+		// Pick the earliest match
+		if httpsIdx >= 0 && httpIdx >= 0 {
+			if httpsIdx < httpIdx {
+				prefixIdx = httpsIdx
+				prefixLen = 8
+			} else {
+				prefixIdx = httpIdx
+				prefixLen = 7
+			}
+		} else if httpsIdx >= 0 {
+			prefixIdx = httpsIdx
 			prefixLen = 8
-		} else if idx := strings.Index(remaining, "http://"); idx >= 0 {
-			prefixIdx = idx
+		} else if httpIdx >= 0 {
+			prefixIdx = httpIdx
 			prefixLen = 7
 		}
 
