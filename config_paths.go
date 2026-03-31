@@ -116,10 +116,10 @@ func isGitURL(s string) bool {
 // redactGitURL removes credentials from git URLs for safe display
 // Handles: https://user:pass@host/repo, https://token@host/repo, ssh://user:pass@host/repo
 // Returns a safe URL with credentials removed
+// Only redacts if @ is in the authority (before first /), not in the path
 func redactGitURL(url string) string {
 	// HTTPS/HTTP URLs with credentials
 	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
-		// Find the @ after the protocol prefix
 		rest := url
 		protocol := ""
 		if strings.HasPrefix(rest, "https://") {
@@ -130,8 +130,11 @@ func redactGitURL(url string) string {
 			protocol = "http://"
 		}
 
-		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
-			// Found credentials - extract host and rebuild URL
+		// Find @ before the first / (in authority part, not path)
+		atIdx := strings.Index(rest, "@")
+		slashIdx := strings.Index(rest, "/")
+		if atIdx > 0 && (slashIdx == -1 || atIdx < slashIdx) {
+			// @ is in authority part - these are credentials
 			hostPart := rest[atIdx+1:]
 			return protocol + hostPart
 		}
@@ -140,8 +143,11 @@ func redactGitURL(url string) string {
 	// SSH URLs with credentials (ssh://user:pass@host/repo)
 	if strings.HasPrefix(url, "ssh://") {
 		rest := url[6:] // Strip "ssh://"
-		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
-			// Found credentials - extract host and rebuild URL
+		// Find @ before the first / (in authority part, not path)
+		atIdx := strings.Index(rest, "@")
+		slashIdx := strings.Index(rest, "/")
+		if atIdx > 0 && (slashIdx == -1 || atIdx < slashIdx) {
+			// @ is in authority part - these are credentials
 			hostPart := rest[atIdx+1:]
 			return "ssh://" + hostPart
 		}
@@ -163,7 +169,6 @@ func redactGitURLsInText(text string) string {
 	for {
 		// Find next https://, http://, or ssh:// (whichever comes first)
 		var prefixIdx int = -1
-		prefixLen := 0
 
 		httpsIdx := strings.Index(remaining, "https://")
 		httpIdx := strings.Index(remaining, "http://")
@@ -183,13 +188,6 @@ func redactGitURLsInText(text string) string {
 
 		if earliestIdx >= 0 {
 			prefixIdx = earliestIdx
-			if prefixIdx == httpsIdx {
-				prefixLen = 8
-			} else if prefixIdx == httpIdx {
-				prefixLen = 7
-			} else if prefixIdx == sshIdx {
-				prefixLen = 6
-			}
 		}
 
 		if prefixIdx == -1 {
@@ -212,13 +210,18 @@ func redactGitURLsInText(text string) string {
 
 		url := remaining[urlStart:urlEnd]
 
-		// Check if URL contains @ after protocol (has credentials)
-		if atIdx := strings.Index(url, "@"); atIdx > prefixLen {
-			// Redact credentials
-			credLessURL := redactGitURL(url)
-			result.WriteString(credLessURL)
+		// Check if URL might have credentials (@ before first /)
+		// This is a quick check - redactGitURL will do the full validation
+		slashIdx := strings.Index(url, "/")
+		atIdx := strings.Index(url, "@")
+		mightHaveCreds := atIdx > 0 && (slashIdx == -1 || atIdx < slashIdx)
+
+		if mightHaveCreds {
+			// Try to redact - redactGitURL will validate and only redact if appropriate
+			redactedURL := redactGitURL(url)
+			result.WriteString(redactedURL)
 		} else {
-			// No credentials, keep original URL
+			// No @ in authority part, keep original URL
 			result.WriteString(url)
 		}
 
