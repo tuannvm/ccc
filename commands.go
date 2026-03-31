@@ -1874,9 +1874,17 @@ func listen() error {
 							}
 						}
 
+						// Check if session already exists before cloning
+						// This prevents modifying an existing session's directory
+						existing, exists := config.Sessions[sessionName]
+						if exists && existing != nil && existing.TopicID != 0 {
+							sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
+							continue
+						}
+
 						// Check if session already exists with a custom path - use it instead of default
 						workDir := filepath.Join(getProjectsDir(config), sessionName)
-						existing, exists := config.Sessions[sessionName]
+						// existing, exists already checked above, just check for custom path
 						if exists && existing != nil && existing.Path != "" {
 							workDir = existing.Path
 						}
