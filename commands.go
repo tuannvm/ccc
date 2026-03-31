@@ -1834,6 +1834,7 @@ func listen() error {
 					// For git URLs, only --provider syntax is supported (since @ is part of SSH URLs)
 					providerName := ""
 					sessionInput := arg
+					gitURLHandled := false // Track if we already handled a git URL clone
 
 					if strings.Contains(arg, " --provider ") {
 						parts := strings.SplitN(arg, " --provider ", 2)
@@ -1920,6 +1921,9 @@ func listen() error {
 						} else if result == CloneResultAlreadyExists {
 							sendMessage(config, chatID, threadID, "✅ Repository ready (using existing clone)")
 						}
+
+						// Mark that we've handled the git URL - skip provider keyboard below
+						gitURLHandled = true
 					}
 
 					// Validate provider if specified (for non-git URLs or after git clone)
@@ -1936,7 +1940,8 @@ func listen() error {
 					}
 
 					// Always show keyboard if no explicit provider selected
-					if providerName == "" {
+					// Skip if we already handled a git URL clone (repo is already cloned)
+					if providerName == "" && !gitURLHandled {
 						// Check if session already exists
 						existing, exists := config.Sessions[sessionName]
 						if exists && existing != nil && existing.TopicID != 0 {
