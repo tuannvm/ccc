@@ -147,57 +147,60 @@ func redactGitURL(url string) string {
 // redactGitURLsInText finds and redacts credentials in any git URLs within text
 // Returns text with HTTPS credentials removed
 func redactGitURLsInText(text string) string {
-	// Look for https:// or http:// URLs with @ (indicating credentials)
-	// This pattern matches URLs like: https://user:pass@host/path or https://token@host/path
-	result := text
+	var result strings.Builder
+	remaining := text
 
-	// Find all HTTPS/HTTP URLs with credentials
-words:
 	for {
 		// Find next https:// or http://
 		var prefixIdx int = -1
 		prefixLen := 0
 
-		if idx := strings.Index(result, "https://"); idx >= 0 {
+		if idx := strings.Index(remaining, "https://"); idx >= 0 {
 			prefixIdx = idx
 			prefixLen = 8
-		} else if idx := strings.Index(result, "http://"); idx >= 0 {
+		} else if idx := strings.Index(remaining, "http://"); idx >= 0 {
 			prefixIdx = idx
 			prefixLen = 7
 		}
 
 		if prefixIdx == -1 {
-			break // No more URLs
+			// No more URLs, append remaining text and return
+			result.WriteString(remaining)
+			break
 		}
+
+		// Append text before this URL
+		result.WriteString(remaining[:prefixIdx])
 
 		// Find end of URL (space or end of string)
 		urlStart := prefixIdx
-		urlEnd := strings.IndexAny(result[prefixIdx:], " \n")
+		urlEnd := strings.IndexAny(remaining[prefixIdx:], " \n")
 		if urlEnd == -1 {
-			urlEnd = len(result)
+			urlEnd = len(remaining)
 		} else {
 			urlEnd += prefixIdx
 		}
 
-		url := result[urlStart:urlEnd]
+		url := remaining[urlStart:urlEnd]
 
-		// Check if URL contains @ (has credentials)
+		// Check if URL contains @ after protocol (has credentials)
 		if atIdx := strings.Index(url, "@"); atIdx > prefixLen {
-			// Rebuild URL without credentials
+			// Redact credentials
 			credLessURL := redactGitURL(url)
-			result = result[:urlStart] + credLessURL + result[urlEnd:]
-			continue words
+			result.WriteString(credLessURL)
+		} else {
+			// No credentials, keep original URL
+			result.WriteString(url)
 		}
 
-		// No credentials in this URL, continue searching after it
-		// Move past this URL and keep looking for more URLs
-		if urlEnd >= len(result) {
+		// Move past this URL
+		if urlEnd >= len(remaining) {
 			break
 		}
-		result = result[urlEnd:]
+		remaining = remaining[urlEnd:]
 	}
 
-	return result
+	return result.String()
 }
 
 // extractRepoName extracts the repository name from a git URL
