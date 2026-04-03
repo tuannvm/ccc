@@ -56,10 +56,8 @@ func init() {
 	RegisterRuntime(SessionKindTeam, &TeamRuntime{})
 }
 
-// SinglePaneRuntime implements SessionRuntime for standard single-pane sessions.
-// It is registered for completeness but not invoked at runtime — single-pane
-// sessions are handled directly by the main package's tmux functions. See the
-// stub function documentation below for details.
+// SinglePaneRuntime implements SessionRuntime for standard single-pane sessions
+// It wraps the existing switchSessionInWindow function from the main package
 type SinglePaneRuntime struct{}
 
 // EnsureLayout creates or verifies a single-pane tmux window
@@ -87,25 +85,20 @@ func (r *SinglePaneRuntime) StartClaude(session Session, workDir string) error {
 	return startClaudeInPane(session, workDir)
 }
 
-// SinglePaneRuntime is registered in RuntimeRegistry but not currently invoked.
-// Single-pane sessions are managed directly by the main package using tmux commands
-// (switchSessionInWindow, ensureProjectWindow, getCccWindowTarget), which cannot be
-// called from this package due to Go's circular import restrictions. The SessionRuntime
-// abstraction exists for extensibility — if future session types are added, they follow
-// the pattern established by TeamRuntime. Single-pane sessions bypass this interface.
-//
-// These stubs satisfy the SessionRuntime interface but will return errors if ever called.
-// This is intentional: the caller (main package) should use its own tmux functions directly
-// for single-pane sessions rather than routing through this indirection.
+// The following functions are stubs that will be implemented by calling
+// main package functions. This avoids circular imports.
 
 func ensureSinglePaneLayout(session Session, workDir string) error {
-	return fmt.Errorf("single-pane layout is managed directly by the main package; use switchSessionInWindow instead")
+	// TODO: Call main.ensureProjectWindow + main.switchSessionInWindow
+	return fmt.Errorf("not implemented: ensureSinglePaneLayout")
 }
 
 func getSinglePaneTarget(session Session) (string, error) {
-	return "", fmt.Errorf("single-pane target is managed directly by the main package; use getCccWindowTarget instead")
+	// TODO: Call main.getCccWindowTarget
+	return "", fmt.Errorf("not implemented: getSinglePaneTarget")
 }
 
 func startClaudeInPane(session Session, workDir string) error {
-	return fmt.Errorf("single-pane Claude startup is managed directly by the main package; use switchSessionInWindow instead")
+	// TODO: Call main.switchSessionInWindow
+	return fmt.Errorf("not implemented: startClaudeInPane")
 }
