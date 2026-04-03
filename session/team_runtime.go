@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ func shellQuote(s string) string {
 // Creates a tmux window with 3 panes: Planner (left) | Executor (middle) | Reviewer (right)
 type TeamRuntime struct {
 	tmuxPath string
+	cccPath  string
 }
 
 // EnsureLayout creates a 3-pane tmux layout for a team session
@@ -52,11 +54,11 @@ func (r *TeamRuntime) GetRoleTarget(sess Session, role PaneRole) (string, error)
 	sessionName := r.getSessionName(sess)
 	target := "ccc-team:" + sessionName
 
-	// Map role to pane index (tmux uses 1-based indexing)
+	// Map role to pane index (tmux uses 0-based indexing by default)
 	roleToIndex := map[PaneRole]int{
-		RolePlanner:  1,
-		RoleExecutor: 2,
-		RoleReviewer: 3,
+		RolePlanner:  0,
+		RoleExecutor: 1,
+		RoleReviewer: 2,
 	}
 
 	index, ok := roleToIndex[role]
@@ -77,6 +79,9 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 	if err := r.initTmuxPath(); err != nil {
 		return err
 	}
+	if err := r.initCccPath(); err != nil {
+		return err
+	}
 
 	// Roles to start Claude in
 	roles := []PaneRole{RolePlanner, RoleExecutor, RoleReviewer}
@@ -90,10 +95,10 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 		// Build the ccc run command with CCC_ROLE environment variable and provider
 		// We set CCC_ROLE to indicate which role this pane should use
 		// We pass --provider to ensure the correct provider is used for this session
-		// Export CCC_ROLE separately to ensure it's available to ccc run
+		// Use the resolved cccPath to ensure the binary is found
 		// Use bash explicitly to avoid shell compatibility issues
-		// NOTE: We use double quotes for the bash -c string to allow single quotes in workDir
-		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run --provider %s\"", role, shellQuote(workDir), sess.GetProviderName())
+		providerName := sess.GetProviderName()
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec %s run --provider %s\"", role, shellQuote(workDir), shellQuote(r.cccPath), shellQuote(providerName))
 
 		// Clear any existing content in the pane
 		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()
@@ -138,6 +143,42 @@ func (r *TeamRuntime) initTmuxPath() error {
 	}
 
 	return fmt.Errorf("tmux not found")
+}
+
+// initCccPath finds the ccc binary
+func (r *TeamRuntime) initCccPath() error {
+	if r.cccPath != "" {
+		return nil
+	}
+
+	// First, try to get the current executable
+	if exe, err := os.Executable(); err == nil {
+		r.cccPath = exe
+		return nil
+	}
+
+	// Try PATH
+	if path, err := exec.LookPath("ccc"); err == nil {
+		r.cccPath = path
+		return nil
+	}
+
+	// Fallback to common paths
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		filepath.Join(home, "bin", "ccc"),
+		filepath.Join(home, "go", "bin", "ccc"),
+		"/usr/local/bin/ccc",
+	}
+
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			r.cccPath = p
+			return nil
+		}
+	}
+
+	return fmt.Errorf("ccc binary not found")
 }
 
 // getSessionName extracts the session name from the Session interface
@@ -207,8 +248,12 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	}
 
 	// Split to create 3 panes
-	// Pane 1 (left) - Planner - exists by default after new-window
-	// Split horizontally to create Pane 2 (middle) - Executor
+	// tmux uses 0-based pane indexing by default:
+	// - After new-window: 1 pane (index 0) - left (Planner)
+	// - After first split: 2 panes (0, 1) - left (Planner), right (Executor)
+	// - After second split: 3 panes (0, 1, 2) - left (Planner), middle (Executor), right (Reviewer)
+
+	// Split horizontally to create pane 1 (right side, will be Executor)
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel2()
 
@@ -218,13 +263,13 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 		return fmt.Errorf("failed to split for pane 1: %w", err)
 	}
 
-	// Select pane 2 (middle) and split to create Pane 3 (right) - Reviewer
+	// Select pane 1 (right) and split to create pane 2 (rightmost, will be Reviewer)
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel3()
 
-	if err := exec.CommandContext(ctx3, r.tmuxPath, "select-pane", "-t", target+".2").Run(); err != nil {
+	if err := exec.CommandContext(ctx3, r.tmuxPath, "select-pane", "-t", target+".1").Run(); err != nil {
 		r.killWindow(target)
-		return fmt.Errorf("failed to select pane 2: %w", err)
+		return fmt.Errorf("failed to select pane 1: %w", err)
 	}
 
 	ctx4, cancel4 := context.WithTimeout(context.Background(), 10*time.Second)
@@ -232,7 +277,7 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 
 	if err := exec.CommandContext(ctx4, r.tmuxPath, "split-window", "-h", "-t", target).Run(); err != nil {
 		r.killWindow(target)
-		return fmt.Errorf("failed to split for pane 3: %w", err)
+		return fmt.Errorf("failed to split for pane 2: %w", err)
 	}
 
 	// Equalize pane sizes
@@ -244,26 +289,26 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	}
 
 	// Name the panes according to their roles for better UX and role determination
-	// Pane 1 (left) = Planner, Pane 2 (middle) = Executor, Pane 3 (right) = Reviewer
+	// Pane 0 (left) = Planner, Pane 1 (middle) = Executor, Pane 2 (right) = Reviewer
 	ctx6, cancel6 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel6()
 
-	if err := exec.CommandContext(ctx6, r.tmuxPath, "select-pane", "-t", target+".1", "-T", "Planner").Run(); err != nil {
-		return fmt.Errorf("failed to name pane 1: %w", err)
+	if err := exec.CommandContext(ctx6, r.tmuxPath, "select-pane", "-t", target+".0", "-T", "Planner").Run(); err != nil {
+		return fmt.Errorf("failed to name pane 0: %w", err)
 	}
 
 	ctx7, cancel7 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel7()
 
-	if err := exec.CommandContext(ctx7, r.tmuxPath, "select-pane", "-t", target+".2", "-T", "Executor").Run(); err != nil {
-		return fmt.Errorf("failed to name pane 2: %w", err)
+	if err := exec.CommandContext(ctx7, r.tmuxPath, "select-pane", "-t", target+".1", "-T", "Executor").Run(); err != nil {
+		return fmt.Errorf("failed to name pane 1: %w", err)
 	}
 
 	ctx8, cancel8 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel8()
 
-	if err := exec.CommandContext(ctx8, r.tmuxPath, "select-pane", "-t", target+".3", "-T", "Reviewer").Run(); err != nil {
-		return fmt.Errorf("failed to name pane 3: %w", err)
+	if err := exec.CommandContext(ctx8, r.tmuxPath, "select-pane", "-t", target+".2", "-T", "Reviewer").Run(); err != nil {
+		return fmt.Errorf("failed to name pane 2: %w", err)
 	}
 
 	// Verify pane names were set correctly (for debugging)

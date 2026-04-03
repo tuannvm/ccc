@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -52,56 +51,6 @@ func inferRoleFromTranscriptPath(transcriptPath string) session.PaneRole {
 	return ""
 }
 
-// inferRoleFromTmuxPane determines the role by querying tmux for the active pane
-// Team sessions have panes named: Planner, Executor, Reviewer
-// Falls back to pane index if names are not set: 1=planner, 2=executor, 3=reviewer
-// Returns empty string if tmux is not available or query fails
-func inferRoleFromTmuxPane(sessionName string) session.PaneRole {
-	if tmuxPath == "" || sessionName == "" {
-		return ""
-	}
-	// Query tmux for the active pane name in the session window
-	// Format: "ccc-team:session-name"
-	target := fmt.Sprintf("ccc-team:%s", sessionName)
-	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{pane_name}")
-	out, err := cmd.Output()
-	if err != nil {
-		hookLog("inferRoleFromTmuxPane: tmux query failed: %v", err)
-		return ""
-	}
-	paneName := strings.TrimSpace(string(out))
-	// Map pane name to role (preferred - more explicit)
-	roleMap := map[string]session.PaneRole{
-		"Planner":  session.RolePlanner,
-		"Executor": session.RoleExecutor,
-		"Reviewer": session.RoleReviewer,
-	}
-	if role, ok := roleMap[paneName]; ok {
-		hookLog("inferRoleFromTmuxPane: determined role=%s from pane name=%s", role, paneName)
-		return role
-	}
-	// Fallback: Try pane index if names are not set (for legacy sessions)
-	cmd2 := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{pane_index}")
-	out2, err2 := cmd2.Output()
-	if err2 != nil {
-		hookLog("inferRoleFromTmuxPane: pane index query failed: %v", err2)
-		return ""
-	}
-	paneIndex := strings.TrimSpace(string(out2))
-	// Map pane index to role (tmux uses 1-based indexing)
-	indexMap := map[string]session.PaneRole{
-		"1": session.RolePlanner,
-		"2": session.RoleExecutor,
-		"3": session.RoleReviewer,
-	}
-	if role, ok := indexMap[paneIndex]; ok {
-		hookLog("inferRoleFromTmuxPane: determined role=%s from pane index=%s (fallback)", role, paneIndex)
-		return role
-	}
-	hookLog("inferRoleFromTmuxPane: unknown pane name=%s or index=%s", paneName, paneIndex)
-	return ""
-}
-
 // persistClaudeSessionID saves the claude session ID to config if changed
 // For single sessions, stores in SessionInfo.ClaudeSessionID
 // For team sessions, stores in the matching pane's PaneInfo.ClaudeSessionID
@@ -112,20 +61,41 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 		return
 	}
 
-	// First check if this is a team session
+	// First check if this is a team session by looking at the transcript path
+	// Team sessions have role markers in the transcript file name (e.g., -planner.jsonl)
+	roleFromPath := inferRoleFromTranscriptPath(transcriptPath)
+	isTeamFromPath := roleFromPath != ""
+
 	var sessInfo *SessionInfo
 	var isTeam bool
 
-	// Look up the session in single sessions first
-	for name, info := range config.Sessions {
-		if info != nil && name == sessName {
-			sessInfo = info
-			break
+	// If transcript path indicates a team session, look in TeamSessions first
+	if isTeamFromPath {
+		for _, info := range config.TeamSessions {
+			if info != nil {
+				infoName := getSessionNameFromInfo(info)
+				if infoName == sessName {
+					sessInfo = info
+					isTeam = true
+					break
+				}
+			}
 		}
 	}
 
-	// Check team sessions
+	// If not found in TeamSessions (or not a team path), check single sessions
 	if sessInfo == nil {
+		for name, info := range config.Sessions {
+			if info != nil && name == sessName {
+				sessInfo = info
+				isTeam = false
+				break
+			}
+		}
+	}
+
+	// Still not found? Check TeamSessions as a fallback (for edge cases)
+	if sessInfo == nil && !isTeamFromPath {
 		for _, info := range config.TeamSessions {
 			if info != nil && info.SessionName == sessName {
 				sessInfo = info
@@ -185,29 +155,27 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 			return // Already persisted, nothing to do
 		}
 
-		// Last resort: Try to infer role from tmux pane index
-		// Team sessions use fixed pane indices: 1=planner, 2=executor, 3=reviewer
-		// We query tmux for the active pane in the session window
-		role = inferRoleFromTmuxPane(sessName)
-		if role != "" {
-			if pane, exists := sessInfo.Panes[role]; exists && pane != nil && pane.ClaudeSessionID == "" {
-				pane.ClaudeSessionID = claudeSessionID
-				saveConfig(config)
-				hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s using tmux pane index", claudeSessionID, role)
-				return
+		// Fallback: Try to infer role from CCC_ROLE environment variable
+		// This is set when Claude starts in a team pane
+		if cccRole := os.Getenv("CCC_ROLE"); cccRole != "" {
+			roleMap := map[string]session.PaneRole{
+				"planner":  session.RolePlanner,
+				"executor": session.RoleExecutor,
+				"reviewer": session.RoleReviewer,
+			}
+			if role, ok := roleMap[cccRole]; ok {
+				if pane, exists := sessInfo.Panes[role]; exists && pane != nil && pane.ClaudeSessionID == "" {
+					pane.ClaudeSessionID = claudeSessionID
+					saveConfig(config)
+					hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s using CCC_ROLE env var", claudeSessionID, role)
+					return
+				}
 			}
 		}
 
-		// Final fallback: Store in first empty pane (unreliable, but better than losing the ID)
-		hookLog("persistClaudeSessionID: WARNING - could not infer role from transcript=%s or tmux, using random fallback", transcriptPath)
-		for role, pane := range sessInfo.Panes {
-			if pane != nil && pane.ClaudeSessionID == "" {
-				pane.ClaudeSessionID = claudeSessionID
-				hookLog("persistClaudeSessionID: LAST RESORT - stored claude_session_id=%s in random role=%s (INCORRECT)", claudeSessionID, role)
-				break
-			}
-		}
-		saveConfig(config)
+		// Cannot determine role from transcript path or environment
+		// Skip persisting to avoid misattributing to wrong role
+		hookLog("persistClaudeSessionID: WARNING - cannot infer role from transcript=%s or CCC_ROLE, skipping persist to avoid misattribution", transcriptPath)
 		return
 	}
 
