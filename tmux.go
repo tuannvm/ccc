@@ -167,6 +167,12 @@ func tmuxTargetHasClaudeRunning(target string) bool {
 				listenLog("tmuxTargetHasClaudeRunning: Claude IS running (ccc+active prompt detected) in active pane=%s target=%s", paneID, target)
 				return true
 			}
+			// ccc without active prompt - check for workspace trust dialog (Claude Code 2.1.84+)
+			// The trust dialog blocks Claude from showing its input prompt
+			if autoAcceptTrustDialog(paneID) {
+				listenLog("tmuxTargetHasClaudeRunning: trust dialog auto-accepted in pane=%s target=%s, Claude still loading", paneID, target)
+				return false // retry on next poll
+			}
 			// ccc without active prompt means it's still starting up
 			listenLog("tmuxTargetHasClaudeRunning: ccc running but no active Claude prompt yet in pane=%s target=%s", paneID, target)
 		}
@@ -1037,6 +1043,27 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	}
 
 	return cmd.Run()
+}
+
+// autoAcceptTrustDialog checks if a workspace trust dialog is visible in the pane
+// and auto-accepts it by sending Enter. Returns true if dialog was detected and accepted.
+// The trust dialog (Claude Code 2.1.84+) shows "Yes, I trust this folder" / "No, exit".
+func autoAcceptTrustDialog(paneID string) bool {
+	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneID, "-p")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	content := string(out)
+	if strings.Contains(content, "Yes, I trust this folder") && strings.Contains(content, "No, exit") {
+		listenLog("autoAcceptTrustDialog[%s]: detected workspace trust dialog, auto-accepting", paneID)
+		if err := exec.Command(tmuxPath, "send-keys", "-t", paneID, "Enter").Run(); err != nil {
+			listenLog("autoAcceptTrustDialog[%s]: failed to send Enter: %v", paneID, err)
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // waitForClaude polls the tmux pane until Claude Code's input prompt appears.
