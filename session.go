@@ -77,6 +77,17 @@ func getSessionWorkDir(config *Config, sessionName string, sessionInfo *SessionI
 	if sessionInfo.Path != "" {
 		return sessionInfo.Path
 	}
+
+	// Backward compatibility: check old default path ($HOME/<sessionName>) for existing sessions
+	// This ensures sessions created before the ~/Projects default can still be found
+	home, _ := os.UserHomeDir()
+	oldPath := filepath.Join(home, sessionName)
+	if _, err := os.Stat(oldPath); err == nil {
+		// Old path exists, use it for backward compatibility
+		return oldPath
+	}
+
+	// Use new default path (~/Projects/<sessionName>)
 	return resolveProjectPath(config, sessionName)
 }
 

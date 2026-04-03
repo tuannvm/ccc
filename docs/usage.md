@@ -317,6 +317,36 @@ Send an image in a session topic:
 2. Optionally add a caption
 3. Image is saved and path sent to Claude
 
+### Streaming Responses
+
+ccc supports real-time streaming for AI responses using Telegram Bot API 9.5's `sendMessageDraft` method. When enabled, AI responses appear with a character-by-character typing effect instead of all at once.
+
+**Enable streaming:**
+
+```bash
+ccc config enable_streaming true
+```
+
+Or edit `~/.config/ccc/config.json`:
+```json
+{
+  "enable_streaming": true
+}
+```
+
+Then restart the service:
+```bash
+systemctl --user restart ccc
+```
+
+**Benefits:**
+- Smooth, real-time typing effect
+- No "edited" tag on messages
+- Higher rate limits than traditional editing
+- Better user experience for long responses
+
+See [API_9_5_FEATURES.md](../API_9_5_FEATURES.md) for technical details.
+
 ## Shell Commands
 
 Execute shell commands from Telegram:

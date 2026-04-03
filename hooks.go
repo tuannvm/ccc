@@ -589,7 +589,7 @@ func deliverUnsentTexts(config *Config, sessName string, topicID int64, transcri
 			// Send as separate message with role prefix for team sessions
 			// Format: *topic-name:* [Role] message
 			msg := fmt.Sprintf("*%s:* %s%s", sessName, rolePrefix, block.text)
-			tgMsgID, err := sendMessageGetID(config, config.GroupID, topicID, msg)
+			tgMsgID, err := sendAssistantMessage(config, config.GroupID, topicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
 				if strings.Contains(err.Error(), "message thread not found") && topicID != 0 {
@@ -1668,6 +1668,15 @@ func ensureHooksForSession(config *Config, sessionName string, sessionInfo *Sess
 
 	hookLog("ensure-hooks: hooks installed successfully for %s", projectPath)
 	return nil
+}
+
+// ========== Streaming Integration (API 9.5) ==========
+
+// sendAssistantMessage sends an assistant text message with optional streaming
+// If config.EnableStreaming is true, uses sendMessageDraft for real-time typing effect
+// Otherwise, falls back to standard sendMessageGetID
+func sendAssistantMessage(config *Config, chatID int64, threadID int64, text string) (int64, error) {
+	return sendStreamingMessage(config, chatID, threadID, text, config.EnableStreaming)
 }
 
 // truncate shortens a string to n characters
