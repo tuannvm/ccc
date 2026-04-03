@@ -1067,6 +1067,7 @@ func waitForClaude(target string, timeout time.Duration) error {
 				listenLog("waitForClaude[%s]: detected workspace trust dialog, auto-accepting", target)
 				if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
 					listenLog("waitForClaude[%s]: failed to send Enter for trust dialog: %v", target, err)
+					continue // retry on next poll iteration
 				}
 				trustDialogHandled = true
 				time.Sleep(trustDialogDismissDelay)
