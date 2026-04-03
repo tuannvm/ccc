@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -185,7 +186,13 @@ func tmuxTargetHasClaudeRunning(target string) bool {
 				listenLog("tmuxTargetHasClaudeRunning: Claude IS running as child of shell in pane=%s target=%s", paneID, target)
 				return true
 			}
-		}
+				// Shell without Claude children - check for workspace trust/consent dialog
+				// The dialog may be visible while Claude is starting up
+				if autoAcceptTrustDialog(paneID) {
+					listenLog("tmuxTargetHasClaudeRunning: consent dialog auto-accepted in pane=%s target=%s, Claude still loading", paneID, target)
+					return false // retry on next poll
+				}
+			}
 	}
 
 	// Process-based detection failed, try prompt-based detection as final fallback
@@ -827,6 +834,56 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 		exec.Command(tmuxPath, "set-window-option", "-t", target, "@ccc-provider", prefix).Run()
 	}
 
+	// After starting Claude, poll for consent dialog and auto-accept it
+	// This is needed for new sessions where Claude Code 2.1.84+ shows a workspace trust dialog
+	if shouldRestart {
+		listenLog("Polling for consent dialog after Claude startup...")
+		pollDeadline := time.Now().Add(10 * time.Second)
+		consumedDialog := false
+		for time.Now().Before(pollDeadline) {
+			time.Sleep(500 * time.Millisecond)
+
+			// Get the pane ID for the target
+			cmd := exec.Command(tmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}")
+			out, err := cmd.Output()
+			if err != nil {
+				continue
+			}
+
+			var activePaneID string
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			for _, line := range lines {
+				parts := strings.SplitN(line, "\t", 2)
+				if len(parts) == 2 && parts[0] == "1" {
+					activePaneID = parts[1]
+					break
+				}
+			}
+
+			if activePaneID == "" {
+				continue
+			}
+
+			// Check for consent dialog and auto-accept
+			if autoAcceptTrustDialog(activePaneID) {
+				listenLog("Consent dialog auto-accepted during startup polling")
+				consumedDialog = true
+				// Give Claude time to proceed after accepting
+				time.Sleep(2 * time.Second)
+				break
+			}
+
+			// If Claude prompt is detected, Claude is ready - no need to continue polling
+			if tmuxPaneHasActiveClaudePrompt(target) {
+				listenLog("Claude prompt detected, startup complete")
+				break
+			}
+		}
+		if consumedDialog {
+			listenLog("Consent dialog was consumed during startup")
+		}
+	}
+
 	return nil
 }
 
@@ -1045,9 +1102,68 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	return cmd.Run()
 }
 
-// autoAcceptTrustDialog checks if a workspace trust dialog is visible in the pane
+// detectConsentDialog checks if the content matches a consent/trust dialog pattern.
+// Uses generic pattern detection to handle UI variations across versions.
+func detectConsentDialog(content string) bool {
+	lowerContent := strings.ToLower(content)
+
+	// Generic consent dialog detection using multiple heuristics:
+	// 1. Has numbered options (1/2, [1]/[2], etc.) - characteristic of selection dialogs
+	// 2. Has trust/safety keywords AND exit/decline keywords - consent dialog structure
+	// 3. NOT showing Claude's active input prompt (indicated by "❯" with Claude context)
+
+	// Check for numbered options - looks for patterns like "1.", "2)", "[1]", etc.
+	optionPattern := regexp.MustCompile(`[1-9][\.\)\]]`)
+	lines := strings.Split(content, "\n")
+	foundDigits := make(map[int]bool)
+	for _, line := range lines {
+		matches := optionPattern.FindAllStringIndex(line, -1)
+		for _, match := range matches {
+			for i := match[0]; i < match[1]; i++ {
+				if line[i] >= '1' && line[i] <= '9' {
+					foundDigits[int(line[i]-'0')] = true
+					break
+				}
+			}
+		}
+	}
+	hasNumberedOptions := len(foundDigits) >= 2
+
+	trustKeywords := []string{"trust", "safety check", "confirm", "allow", "proceed", "project you created", "you trust"}
+	exitKeywords := []string{"exit", "decline", "cancel", "skip", "deny"}
+
+	hasTrustKeyword := false
+	hasExitKeyword := false
+	for _, kw := range trustKeywords {
+		if strings.Contains(lowerContent, strings.ToLower(kw)) {
+			hasTrustKeyword = true
+			break
+		}
+	}
+	for _, kw := range exitKeywords {
+		if strings.Contains(lowerContent, strings.ToLower(kw)) {
+			hasExitKeyword = true
+			break
+		}
+	}
+
+	// Active Claude context - more specific patterns that indicate real Claude session
+	hasActiveClaudeContext := strings.Contains(content, "How can I help") ||
+		strings.Contains(content, "I can help") ||
+		strings.Contains(content, "Bash:") ||
+		strings.Contains(content, "function:") ||
+		strings.Contains(content, "result:")
+
+	hasPrompt := strings.Contains(content, "❯")
+	isConsentDialog := hasNumberedOptions && hasTrustKeyword && hasExitKeyword &&
+		(!hasPrompt || !hasActiveClaudeContext)
+
+	return isConsentDialog
+}
+
+// autoAcceptTrustDialog checks if a workspace trust/consent dialog is visible
 // and auto-accepts it by sending Enter. Returns true if dialog was detected and accepted.
-// The trust dialog (Claude Code 2.1.84+) shows "Yes, I trust this folder" / "No, exit".
+// Uses generic pattern detection instead of exact strings to handle UI variations.
 func autoAcceptTrustDialog(paneID string) bool {
 	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneID, "-p")
 	out, err := cmd.Output()
@@ -1055,8 +1171,9 @@ func autoAcceptTrustDialog(paneID string) bool {
 		return false
 	}
 	content := string(out)
-	if strings.Contains(content, "Yes, I trust this folder") && strings.Contains(content, "No, exit") {
-		listenLog("autoAcceptTrustDialog[%s]: detected workspace trust dialog, auto-accepting", paneID)
+
+	if detectConsentDialog(content) {
+		listenLog("autoAcceptTrustDialog[%s]: detected consent dialog (pattern match), auto-accepting", paneID)
 		if err := exec.Command(tmuxPath, "send-keys", "-t", paneID, "Enter").Run(); err != nil {
 			listenLog("autoAcceptTrustDialog[%s]: failed to send Enter: %v", paneID, err)
 			return false
@@ -1085,15 +1202,12 @@ func waitForClaude(target string, timeout time.Duration) error {
 		if err == nil {
 			content := string(out)
 
-			// Handle workspace trust dialog (Claude Code 2.1.84+)
-			// The dialog shows "Yes, I trust this folder" with "No, exit" as option 2.
-			// Both strings must be present to avoid false positives from conversation content.
-			if !trustDialogHandled &&
-				strings.Contains(content, "Yes, I trust this folder") &&
-				strings.Contains(content, "No, exit") {
-				listenLog("waitForClaude[%s]: detected workspace trust dialog, auto-accepting", target)
+			// Handle workspace trust/consent dialog (Claude Code 2.1.84+)
+			// Uses generic pattern detection to handle UI variations across versions
+			if !trustDialogHandled && detectConsentDialog(content) {
+				listenLog("waitForClaude[%s]: detected consent dialog (pattern match), auto-accepting", target)
 				if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
-					listenLog("waitForClaude[%s]: failed to send Enter for trust dialog: %v", target, err)
+					listenLog("waitForClaude[%s]: failed to send Enter for consent dialog: %v", target, err)
 					time.Sleep(interval)
 					continue
 				}
