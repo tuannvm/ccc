@@ -4,6 +4,14 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 
 ## [Unreleased]
 
+### Fixed
+- **Workspace trust dialog handling**: Fixed compatibility with Claude Code 2.1.84+ which shows a workspace trust dialog on startup
+  - The dialog "Yes, I trust this folder" / "No, exit" is now automatically accepted
+  - Only appears in interactive mode (not with -p flag); --dangerously-skip-permissions doesn't skip it
+  - Added proper detection with both dialog strings to avoid false positives
+  - Added 1-second delay after accepting to ensure dialog dismissal
+  - Prevents hanging sessions when Claude Code is waiting for trust confirmation
+
 ### Added
 - **Telegram Bot API 9.5 streaming**: Real-time typing effect for AI responses
   - Uses `sendMessageDraft` API method for smooth character-by-character updates

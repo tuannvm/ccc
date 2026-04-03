@@ -1039,19 +1039,40 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	return cmd.Run()
 }
 
-// waitForClaude polls the tmux pane until Claude Code's input prompt appears
+// waitForClaude polls the tmux pane until Claude Code's input prompt appears.
+// It also handles the workspace trust dialog introduced in Claude Code 2.1.84+
+// by auto-accepting it when detected.
+// Note: Only -p (print) mode skips this dialog; --dangerously-skip-permissions does not.
 func waitForClaude(target string, timeout time.Duration) error {
 	// Poll faster for short timeouts (message sending), slower for startup
 	interval := 100 * time.Millisecond
 	if timeout > 10*time.Second {
 		interval = 500 * time.Millisecond
 	}
+	const trustDialogDismissDelay = 1 * time.Second
+	trustDialogHandled := false
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
 		out, err := cmd.Output()
 		if err == nil {
 			content := string(out)
+
+			// Handle workspace trust dialog (Claude Code 2.1.84+)
+			// The dialog shows "Yes, I trust this folder" with "No, exit" as option 2.
+			// Both strings must be present to avoid false positives from conversation content.
+			if !trustDialogHandled &&
+				strings.Contains(content, "Yes, I trust this folder") &&
+				strings.Contains(content, "No, exit") {
+				listenLog("waitForClaude[%s]: detected workspace trust dialog, auto-accepting", target)
+				if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+					listenLog("waitForClaude[%s]: failed to send Enter for trust dialog: %v", target, err)
+				}
+				trustDialogHandled = true
+				time.Sleep(trustDialogDismissDelay)
+				continue
+			}
+
 			// Claude Code shows "❯" when ready for input
 			if strings.Contains(content, "❯") {
 				return nil
