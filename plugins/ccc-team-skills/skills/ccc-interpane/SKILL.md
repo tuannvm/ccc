@@ -11,7 +11,7 @@ Enables communication between Claude Code instances running in different panes o
 
 You are in a 3-pane tmux window:
 
-```
+```text
 ┌──────────┬──────────┬──────────┐
 │ Pane 0   │ Pane 1   │ Pane 2   │
 │ Planner  │ Executor │ Reviewer │
@@ -137,7 +137,7 @@ For deduplication and loop prevention, the interpane package tracks:
 If target pane is busy (processing), messages are queued:
 - Max 25 messages per role queue
 - Max 75 total messages globally
-- Queue persisted to `.config/ccc/sessions/<name>/interpane/`
+- Queue persisted to `~/.config/ccc/sessions/<name>/interpane/`
 
 ---
 
@@ -207,7 +207,7 @@ tmux send-keys -t :.{pane_index} Enter
 
 ## Example Conversation
 
-```
+```text
 [Planner - Pane 0]:
 User: "@executor please implement the REST API endpoints"
 Skill: Detected @executor mention. Execute:
