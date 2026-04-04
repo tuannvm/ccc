@@ -67,10 +67,22 @@ See `ccc-interpane` skill for the communication protocol (ACK/Done/NACK).
 
 ## CCC_ROLE Environment
 
-Each pane has `CCC_ROLE` set:
-- Pane 0: `planner`
-- Pane 1: `executor`
-- Pane 2: `reviewer`
+Each pane has `CCC_ROLE` set when Claude starts:
+- Pane 1: `CCC_ROLE=planner`
+- Pane 2: `CCC_ROLE=executor`
+- Pane 3: `CCC_ROLE=reviewer`
+
+Example setup commands:
+```bash
+# Pane 1 - Planner
+CCC_ROLE=planner claude
+
+# Pane 2 - Executor
+CCC_ROLE=executor claude
+
+# Pane 3 - Reviewer
+CCC_ROLE=reviewer claude
+```
 
 The SessionStart hook exports this to `CLAUDE_ENV_FILE` for session persistence.
 
@@ -91,3 +103,12 @@ The team-session skill provides the **role context**, while `ccc-interpane` prov
 5. Panes communicate via @mentions
 
 See also: `ccc-interpane` skill for inter-pane messaging.
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Pane title empty | Not set during creation | `tmux select-pane -t :.1 -T "Planner"` |
+| CCC_ROLE empty | Not set before claude start | Restart pane with env var |
+| Cannot send to pane | Wrong pane index | Check with `tmux list-panes` |
+| Session not found | Wrong session name | Check `tmux list-sessions` |

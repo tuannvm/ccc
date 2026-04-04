@@ -1,5 +1,19 @@
-// ccc-role-hook is a SessionStart hook for Claude Code that detects CCC_ROLE
-// and writes a marker file for the ccc-interpane skill to auto-load.
+// ccc-role-hook is DEPRECATED and orphaned code.
+// This binary was never built or registered and is kept for reference only.
+//
+// DEPRECATED: This approach used CCC_ACTIVE_ROLE which is inconsistent with
+// the CCC_ROLE environment variable used by hooks.go.
+//
+// DEPRECATED: This writes to ~/.claude/tmp/ccc-active-role.txt which violates
+// the requirement of no creation in global ~/.claude/
+//
+// The correct implementation is in the CCC hooks.go handleSessionStartHook()
+// function, which writes to CLAUDE_ENV_FILE instead.
+//
+// To build this deprecated binary for reference:
+//   go build -o ccc-role-hook ./cmd/ccc-role-hook
+//
+// But DO NOT use it - it is kept only for historical reference.
 package main
 
 import (

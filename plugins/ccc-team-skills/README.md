@@ -20,23 +20,29 @@ ccc-team-skills/
 
 ## Installation
 
-### Option 1: Clone and Install
+The CCC team skills are part of the CCC plugin structure and are accessed directly from the plugin directory. No global installation is required.
+
+### Using Skills in a Project
+
+1. **For project-local skills**: Copy the skills directory to your project's `.claude/` directory:
+   ```bash
+   # In your project directory
+   mkdir -p .claude/skills
+   cp -r /path/to/ccc/plugins/ccc-team-skills/skills/* .claude/skills/
+   chmod +x .claude/skills/*/test.sh
+   ```
+
+2. **Or reference directly**: When working in a CCC project, the skills in `plugins/ccc-team-skills/skills/` are accessible to Claude Code when CCC_ROLE is set.
+
+### Using the Plugin During Development
 
 ```bash
 # Clone the ccc repo
 git clone https://github.com/tuannvm/ccc.git
 cd ccc
 
-# Run the install script
-./plugins/install-skills.sh
-```
-
-### Option 2: Manual Installation
-
-```bash
-# Copy skills to ~/.claude/skills/
-cp -r skills/* ~/.claude/skills/
-chmod +x ~/.claude/skills/*/test.sh
+# Skills are in plugins/ccc-team-skills/skills/
+# Reference them directly when CCC_ROLE is set
 ```
 
 ## Skills
@@ -64,9 +70,12 @@ Team session creation and management.
 ## Verification
 
 ```bash
-# Run validation tests
-~/.claude/skills/ccc-interpane/test.sh
-~/.claude/skills/ccc-team-session/test.sh
+# Run validation tests from the skills directory
+./skills/ccc-interpane/test.sh
+./skills/ccc-team-session/test.sh
+
+# Or from project-local installation
+.your-project/.claude/skills/ccc-interpane/test.sh
 ```
 
 ## Architecture
@@ -74,9 +83,9 @@ Team session creation and management.
 ```
 Session (tmux)
   └─ Window
-       ├─ Pane 0: Planner  (CCC_ROLE=planner)
-       ├─ Pane 1: Executor (CCC_ROLE=executor)
-       └─ Pane 2: Reviewer (CCC_ROLE=reviewer)
+       ├─ Pane 1: Planner  (CCC_ROLE=planner)
+       ├─ Pane 2: Executor (CCC_ROLE=executor)
+       └─ Pane 3: Reviewer (CCC_ROLE=reviewer)
 ```
 
 ## Usage

@@ -91,22 +91,22 @@ log_info "SECTION 3: Pane Index Mapping"
 echo "----------------------------------------"
 
 test_num "Planner pane index mapping"
-if grep -q "| @planner  | :.0" "$SKILL_FILE" 2>/dev/null; then
-    log_pass "Planner maps to :.0"
+if grep -q "| @planner  | :.1" "$SKILL_FILE" 2>/dev/null; then
+    log_pass "Planner maps to :.1"
 else
     log_fail "Planner pane index mapping incorrect"
 fi
 
 test_num "Executor pane index mapping"
-if grep -q "| @executor | :.1" "$SKILL_FILE" 2>/dev/null; then
-    log_pass "Executor maps to :.1"
+if grep -q "| @executor | :.2" "$SKILL_FILE" 2>/dev/null; then
+    log_pass "Executor maps to :.2"
 else
     log_fail "Executor pane index mapping incorrect"
 fi
 
 test_num "Reviewer pane index mapping"
-if grep -q "| @reviewer | :.2" "$SKILL_FILE" 2>/dev/null; then
-    log_pass "Reviewer maps to :.2"
+if grep -q "| @reviewer | :.3" "$SKILL_FILE" 2>/dev/null; then
+    log_pass "Reviewer maps to :.3"
 else
     log_fail "Reviewer pane index mapping incorrect"
 fi

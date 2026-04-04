@@ -13,16 +13,21 @@ You are in a 3-pane tmux window:
 
 ```text
 ┌──────────┬──────────┬──────────┐
-│ Pane 0   │ Pane 1   │ Pane 2   │
+│ Pane 1   │ Pane 2   │ Pane 3   │
 │ Planner  │ Executor │ Reviewer │
 └──────────┴──────────┴──────────┘
 ```
 
+**NOTE**: tmux uses 1-based pane indexing. Panes are:
+- Pane 1 = Planner (@planner)
+- Pane 2 = Executor (@executor)
+- Pane 3 = Reviewer (@reviewer)
+
 ## Roles
 
-- **Pane 0 - @planner**: Creates plans, breaks down tasks, delegates work
-- **Pane 1 - @executor**: Executes code changes, runs commands, runs tests
-- **Pane 2 - @reviewer**: Reviews code, provides feedback, approves changes
+- **@planner (Pane 1)**: Creates plans, breaks down tasks, delegates work to Executor, requests reviews from Reviewer
+- **@executor (Pane 2)**: Executes code changes, runs commands, runs tests, reports back to Planner only
+- **@reviewer (Pane 3)**: Reviews code, provides feedback, approves changes, reports back to Planner only
 
 ---
 
@@ -55,9 +60,9 @@ This skill triggers when:
 
 | To Role    | Use @mention | tmux target |
 |------------|--------------|-------------|
-| @planner   | `@planner`   | :.0         |
-| @executor  | `@executor`  | :.1         |
-| @reviewer  | `@reviewer`  | :.2         |
+| @planner   | `@planner`   | :.1         |
+| @executor  | `@executor`  | :.2         |
+| @reviewer  | `@reviewer`  | :.3         |
 
 ### Message Format
 
@@ -93,22 +98,58 @@ tmux send-keys -t :.{target_pane} Enter   # Submit (second Enter required)
 
 ### Pane Index Mapping
 
+**NOTE**: tmux uses 1-based pane indexing. The panes created by CCC are:
+- Pane 1 = Planner
+- Pane 2 = Executor
+- Pane 3 = Reviewer
+
 | Role      | Pane Index | Buffer Name       |
 |-----------|------------|------------------|
-| @planner  | :.0        | ccc-interpane-0  |
-| @executor | :.1        | ccc-interpane-1  |
-| @reviewer | :.2        | ccc-interpane-2  |
+| @planner  | :.1        | ccc-interpane-1  |
+| @executor | :.2        | ccc-interpane-2  |
+| @reviewer | :.3        | ccc-interpane-3  |
 
 ---
 
 ## Handling @Mentions
 
-### When You Receive an @mention
+### MANDATORY: Submit Received Messages Immediately
 
-When another pane sends you a message, it appears as user input in your pane. Process it naturally, then send an ACK:
+**CRITICAL**: When a message is sent to your pane via tmux paste-buffer, it appears as typed text in your prompt area. Claude Code does NOT automatically process it — the message just sits there until you press Enter.
+
+**You MUST run the submit commands immediately when you see new text appear.**
+
+After the message appears in your prompt area, **immediately** run:
 
 ```bash
-# After processing, send acknowledgment
+sleep 0.2
+tmux send-keys -t :. Escape  # REQUIRED: Dismiss autocomplete popup
+tmux send-keys -t :. Enter   # REQUIRED: First Enter
+tmux send-keys -t :. Enter   # REQUIRED: Second Enter (Claude Code 2.1.84+)
+```
+
+**Do NOT wait for the message to disappear or hope it auto-submits. It will NOT.**
+
+### Step-by-Step When You Receive a Message
+
+1. **Immediately after text appears** (do this NOW, don't wait):
+   ```bash
+   tmux send-keys -t :. Escape; tmux send-keys -t :. Enter; tmux send-keys -t :. Enter
+   ```
+   Or the full version with dismiss:
+   ```bash
+   sleep 0.2
+   tmux send-keys -t :. Escape
+   sleep 0.05
+   tmux send-keys -t :. Enter
+   sleep 0.05
+   tmux send-keys -t :. Enter
+   ```
+
+2. **Wait for processing** to complete
+
+3. **Send an ACK** back to the sender:
+```bash
 @planner ACK - message received and processing
 ```
 
@@ -154,10 +195,10 @@ If target pane is busy (processing), messages are queued:
 # List all panes with their titles and indices
 tmux list-panes -F "#{pane_index}: #{pane_title} [#{pane_active}]"
 
-# Expected output:
-# 0: Planner [1]   <- active (current pane)
-# 1: Executor [0]
-# 2: Reviewer [0]
+# Expected output (tmux uses 1-based indexing):
+# 1: Planner [1]   <- active (current pane)
+# 2: Executor [0]
+# 3: Reviewer [0]
 ```
 
 ### Check Your Role
@@ -215,31 +256,55 @@ tmux send-keys -t :.{pane_index} Enter   # Submit (second Enter required)
 
 ## Example Conversation
 
-```text
-[Planner - Pane 0]:
-User: "@executor please implement the REST API endpoints"
-Skill: Detected @executor mention. Execute:
-  tmux load-buffer -b ccc-msg /tmp/ccc-msg.txt
-  tmux paste-buffer -d -p -t :.1 -b ccc-msg
-  tmux send-keys -t :.1 Escape  # Dismiss autocomplete
-  tmux send-keys -t :.1 Enter  # Submit (double Enter required)
-  tmux send-keys -t :.1 Enter
+**NOTE**: Only the Planner communicates directly with Executor and Reviewer. Executor and Reviewer report back to the Planner, who then coordinates next steps.
 
-[Executor - Pane 1]:
-(receives message) "please implement the REST API endpoints"
+```text
+[Planner - Pane 1]:
+User: "Please implement the REST API endpoints and get them reviewed"
+Planner: Creates task plan, then sends to Executor:
+  tmux load-buffer -b ccc-msg /tmp/ccc-msg.txt
+  tmux paste-buffer -d -p -t :.2 -b ccc-msg
+  tmux send-keys -t :.2 Escape  # Dismiss autocomplete
+  tmux send-keys -t :.2 Enter   # Submit (double Enter required)
+  tmux send-keys -t :.2 Enter
+  → Message: "@executor Please implement the REST API endpoints"
+
+[Executor - Pane 2]:
+(receives message) "Please implement the REST API endpoints"
 Claude: "I'll start implementing now..."
 Claude: "@planner ACK - working on it"
-  → tmux sends ACK to pane 0
+  → tmux sends ACK to pane 1 (Planner)
 (implements endpoints, runs tests)
-Claude: "@reviewer please review my changes"
-  → tmux sends to pane 2
+Claude: "@planner Done - REST API implemented and tested"
+  → tmux sends to pane 1 (Planner)
 
-[Reviewer - Pane 2]:
-(receives message) "please review my changes"
+[Planner - Pane 1]:
+(receives ACK from Executor)
+(after Executor reports done, sends to Reviewer):
+  tmux send-keys -t :.3 "Please review the REST API implementation"
+  → Message: "@reviewer Please review the REST API implementation"
+
+[Reviewer - Pane 3]:
+(receives message) "Please review the REST API implementation"
 Claude: "Looking at the code..."
-Claude: "@executor Done - approved"
-  → tmux sends ACK to pane 1
+Claude: "@planner LGTM - approved"
+  → tmux sends to pane 1 (Planner)
+
+[Planner - Pane 1]:
+(receives approval from Reviewer)
+Claude: "@executor The REST API has been approved by Reviewer"
+  → tmux sends to pane 2 (Executor)
 ```
+
+### Communication Rules
+
+| From | To | When |
+|------|-----|------|
+| Planner | @executor | Delegate tasks |
+| Planner | @reviewer | Request reviews |
+| Executor | @planner | Report completion or blockers |
+| Reviewer | @planner | Report approval or request changes |
+| Planner | @executor | Relay feedback from Reviewer |
 
 ---
 
@@ -262,11 +327,11 @@ Role prefix format: `[Planner]`, `[Executor]`, `[Reviewer]`
 To verify the skill is properly configured:
 
 ```bash
-# Run the skill validation test
-~/.claude/skills/ccc-interpane/test.sh
+# Run the skill validation test from the skills directory
+./ccc-interpane/test.sh
 
-# Or from the project directory (if skill is in .claude/skills/)
-.claude/skills/ccc-interpane/test.sh
+# Or from project-local installation
+.your-project/.claude/skills/ccc-interpane/test.sh
 ```
 
 Expected output: `✅ ALL TESTS PASSED` with 20+ tests.
@@ -317,28 +382,28 @@ tmux list-panes -F '#{pane_index}: #{pane_title}'
 To test sending a message between panes:
 
 ```bash
-# From any pane, send a test message to pane 1 (Executor)
+# From any pane, send a test message to pane 2 (Executor)
 cat > /tmp/test_msg.txt << 'EOF'
-test message from pane 0
+test message from pane 1
 EOF
 tmux load-buffer -b test-msg /tmp/test_msg.txt
-tmux paste-buffer -d -p -t :.1 -b test-msg
+tmux paste-buffer -d -p -t :.2 -b test-msg
 sleep 0.1
-tmux send-keys -t :.1 Escape  # Dismiss autocomplete popup
+tmux send-keys -t :.2 Escape  # Dismiss autocomplete popup
 sleep 0.05
-tmux send-keys -t :.1 Enter   # Submit (first Enter)
+tmux send-keys -t :.2 Enter   # Submit (first Enter)
 sleep 0.05
-tmux send-keys -t :.1 Enter   # Submit (second Enter required)
+tmux send-keys -t :.2 Enter   # Submit (second Enter required)
 ```
 
-Check pane 1 for the message. If visible, inter-pane messaging works.
+Check pane 2 for the message. If visible, inter-pane messaging works.
 
 ### Validation Test Sections
 
 The test suite validates:
 1. **Skill File Validation** - Proper frontmatter, name, description
 2. **tmux Command Validation** - tmux is installed and responsive
-3. **Pane Index Mapping** - Correct mapping (0=Planner, 1=Executor, 2=Reviewer)
+3. **Pane Index Mapping** - Correct mapping (1=Planner, 2=Executor, 3=Reviewer)
 4. **CCC_ROLE Bootstrap** - Environment variable detection documented
 5. **Security Validation** - Heredoc safety, current window constraint
 6. **ACK Protocol** - ACK/Done responses documented
