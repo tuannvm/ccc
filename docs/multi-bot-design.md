@@ -175,7 +175,7 @@ The @mentions you see in Telegram are **UI echoes for humans**, not functional t
 │  │  Handler     │  Handler     │  Handler     │                 │
 │  │  ┌────────┐   │  ┌────────┐   │  ┌────────┐   │                 │
 │  │  │ Tmux   │   │  │ Tmux   │   │  │ Tmux   │   │                 │
-│  │  │ Pane 0 │   │  │ Pane 1 │   │  │ Pane 2 │   │                 │
+│  │  │ Pane 1 │   │  │ Pane 2 │   │  │ Pane 3 │   │                 │
 │  │  └────────┘   │  └────────┘   │  └────────┘   │                 │
 │  └──────────────┴──────────────┴──────────────┘                   │
 └─────────────────────────────────────────────────────────────────┘
@@ -1061,7 +1061,7 @@ After UX analysis considering reply clarity and unqualified message routing, the
 
 #### Step 3: Tmux Integration
 1. Each Telegram topic = 1 tmux window with 3 panes
-2. Planner → Pane 0 (left), Executor → Pane 1 (middle), Reviewer → Pane 2 (right)
+2. Planner → Pane 1 (left), Executor → Pane 2 (middle), Reviewer → Pane 3 (right)
 3. Dual visibility: Telegram (conversation) + Tmux (detail)
 
 #### Step 4: State Management

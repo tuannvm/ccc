@@ -1133,6 +1133,67 @@ func handlePostToolHook() error {
 	return nil
 }
 
+// sessionStartInput represents Claude Code SessionStart hook input
+type sessionStartInput struct {
+	Source string `json:"source"`
+}
+
+func handleSessionStartHook() error {
+	defer func() { recover() }()
+
+	rawData, _ := readHookStdin()
+	if len(rawData) == 0 {
+		hookLog("session-start-hook: no stdin data")
+		return fmt.Errorf("session-start-hook: no stdin data")
+	}
+
+	var input sessionStartInput
+	if err := json.Unmarshal(rawData, &input); err != nil {
+		hookLog("session-start-hook: failed to parse input: %v", err)
+		return fmt.Errorf("session-start-hook: failed to parse input: %v", err)
+	}
+
+	// Only trigger on new session startup
+	if input.Source != "startup" {
+		hookLog("session-start-hook: source=%s, not startup - skipping", input.Source)
+		return nil
+	}
+
+	cccRole := os.Getenv("CCC_ROLE")
+	if cccRole == "" {
+		// CCC_ROLE not set - this is normal for non-team sessions
+		// Return nil (no-op) instead of error since this hook runs for all sessions
+		hookLog("session-start-hook: CCC_ROLE not set, skipping")
+		return nil
+	}
+
+	// Normalize role name
+	switch cccRole {
+	case "planner", "executor", "reviewer":
+		// valid role
+	default:
+		hookLog("session-start-hook: invalid CCC_ROLE=%s", cccRole)
+		return fmt.Errorf("session-start-hook: invalid CCC_ROLE=%s", cccRole)
+	}
+
+	// Write CCC_ROLE to CLAUDE_ENV_FILE if set, so it persists for the session
+	// This ensures the env var is available to Claude Code even in tmux sessions
+	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
+		f, err := os.OpenFile(envFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err == nil {
+			defer f.Close()
+			fmt.Fprintf(f, "export CCC_ROLE=\"%s\"\n", cccRole)
+			hookLog("session-start-hook: exported CCC_ROLE=%s to CLAUDE_ENV_FILE", cccRole)
+		} else {
+			hookLog("session-start-hook: failed to open CLAUDE_ENV_FILE: %v", err)
+			return fmt.Errorf("session-start-hook: failed to open CLAUDE_ENV_FILE: %v", err)
+		}
+	}
+
+	hookLog("session-start-hook: detected CCC_ROLE=%s", cccRole)
+	return nil
+}
+
 func handleNotificationHook() error {
 	defer func() { recover() }()
 
@@ -1370,13 +1431,24 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 				},
 			},
 		},
+		"SessionStart": {
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"command": cccPath + " hook-session-start",
+						"type":    "command",
+					},
+				},
+				"matcher": "startup",
+			},
+		},
 	}
 
 	// For settings.local.json, we completely replace hooks (not merge)
 	// This ensures only ccc hooks are in the project-local settings
 	if isLocal {
 		// Remove ALL existing ccc hooks from all hook types (clean slate)
-		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit", "SessionStart"}
 		for _, hookType := range allHookTypes {
 			delete(hooks, hookType)
 		}
@@ -1388,7 +1460,7 @@ func installHooksToPath(settingsPath string, isLocal bool) error {
 	} else {
 		// Legacy behavior for global settings: merge with existing hooks
 		// Remove ALL existing ccc hooks from all hook types
-		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+		allHookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit", "SessionStart"}
 		for _, hookType := range allHookTypes {
 			if existing, ok := hooks[hookType].([]interface{}); ok {
 				filtered := removeCccHooks(existing)
@@ -1522,7 +1594,7 @@ func uninstallHooksFromPath(settingsPath string) error {
 		return nil // No hooks to remove
 	}
 
-	hookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+	hookTypes := []string{"Stop", "Notification", "PermissionRequest", "PostToolUse", "PreToolUse", "UserPromptSubmit", "SessionStart"}
 	for _, hookType := range hookTypes {
 		if existing, ok := hooks[hookType].([]interface{}); ok {
 			filtered := removeCccHooks(existing)

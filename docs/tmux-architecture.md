@@ -39,10 +39,10 @@ run the tests
 Telegram Topic                Tmux Window (created by ccc team new)
 ──────────────────────────────────────────────────────────────────
 ┌────────────────────┐
-│  /planner <msg>    │───► Pane 0 (Planner) ──► [Planner] response
-│  /executor <msg>   │───► Pane 1 (Executor) ──► [Executor] response
-│  /reviewer <msg>   │───► Pane 2 (Reviewer) ──► [Reviewer] response
-│  <msg> (no cmd)    │───► Pane 1 (default)
+│  /planner <msg>    │───► Pane 1 (Planner) ──► [Planner] response
+│  /executor <msg>   │───► Pane 2 (Executor) ──► [Executor] response
+│  /reviewer <msg>   │───► Pane 3 (Reviewer) ──► [Reviewer] response
+│  <msg> (no cmd)    │───► Pane 2 (default)
 └────────────────────┘
 ```
 
@@ -349,9 +349,9 @@ Telegram                   Tmux
 ─────────────────────────────────────────
 Group                      Session (ccc)
 └── Topic                  └── Window (topic name)
-    └── Planner role          └── Pane 0 (left)
-    └── Executor role         └── Pane 1 (middle)
-    └── Reviewer role         └── Pane 2 (right)
+    └── Planner role          └── Pane 1 (left)
+    └── Executor role         └── Pane 2 (middle)
+    └── Reviewer role         └── Pane 3 (right)
 ```
 
 ## Visual Layout
@@ -393,19 +393,19 @@ Group                      Session (ccc)
 
 ## Pane Responsibilities
 
-### Pane 0 (Left) - Planner
+### Pane 1 (Left) - Planner
 - Receives and processes planning requests
 - Creates structured plans
 - Delegates to executor via @mention
 - Shows planning context and history
 
-### Pane 1 (Middle) - Executor
+### Pane 2 (Middle) - Executor
 - Receives tasks from planner
 - Executes code changes
 - Runs commands and tests
 - Shows working directory and git status
 
-### Pane 2 (Right) - Reviewer
+### Pane 3 (Right) - Reviewer
 - Reviews changes from executor
 - Provides feedback
 - Shows code diffs and analysis
@@ -419,10 +419,10 @@ Users send messages via Telegram using slash commands to route to specific panes
 
 | Command | Target Pane | Example |
 |---------|-------------|---------|
-| `/planner <message>` | Pane 0 | `/planner create a plan for the API` |
-| `/executor <message>` | Pane 1 | `/executor run the tests` |
-| `/reviewer <message>` | Pane 2 | `/reviewer check my changes` |
-| `<message>` (no command) | Pane 1 (default) | `run the tests` → goes to executor |
+| `/planner <message>` | Pane 1 | `/planner create a plan for the API` |
+| `/executor <message>` | Pane 2 | `/executor run the tests` |
+| `/reviewer <message>` | Pane 3 | `/reviewer check my changes` |
+| `<message>` (no command) | Pane 2 (default) | `run the tests` → goes to executor |
 
 **Why executor as default?** Most user actions are execution tasks (run commands, apply changes, etc.).
 
@@ -455,7 +455,7 @@ User types:
        │
        ▼
 ┌──────────────────────────────────────┐
-│ Pane 0 (Planner)                     │
+│ Pane 1 (Planner)                     │
 │ "make a plan" appears as input      │
 │ Claude processes and responds...     │
 └──────────────────────────────────────┘
@@ -474,7 +474,7 @@ User types:
        │
        ▼
 ┌──────────────────────────────────────┐
-│ Pane 1 (Executor)                    │
+│ Pane 2 (Executor)                    │
 │ "implement the API" appears          │
 │ Claude executes code...              │
 └──────────────────────────────────────┘
@@ -492,7 +492,7 @@ After architectural review (Codex 5.3, Gemini 2.5, Opus 4.6), the consensus is:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Claude in Pane 0                             │
+│                    Claude in Pane 1                             │
 │  User: "Implement the API"                                       │
 │  Claude: "I'll delegate this. @executor please implement the    │
 │           REST API endpoints."                                    │
@@ -643,9 +643,9 @@ The skill is simple — tells Claude what to say, not how to route:
 # Multi-Pane Collaboration
 
 You are working in a multi-pane tmux session with three roles:
-- **Pane 0**: @planner — creates plans, delegates work
-- **Pane 1**: @executor — executes code, runs commands
-- **Pane 2**: @reviewer — reviews changes, provides feedback
+- **Pane 1**: @planner — creates plans, delegates work
+- **Pane 2**: @executor — executes code, runs commands
+- **Pane 3**: @reviewer — reviews changes, provides feedback
 
 ## Delegating Work
 
@@ -701,7 +701,7 @@ func CreateTopicWindow(topicID int64, topicName string) (*TmuxWindow, error) {
 
     target := "ccc:" + windowName
 
-    // Pane 0 (left): Planner - exists by default
+    // Pane 1 (left): Planner - exists by default
     pane0Info, _ := tmuxCapturePaneInfo(target + ".0")
     window.Panes[0] = &TmuxPane{
         PaneID:     0,
@@ -711,7 +711,7 @@ func CreateTopicWindow(topicID int64, topicName string) (*TmuxWindow, error) {
         WorkingDir: sharedWorkDir,
     }
 
-    // Pane 1 (middle): Executor - split vertical
+    // Pane 2 (middle): Executor - split vertical
     tmux("split-window", "-h", "-t", target)
     pane1Info, _ := tmuxCapturePaneInfo(target + ".1")
     window.Panes[1] = &TmuxPane{
@@ -722,7 +722,7 @@ func CreateTopicWindow(topicID int64, topicName string) (*TmuxWindow, error) {
         WorkingDir: sharedWorkDir,
     }
 
-    // Pane 2 (right): Reviewer - split from pane 1
+    // Pane 3 (right): Reviewer - split from pane 1
     tmux("select-pane", "-t", target + ".1")
     tmux("split-window", "-h", "-t", target)
     pane2Info, _ := tmuxCapturePaneInfo(target + ".2")
@@ -812,9 +812,9 @@ User: run the tests (no command = executor)
 ### Low-Level View (Tmux)
 ```
 You can drill down to see details:
-- Pane 0: See planner's thinking process
-- Pane 1: See executor's terminal output
-- Pane 2: See reviewer's analysis and diffs
+- Pane 1: See planner's thinking process
+- Pane 2: See executor's terminal output
+- Pane 3: See reviewer's analysis and diffs
 ```
 
 ### Switching Between Views

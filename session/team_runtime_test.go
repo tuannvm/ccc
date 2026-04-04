@@ -57,19 +57,19 @@ func TestGetRoleTarget(t *testing.T) {
 		{
 			name:       "planner role",
 			role:       RolePlanner,
-			wantTarget: "ccc-team:test-session.0",
+			wantTarget: "ccc-team:test-session.1",
 			wantErr:    false,
 		},
 		{
 			name:       "executor role",
 			role:       RoleExecutor,
-			wantTarget: "ccc-team:test-session.1",
+			wantTarget: "ccc-team:test-session.2",
 			wantErr:    false,
 		},
 		{
 			name:       "reviewer role",
 			role:       RoleReviewer,
-			wantTarget: "ccc-team:test-session.2",
+			wantTarget: "ccc-team:test-session.3",
 			wantErr:    false,
 		},
 		{
@@ -111,7 +111,7 @@ func TestGetDefaultTarget(t *testing.T) {
 		return
 	}
 
-	wantTarget := "ccc-team:test-session.1"
+	wantTarget := "ccc-team:test-session.2"
 	if target != wantTarget {
 		t.Errorf("GetDefaultTarget() target = %q, want %q", target, wantTarget)
 	}
@@ -483,11 +483,11 @@ func TestRoleToIndexMapping(t *testing.T) {
 
 	tests := []struct {
 		role         PaneRole
-		wantPaneNum  int // tmux 0-based pane number
+		wantPaneNum  int // tmux 1-based pane number
 	}{
-		{RolePlanner, 0},
-		{RoleExecutor, 1},
-		{RoleReviewer, 2},
+		{RolePlanner, 1},
+		{RoleExecutor, 2},
+		{RoleReviewer, 3},
 	}
 
 	for _, tt := range tests {
@@ -519,7 +519,7 @@ func TestEmptySessionName(t *testing.T) {
 	}
 
 	// Should still produce a valid target even with empty name
-	wantTarget := "ccc-team:.1"
+	wantTarget := "ccc-team:.2"
 	if target != wantTarget {
 		t.Errorf("GetRoleTarget() with empty name = %q, want %q", target, wantTarget)
 	}
