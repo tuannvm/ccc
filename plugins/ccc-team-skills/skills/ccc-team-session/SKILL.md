@@ -11,7 +11,7 @@ Manage 3-pane team sessions where each pane runs a separate Claude Code instance
 
 ## Architecture
 
-```
+```text
 ┌─────────┬─────────┬─────────┐
 │Planner  │Executor │Reviewer │
 │  Role   │  Role   │  Role   │
@@ -31,7 +31,7 @@ Each pane has `CCC_ROLE` set to identify its role.
 
 ## Communication Flow
 
-```
+```text
 Planner → @executor "Please implement feature X"
 Executor → @reviewer "Review PR #123"
 Reviewer → @executor "LGTM, merge when ready"
@@ -40,7 +40,7 @@ Executor → @planner "Feature X complete and merged"
 
 ## Session Lifecycle
 
-```
+```text
 Create → Start → Work ←→ Pause ←→ Resume → Close
               ↓
          [3 panes running]

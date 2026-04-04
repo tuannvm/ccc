@@ -63,7 +63,7 @@ This skill triggers when:
 
 When you mention another role, prepend the message with the @mention and execute the tmux send commands:
 
-```
+```text
 @executor please implement the REST API
 ```
 
