@@ -892,6 +892,21 @@ func handleSessionStartHook() error {
 		}
 	}
 
+	// Create marker file for ccc-interpane skill to detect active role
+	// This is more reliable than CLAUDE_ENV_FILE alone because skills can check file existence
+	home, err := os.UserHomeDir()
+	if err == nil {
+		tmpPath := filepath.Join(home, ".claude", "tmp")
+		if err := os.MkdirAll(tmpPath, 0755); err == nil {
+			markerPath := filepath.Join(tmpPath, "ccc-active-role.txt")
+			if err := os.WriteFile(markerPath, []byte(cccRole), 0644); err == nil {
+				hookLog("session-start-hook: wrote marker file %s with role=%s", markerPath, cccRole)
+			} else {
+				hookLog("session-start-hook: failed to write marker file: %v", err)
+			}
+		}
+	}
+
 	hookLog("session-start-hook: detected CCC_ROLE=%s", cccRole)
 	return nil
 }
