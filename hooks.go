@@ -856,6 +856,7 @@ func handleSessionStartHook() error {
 
 	var input sessionStartInput
 	if err := json.Unmarshal(rawData, &input); err != nil {
+		hookLog("session-start-hook: failed to parse input: %v", err)
 		return nil
 	}
 
@@ -872,18 +873,22 @@ func handleSessionStartHook() error {
 	// Normalize role name
 	switch cccRole {
 	case "planner", "executor", "reviewer":
+		// valid role
 	default:
+		hookLog("session-start-hook: invalid CCC_ROLE=%s", cccRole)
 		return nil
 	}
 
 	// Write CCC_ROLE to CLAUDE_ENV_FILE if set, so it persists for the session
 	// This ensures the env var is available to Claude Code even in tmux sessions
 	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
-		f, err := os.OpenFile(envFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(envFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err == nil {
+			defer f.Close()
 			fmt.Fprintf(f, "export CCC_ROLE=\"%s\"\n", cccRole)
-			f.Close()
 			hookLog("session-start-hook: exported CCC_ROLE=%s to CLAUDE_ENV_FILE", cccRole)
+		} else {
+			hookLog("session-start-hook: failed to open CLAUDE_ENV_FILE: %v", err)
 		}
 	}
 
