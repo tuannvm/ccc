@@ -95,6 +95,7 @@ That's it! 🎉
 - 🎤 **Voice Messages** — Auto-transcribed voice notes
 - 🔒 **100% Self-Hosted** — Runs on your machine, no cloud
 - 🏢 **Multiple Providers** — Anthropic, Zai, OpenAI, and more
+- 🤖 **Team Sessions** — 3-pane team workflow with Planner/Executor/Reviewer
 
 ## Privacy & Security
 
