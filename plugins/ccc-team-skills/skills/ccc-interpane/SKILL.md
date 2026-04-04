@@ -81,9 +81,14 @@ EOF
 # Step 3: Load into tmux buffer
 tmux load-buffer -b ccc-interpane-out /tmp/ccc-interpane-msg.txt
 
-# Step 4: Paste to target pane and send Enter
+# Step 4: Paste to target pane and send Enter (double Enter required by Claude Code 2.1.84+)
 tmux paste-buffer -d -p -t :.{target_pane} -b ccc-interpane-out
-tmux send-keys -t :.{target_pane} Enter
+sleep 0.1
+tmux send-keys -t :.{target_pane} Escape  # Dismiss autocomplete popup
+sleep 0.05
+tmux send-keys -t :.{target_pane} Enter   # Submit (first Enter)
+sleep 0.05
+tmux send-keys -t :.{target_pane} Enter   # Submit (second Enter required)
 ```
 
 ### Pane Index Mapping
@@ -178,9 +183,12 @@ tmux load-buffer -b ccc-msg /tmp/ccc-msg.txt
 
 # Paste to target pane (use pane index from table above)
 tmux paste-buffer -d -p -t :.{pane_index} -b ccc-msg
-
-# Send Enter to submit
-tmux send-keys -t :.{pane_index} Enter
+sleep 0.1
+tmux send-keys -t :.{pane_index} Escape  # Dismiss autocomplete popup
+sleep 0.05
+tmux send-keys -t :.{pane_index} Enter   # Submit (first Enter)
+sleep 0.05
+tmux send-keys -t :.{pane_index} Enter   # Submit (second Enter required)
 ```
 
 ---
@@ -213,6 +221,8 @@ User: "@executor please implement the REST API endpoints"
 Skill: Detected @executor mention. Execute:
   tmux load-buffer -b ccc-msg /tmp/ccc-msg.txt
   tmux paste-buffer -d -p -t :.1 -b ccc-msg
+  tmux send-keys -t :.1 Escape  # Dismiss autocomplete
+  tmux send-keys -t :.1 Enter  # Submit (double Enter required)
   tmux send-keys -t :.1 Enter
 
 [Executor - Pane 1]:
@@ -313,7 +323,12 @@ test message from pane 0
 EOF
 tmux load-buffer -b test-msg /tmp/test_msg.txt
 tmux paste-buffer -d -p -t :.1 -b test-msg
-tmux send-keys -t :.1 Enter
+sleep 0.1
+tmux send-keys -t :.1 Escape  # Dismiss autocomplete popup
+sleep 0.05
+tmux send-keys -t :.1 Enter   # Submit (first Enter)
+sleep 0.05
+tmux send-keys -t :.1 Enter   # Submit (second Enter required)
 ```
 
 Check pane 1 for the message. If visible, inter-pane messaging works.
