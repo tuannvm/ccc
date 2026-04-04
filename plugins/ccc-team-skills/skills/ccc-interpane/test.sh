@@ -181,7 +181,7 @@ fi
 # ==========================================
 # SECTION 7: Integration Test (if tmux available)
 # ==========================================
-if command -v tmux &> /dev/null; then
+if command -v tmux &> /dev/null && tmux list-sessions &> /dev/null; then
     log_info "SECTION 7: Integration Test (Live tmux)"
     echo "----------------------------------------"
 
@@ -214,6 +214,11 @@ ENDOFFILE
     else
         log_skip "No panes in current window"
     fi
+else
+    log_info "SECTION 7: Integration Test (Live tmux)"
+    echo "----------------------------------------"
+    test_num "Integration prerequisites"
+    log_skip "Skipping live tmux checks (tmux server/session not active)"
 fi
 
 # ==========================================
