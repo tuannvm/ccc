@@ -57,7 +57,7 @@ install_skill() {
 }
 
 # Try ccc-team-skills structure first (proper plugin format)
-if [[ -d "$PLUGIN_DIR/ccc-team-skills/skills" ]]; then
+if [[ -d "$PLUGIN_DIR/ccc-team-skills/skills" ]] && compgen -G "$PLUGIN_DIR/ccc-team-skills/skills"/* > /dev/null 2>&1; then
     echo "Installing from ccc-team-skills plugin..."
     for skill in "$PLUGIN_DIR/ccc-team-skills/skills"/*; do
         if [[ -d "$skill" ]]; then

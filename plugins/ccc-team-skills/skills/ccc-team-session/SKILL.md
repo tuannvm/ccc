@@ -9,7 +9,7 @@ Manage 3-pane team sessions where each pane runs a separate Claude Code instance
 
 ## Architecture
 
-```
+```text
 Session (tmux session)
   └─ Window (tmux window) - "ccc-team:<session-name>"
        ├─ Pane 0: Planner  (CCC_ROLE=planner)
@@ -45,8 +45,8 @@ ccc team list
 ### Manual Setup (if needed)
 
 ```bash
-# Create tmux window with 3 panes (horizontal layout: Planner | Executor | Reviewer)
-tmux new-window -n "ccc-team:myproject"
+# Create tmux session with window (Planner | Executor | Reviewer)
+tmux new-session -d -s "ccc-team" -n "myproject"
 tmux split-window -h -t "ccc-team:myproject"   # Split horizontally for panes 0 and 1
 tmux split-window -h -t "ccc-team:myproject.1" # Split horizontally for pane 2
 
@@ -110,7 +110,7 @@ tmux send-keys -t "ccc-team:myproject.2" "CCC_ROLE=reviewer claude" Enter
 
 ### Equal 3-Pane Layout
 
-```
+```text
 ┌─────────┬─────────┬─────────┐
 │Planner  │Executor │Reviewer │
 │  33%    │  33%    │  33%    │
@@ -119,7 +119,7 @@ tmux send-keys -t "ccc-team:myproject.2" "CCC_ROLE=reviewer claude" Enter
 
 ### Planner-Focused Layout (60/20/20)
 
-```
+```text
 ┌────────────────┬────────┬────────┐
 │    Planner     │Executor│Reviewer│
 │      60%       │  20%   │  20%   │
@@ -197,7 +197,7 @@ tmux attach -t "ccc-team:myproject"
 
 ### Create → Start → Work → Pause → Resume → Close
 
-```
+```text
 Create → Start → Work ←→ Pause ←→ Resume → Close
               ↓
          [3 panes running]
