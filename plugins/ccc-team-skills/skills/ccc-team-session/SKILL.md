@@ -255,7 +255,7 @@ tmux resize-pane -t "ccc-team:myproject.0" -x 80 -y 24
 
 ## Auto-Load Setup
 
-CCC automatically adds a SessionStart hook when you run `ccc install`. This hook detects `CCC_ROLE` at session startup and writes a marker file that triggers the ccc-interpane skill auto-load.
+CCC automatically adds a SessionStart hook when you run `ccc install`. This hook detects `CCC_ROLE` at session startup and exports it to `CLAUDE_ENV_FILE` for session persistence. This enables the ccc-interpane skill to auto-load based on the role.
 
 No manual configuration needed - the hook is managed by CCC.
 

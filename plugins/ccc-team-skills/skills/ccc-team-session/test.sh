@@ -192,7 +192,6 @@ echo "----------------------------------------"
 test_num "ccc-interpane skill exists (messaging)"
 CCC_INTERPANE_PATHS=(
     "$SCRIPT_DIR/../ccc-interpane/SKILL.md"
-    "/home/tuannvm/.claude/skills/ccc-interpane/SKILL.md"
     "$HOME/.claude/skills/ccc-interpane/SKILL.md"
 )
 FOUND=0

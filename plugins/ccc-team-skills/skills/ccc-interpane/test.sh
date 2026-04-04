@@ -226,7 +226,6 @@ test_num "ccc-team-session skill exists"
 # Check local skills directory (relative to script), global, and common paths
 CCC_TEAM_SESSION_PATHS=(
     "$SCRIPT_DIR/../ccc-team-session/SKILL.md"
-    "/home/tuannvm/.claude/skills/ccc-team-session/SKILL.md"
     "$HOME/.claude/skills/ccc-team-session/SKILL.md"
 )
 FOUND=0
@@ -245,7 +244,6 @@ fi
 test_num "tmux-intercom skill exists (reference)"
 TMUX_INTERCOM_PATHS=(
     "$SCRIPT_DIR/../tmux-intercom/SKILL.md"
-    "/home/tuannvm/.claude/skills/tmux-intercom/SKILL.md"
     "$HOME/.claude/skills/tmux-intercom/SKILL.md"
 )
 FOUND=0

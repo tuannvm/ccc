@@ -71,7 +71,7 @@ The skill will automatically detect the @mention and prompt you to send via tmux
 
 ```bash
 # Step 1: Verify your current pane and role
-tmux display-message -p "Pane %{pane_index}: #{pane_title}"
+tmux display-message -p "Pane #{pane_index}: #{pane_title}"
 
 # Step 2: Create message file (safe heredoc — no shell injection)
 cat > /tmp/ccc-interpane-msg.txt << 'EOF'
