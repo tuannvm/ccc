@@ -1161,21 +1161,59 @@ func detectConsentDialog(content string) bool {
 	return isConsentDialog
 }
 
+// captureVisiblePane captures only the visible portion of a tmux pane to avoid
+// matching stale dialog text from scrollback. Returns the captured content as string.
+func captureVisiblePane(target string) string {
+	// Get the pane height to limit capture to visible window only
+	heightCmd := exec.Command(tmuxPath, "display-message", "-p", "-t", target, "#{pane_height}")
+	heightOut, err := heightCmd.Output()
+	if err != nil {
+		// Fallback to unbounded capture if height query fails
+		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
+		out, err := cmd.Output()
+		if err != nil {
+			return ""
+		}
+		return string(out)
+	}
+
+	height, err := strconv.Atoi(strings.TrimSpace(string(heightOut)))
+	if err != nil || height <= 0 {
+		// Fallback to unbounded capture if height is invalid
+		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
+		out, err := cmd.Output()
+		if err != nil {
+			return ""
+		}
+		return string(out)
+	}
+
+	// Capture only the visible window using -S -0 -E <height-1>
+	// -S -0: start from line 0 (top visible line, not scrollback)
+	// -E <height-1>: capture up to but not including the line after the visible pane
+	// (tmux line numbering is zero-based, -E bound is inclusive)
+	cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p", "-S", "-0", "-E", fmt.Sprintf("%d", height-1))
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // autoAcceptTrustDialog checks if a workspace trust/consent dialog is visible
 // and auto-accepts it by sending Enter. Returns true if dialog was detected and accepted.
 // Uses generic pattern detection instead of exact strings to handle UI variations.
-func autoAcceptTrustDialog(paneID string) bool {
-	cmd := exec.Command(tmuxPath, "capture-pane", "-t", paneID, "-p")
-	out, err := cmd.Output()
-	if err != nil {
+// Uses bounded capture to avoid matching stale dialog text from scrollback.
+func autoAcceptTrustDialog(target string) bool {
+	content := captureVisiblePane(target)
+	if content == "" {
 		return false
 	}
-	content := string(out)
 
 	if detectConsentDialog(content) {
-		listenLog("autoAcceptTrustDialog[%s]: detected consent dialog (pattern match), auto-accepting", paneID)
-		if err := exec.Command(tmuxPath, "send-keys", "-t", paneID, "Enter").Run(); err != nil {
-			listenLog("autoAcceptTrustDialog[%s]: failed to send Enter: %v", paneID, err)
+		listenLog("autoAcceptTrustDialog[%s]: detected consent dialog (pattern match), auto-accepting", target)
+		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+			listenLog("autoAcceptTrustDialog[%s]: failed to send Enter: %v", target, err)
 			return false
 		}
 		return true
@@ -1197,30 +1235,20 @@ func waitForClaude(target string, timeout time.Duration) error {
 	trustDialogHandled := false
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
-		out, err := cmd.Output()
-		if err == nil {
-			content := string(out)
-
-			// Handle workspace trust/consent dialog (Claude Code 2.1.84+)
-			// Uses generic pattern detection to handle UI variations across versions
-			if !trustDialogHandled && detectConsentDialog(content) {
-				listenLog("waitForClaude[%s]: detected consent dialog (pattern match), auto-accepting", target)
-				if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
-					listenLog("waitForClaude[%s]: failed to send Enter for consent dialog: %v", target, err)
-					time.Sleep(interval)
-					continue
-				}
-				trustDialogHandled = true
-				time.Sleep(trustDialogDismissDelay)
-				continue
-			}
-
-			// Claude Code shows "❯" when ready for input
-			if strings.Contains(content, "❯") {
-				return nil
-			}
+		// Handle workspace trust/consent dialog (Claude Code 2.1.84+)
+		// Uses bounded capture to avoid matching stale dialog text
+		if !trustDialogHandled && autoAcceptTrustDialog(target) {
+			trustDialogHandled = true
+			time.Sleep(trustDialogDismissDelay)
+			continue
 		}
+
+		// Check for Claude prompt using bounded capture
+		content := captureVisiblePane(target)
+		if strings.Contains(content, "❯") {
+			return nil
+		}
+
 		time.Sleep(interval)
 	}
 	return fmt.Errorf("timeout waiting for Claude to start")

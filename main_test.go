@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1316,5 +1317,179 @@ func TestBaselinePathUtilities(t *testing.T) {
 	path = expandPath("/absolute/path")
 	if path != "/absolute/path" {
 		t.Errorf("expandPath(absolute): got %q, want '/absolute/path'", path)
+	}
+}
+
+// TestDetectConsentDialog tests the consent dialog pattern detection
+func TestDetectConsentDialog(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "workspace trust dialog with numbered options",
+			content:  "Do you trust the files in this folder?\n\n1. Yes, I trust this folder\n2. No, exit",
+			expected: true,
+		},
+		{
+			name:     "consent dialog with bracket format",
+			content:  "Safety check required\n[1] Allow access\n[2] Decline and exit",
+			expected: true,
+		},
+		{
+			name:     "consent dialog with close paren format",
+			content:  "Confirm you want to proceed\n1) Continue\n2) Cancel",
+			expected: true,
+		},
+		{
+			name:     "mixed format options",
+			content:  "Allow this project?\n1. Yes\n2) Cancel",
+			expected: true,
+		},
+		{
+			name:     "dialog with trust keyword and exit option",
+			content:  "Do you trust this workspace you created?\n1. Trust\n2. Exit",
+			expected: true,
+		},
+		{
+			name:     "no numbered options - not a dialog",
+			content:  "Do you trust this folder?\nYes or No?",
+			expected: false,
+		},
+		{
+			name:     "no trust keywords - not a consent dialog",
+			content:  "Choose an option:\n1. Option A\n2. Option B",
+			expected: false,
+		},
+		{
+			name:     "no exit keywords - not a consent dialog",
+			content:  "Do you trust this folder?\n1. Yes, I trust\n2. Also trust",
+			expected: false,
+		},
+		{
+			name:     "active Claude session with prompt - not dialog",
+			content:  "How can I help?\n❯ ",
+			expected: false,
+		},
+		{
+			name:     "Claude tool use output - not dialog",
+			content:  "Bash: running command\nresult: success\n❯ ",
+			expected: false,
+		},
+		{
+			name:     "dialog without Claude context but no prompt",
+			content:  "Do you trust this folder?\n1. Yes\n2. Exit",
+			expected: true,
+		},
+		{
+			name:     "single option - not enough to be dialog",
+			content:  "Do you trust this folder?\n1. Yes",
+			expected: false,
+		},
+		{
+			name:     "safety check with decline option",
+			content:  "Safety check: confirm you want to proceed\n1. Allow\n2. Decline",
+			expected: true,
+		},
+		{
+			name:     "project you created phrase with exit",
+			content:  "Is this a project you created?\n1. Yes\n2. Exit",
+			expected: true,
+		},
+		{
+			name:     "empty content",
+			content:  "",
+			expected: false,
+		},
+		{
+			name:     "only Claude context",
+			content:  "How can I help you today?\nI'm ready to assist.",
+			expected: false,
+		},
+		{
+			name:     "numbered options with allow keyword",
+			content:  "Allow this application?\n1. Allow\n2. Skip",
+			expected: true,
+		},
+		{
+			name:     "dialog with proceed keyword",
+			content:  "Safety check\n1. Proceed\n2. Cancel",
+			expected: true,
+		},
+		{
+			name:     "dialog with confirm keyword",
+			content:  "Confirm access\n1. Confirm\n2. Deny",
+			expected: true,
+		},
+		{
+			name:     "dialog with you trust phrase and exit",
+			content:  "Are you sure you trust?\n1. Yes\n2. Decline",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := detectConsentDialog(tt.content)
+			if result != tt.expected {
+				t.Errorf("detectConsentDialog() = %v, want %v\nContent: %q", result, tt.expected, tt.content)
+			}
+		})
+	}
+}
+
+// TestCaptureVisiblePane tests bounded pane capture
+// Note: This test requires tmux to be running and is skipped in CI
+func TestCaptureVisiblePane(t *testing.T) {
+	// Check if tmux is available
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available, skipping TestCaptureVisiblePane")
+	}
+
+	// Initialize paths
+	initPaths()
+
+	// Check if ccc session exists
+	if !cccSessionExists() {
+		t.Skip("ccc tmux session not found, skipping TestCaptureVisiblePane")
+	}
+
+	// Find an existing window to test
+	target, err := findExistingWindow("test")
+	if err != nil {
+		t.Skip("no test window found, skipping TestCaptureVisiblePane")
+	}
+
+	// Test capturing visible pane
+	content := captureVisiblePane(target)
+	if content == "" {
+		t.Error("captureVisiblePane returned empty string")
+	}
+
+	// Verify content doesn't contain excessive scrollback
+	// (bounded capture should limit to visible window)
+	lines := strings.Split(content, "\n")
+	// A typical tmux pane is 24-50 lines, allow some margin
+	if len(lines) > 100 {
+		t.Logf("Warning: captured %d lines, may include scrollback", len(lines))
+	}
+}
+
+// TestAutoAcceptTrustDialog tests the auto-accept function
+// Note: This is an integration test and requires proper tmux setup
+func TestAutoAcceptTrustDialog(t *testing.T) {
+	// Check if tmux is available
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available, skipping TestAutoAcceptTrustDialog")
+	}
+
+	// Initialize paths
+	initPaths()
+
+	// Test with invalid target (no actual dialog expected)
+	result := autoAcceptTrustDialog("invalid:target.pane")
+	if result {
+		t.Error("autoAcceptTrustDialog returned true for invalid target")
 	}
 }
