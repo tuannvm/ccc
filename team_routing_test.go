@@ -67,21 +67,21 @@ func TestGetTeamRoleTarget(t *testing.T) {
 			name:        "planner role",
 			sessionName: "test-session",
 			role:        session.RolePlanner,
-			wantTarget:  "ccc-team:test-session.0",
+			wantTarget:  "ccc-team:test-session.1",
 			wantErr:     false,
 		},
 		{
 			name:        "executor role",
 			sessionName: "test-session",
 			role:        session.RoleExecutor,
-			wantTarget:  "ccc-team:test-session.1",
+			wantTarget:  "ccc-team:test-session.2",
 			wantErr:     false,
 		},
 		{
 			name:        "reviewer role",
 			sessionName: "test-session",
 			role:        session.RoleReviewer,
-			wantTarget:  "ccc-team:test-session.2",
+			wantTarget:  "ccc-team:test-session.3",
 			wantErr:     false,
 		},
 		{
@@ -102,7 +102,7 @@ func TestGetTeamRoleTarget(t *testing.T) {
 			name:        "session name with dots gets sanitized",
 			sessionName: "test.session.name",
 			role:        session.RoleExecutor,
-			wantTarget:  "ccc-team:test__session__name.1",
+			wantTarget:  "ccc-team:test__session__name.2",
 			wantErr:     false,
 		},
 	}

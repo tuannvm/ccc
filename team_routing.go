@@ -129,11 +129,11 @@ func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error
 	sanitizedName := tmuxSafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
-	// Map role to pane index (tmux uses 0-based indexing by default)
+	// Map role to pane index (tmux uses 1-based indexing)
 	roleToIndex := map[session.PaneRole]int{
-		session.RolePlanner:  0,
-		session.RoleExecutor: 1,
-		session.RoleReviewer: 2,
+		session.RolePlanner:  1,
+		session.RoleExecutor: 2,
+		session.RoleReviewer: 3,
 	}
 
 	index, ok := roleToIndex[role]
