@@ -20,8 +20,9 @@ func shellQuote(s string) string {
 // TeamRuntime implements SessionRuntime for 3-pane team sessions
 // Creates a tmux window with 3 panes: Planner (left) | Executor (middle) | Reviewer (right)
 type TeamRuntime struct {
-	tmuxPath string
-	cccPath  string
+	TmuxPath   string // exported for testing
+	CccPath    string
+	ServerName string // Optional: for isolated tmux servers in testing
 }
 
 // EnsureLayout creates a 3-pane tmux layout for a team session
@@ -39,12 +40,12 @@ func (r *TeamRuntime) EnsureLayout(sess Session, workDir string) error {
 		// Verify it has 3 panes, if not recreate
 		if !r.hasThreePanes(target) {
 			r.killWindow(target)
-			return r.createThreePaneLayout(target, workDir)
+			return r.CreateThreePaneLayout(target, workDir)
 		}
 		return nil // Window exists with correct layout
 	}
 
-	return r.createThreePaneLayout(target, workDir)
+	return r.CreateThreePaneLayout(target, workDir)
 }
 
 // GetRoleTarget returns the tmux target for a specific role
@@ -98,14 +99,18 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 		// Use the resolved cccPath to ensure the binary is found
 		// Use bash explicitly to avoid shell compatibility issues
 		providerName := sess.GetProviderName()
-		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec %s run --provider %s\"", role, shellQuote(workDir), shellQuote(r.cccPath), shellQuote(providerName))
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec %s run --provider %s\"", role, shellQuote(workDir), shellQuote(r.CccPath), shellQuote(providerName))
+
+		base := r.tmuxBaseArgs()
 
 		// Clear any existing content in the pane
-		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()
+		sendKeysArgs := append(base, "send-keys", "-t", paneTarget, "C-c")
+		exec.Command(r.TmuxPath, sendKeysArgs...).Run()
 		time.Sleep(50 * time.Millisecond)
 
 		// Send command to the pane
-		if err := exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, runCmd, "C-m").Run(); err != nil {
+		sendKeysArgs = append(base, "send-keys", "-t", paneTarget, runCmd, "C-m")
+		if err := exec.Command(r.TmuxPath, sendKeysArgs...).Run(); err != nil {
 			return fmt.Errorf("failed to start Claude in %s pane: %w", role, err)
 		}
 
@@ -118,13 +123,13 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 
 // initTmuxPath finds the tmux binary
 func (r *TeamRuntime) initTmuxPath() error {
-	if r.tmuxPath != "" {
+	if r.TmuxPath != "" {
 		return nil
 	}
 
 	// Try PATH first
 	if path, err := exec.LookPath("tmux"); err == nil {
-		r.tmuxPath = path
+		r.TmuxPath = path
 		return nil
 	}
 
@@ -137,7 +142,7 @@ func (r *TeamRuntime) initTmuxPath() error {
 
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
-			r.tmuxPath = p
+			r.TmuxPath = p
 			return nil
 		}
 	}
@@ -145,21 +150,44 @@ func (r *TeamRuntime) initTmuxPath() error {
 	return fmt.Errorf("tmux not found")
 }
 
+// tmuxBaseArgs returns the base tmux arguments, including -L serverName if set.
+// This allows TeamRuntime to use isolated tmux servers for testing.
+func (r *TeamRuntime) tmuxBaseArgs() []string {
+	if r.ServerName == "" {
+		return nil
+	}
+	return []string{"-L", r.ServerName}
+}
+
+// tmuxCmd builds a tmux command with optional server name flag.
+func (r *TeamRuntime) tmuxCmd(args ...string) *exec.Cmd {
+	base := r.tmuxBaseArgs()
+	full := append(base, args...)
+	return exec.Command(r.TmuxPath, full...)
+}
+
+// tmuxCmdContext builds a tmux command with context and optional server name flag.
+func (r *TeamRuntime) tmuxCmdContext(ctx context.Context, args ...string) *exec.Cmd {
+	base := r.tmuxBaseArgs()
+	full := append(base, args...)
+	return exec.CommandContext(ctx, r.TmuxPath, full...)
+}
+
 // initCccPath finds the ccc binary
 func (r *TeamRuntime) initCccPath() error {
-	if r.cccPath != "" {
+	if r.CccPath != "" {
 		return nil
 	}
 
 	// First, try to get the current executable
 	if exe, err := os.Executable(); err == nil {
-		r.cccPath = exe
+		r.CccPath = exe
 		return nil
 	}
 
 	// Try PATH
 	if path, err := exec.LookPath("ccc"); err == nil {
-		r.cccPath = path
+		r.CccPath = path
 		return nil
 	}
 
@@ -173,7 +201,7 @@ func (r *TeamRuntime) initCccPath() error {
 
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
-			r.cccPath = p
+			r.CccPath = p
 			return nil
 		}
 	}
@@ -196,7 +224,9 @@ func (r *TeamRuntime) windowExists(target string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.tmuxPath, "list-windows", "-t", target, "-F", "#{window_name}")
+	base := r.tmuxBaseArgs()
+	listWinArgs := append(base, "list-windows", "-t", target, "-F", "#{window_name}")
+	cmd := exec.CommandContext(ctx, r.TmuxPath, listWinArgs...)
 	return cmd.Run() == nil
 }
 
@@ -205,7 +235,9 @@ func (r *TeamRuntime) hasThreePanes(target string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.tmuxPath, "list-panes", "-t", target)
+	base := r.tmuxBaseArgs()
+	listPanesArgs := append(base, "list-panes", "-t", target)
+	cmd := exec.CommandContext(ctx, r.TmuxPath, listPanesArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -219,12 +251,15 @@ func (r *TeamRuntime) killWindow(target string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	return exec.CommandContext(ctx, r.tmuxPath, "kill-window", "-t", target).Run()
+	base := r.tmuxBaseArgs()
+	killArgs := append(base, "kill-window", "-t", target)
+	return exec.CommandContext(ctx, r.TmuxPath, killArgs...).Run()
 }
 
-// createThreePaneLayout creates a new 3-pane tmux window
+// CreateThreePaneLayout creates a new 3-pane tmux window
 // Layout: Planner (left) | Executor (middle) | Reviewer (right)
-func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error {
+// Exported for integration testing.
+func (r *TeamRuntime) CreateThreePaneLayout(target string, workDir string) error {
 	// Parse target (format: "ccc-team:sessionname")
 	parts := strings.SplitN(target, ":", 2)
 	if len(parts) != 2 {
@@ -243,7 +278,9 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := exec.CommandContext(ctx, r.tmuxPath, "new-window", "-t", sessName+":", "-n", windowName).Run(); err != nil {
+	base := r.tmuxBaseArgs()
+	newWindowArgs := append(base, "new-window", "-t", sessName+":", "-n", windowName)
+	if err := exec.CommandContext(ctx, r.TmuxPath, newWindowArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to create window: %w", err)
 	}
 
@@ -257,7 +294,8 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel2()
 
-	if err := exec.CommandContext(ctx2, r.tmuxPath, "split-window", "-h", "-t", target).Run(); err != nil {
+	splitArgs := append(base, "split-window", "-h", "-t", target)
+	if err := exec.CommandContext(ctx2, r.TmuxPath, splitArgs...).Run(); err != nil {
 		// Clean up the partially created window
 		r.killWindow(target)
 		return fmt.Errorf("failed to split for pane 2: %w", err)
@@ -267,7 +305,8 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel3()
 
-	if err := exec.CommandContext(ctx3, r.tmuxPath, "select-pane", "-t", target+".2").Run(); err != nil {
+	selectArgs := append(base, "select-pane", "-t", target+".2")
+	if err := exec.CommandContext(ctx3, r.TmuxPath, selectArgs...).Run(); err != nil {
 		r.killWindow(target)
 		return fmt.Errorf("failed to select pane 2: %w", err)
 	}
@@ -275,7 +314,7 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	ctx4, cancel4 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel4()
 
-	if err := exec.CommandContext(ctx4, r.tmuxPath, "split-window", "-h", "-t", target).Run(); err != nil {
+	if err := exec.CommandContext(ctx4, r.TmuxPath, splitArgs...).Run(); err != nil {
 		r.killWindow(target)
 		return fmt.Errorf("failed to split for pane 3: %w", err)
 	}
@@ -284,7 +323,8 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	ctx5, cancel5 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel5()
 
-	if err := exec.CommandContext(ctx5, r.tmuxPath, "select-layout", "-t", target, "even-horizontal").Run(); err != nil {
+	layoutArgs := append(base, "select-layout", "-t", target, "even-horizontal")
+	if err := exec.CommandContext(ctx5, r.TmuxPath, layoutArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to equalize panes: %w", err)
 	}
 
@@ -293,28 +333,32 @@ func (r *TeamRuntime) createThreePaneLayout(target string, workDir string) error
 	ctx6, cancel6 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel6()
 
-	if err := exec.CommandContext(ctx6, r.tmuxPath, "select-pane", "-t", target+".1", "-T", "Planner").Run(); err != nil {
+	nameArgs := append(base, "select-pane", "-t", target+".1", "-T", "Planner")
+	if err := exec.CommandContext(ctx6, r.TmuxPath, nameArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to name pane 1: %w", err)
 	}
 
 	ctx7, cancel7 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel7()
 
-	if err := exec.CommandContext(ctx7, r.tmuxPath, "select-pane", "-t", target+".2", "-T", "Executor").Run(); err != nil {
+	nameArgs = append(base, "select-pane", "-t", target+".2", "-T", "Executor")
+	if err := exec.CommandContext(ctx7, r.TmuxPath, nameArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to name pane 2: %w", err)
 	}
 
 	ctx8, cancel8 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel8()
 
-	if err := exec.CommandContext(ctx8, r.tmuxPath, "select-pane", "-t", target+".3", "-T", "Reviewer").Run(); err != nil {
+	nameArgs = append(base, "select-pane", "-t", target+".3", "-T", "Reviewer")
+	if err := exec.CommandContext(ctx8, r.TmuxPath, nameArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to name pane 3: %w", err)
 	}
 
 	// Verify pane names were set correctly (for debugging)
 	ctx9, cancel9 := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel9()
-	verifyCmd := exec.CommandContext(ctx9, r.tmuxPath, "list-panes", "-t", target, "-F", "#{pane_index}: #{pane_name}")
+	verifyArgs := append(base, "list-panes", "-t", target, "-F", "#{pane_index}: #{pane_name}")
+	verifyCmd := exec.CommandContext(ctx9, r.TmuxPath, verifyArgs...)
 	if out, err := verifyCmd.Output(); err == nil {
 		fmt.Printf("✓ Team session panes named: %s\n", strings.TrimSpace(string(out)))
 	}
@@ -328,7 +372,9 @@ func (r *TeamRuntime) ensureTeamSession(sessionName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.tmuxPath, "list-sessions", "-F", "#{session_name}")
+	base := r.tmuxBaseArgs()
+	listArgs := append(base, "list-sessions", "-F", "#{session_name}")
+	cmd := exec.CommandContext(ctx, r.TmuxPath, listArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		// If tmux server isn't running, that's OK - we'll create the session which will start the server
@@ -351,7 +397,8 @@ func (r *TeamRuntime) ensureTeamSession(sessionName string) error {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
 
-	if err := exec.CommandContext(ctx2, r.tmuxPath, "new-session", "-d", "-s", sessionName).Run(); err != nil {
+	newSessArgs := append(base, "new-session", "-d", "-s", sessionName)
+	if err := exec.CommandContext(ctx2, r.TmuxPath, newSessArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
@@ -359,7 +406,8 @@ func (r *TeamRuntime) ensureTeamSession(sessionName string) error {
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel3()
 
-	exec.CommandContext(ctx3, r.tmuxPath, "set-option", "-t", sessionName, "mouse", "on").Run()
+	setArgs := append(base, "set-option", "-t", sessionName, "mouse", "on")
+	exec.CommandContext(ctx3, r.TmuxPath, setArgs...).Run()
 
 	return nil
 }
@@ -441,7 +489,9 @@ func (r *TeamRuntime) FindPaneByRole(sessionName string, role PaneRole) (string,
 
 // ListPanes gets all pane IDs for a window
 func (r *TeamRuntime) ListPanes(target string) ([]string, error) {
-	cmd := exec.Command(r.tmuxPath, "list-panes", "-t", target, "-F", "#{pane_id}")
+	base := r.tmuxBaseArgs()
+	listPanesArgs := append(base, "list-panes", "-t", target, "-F", "#{pane_id}")
+	cmd := exec.Command(r.TmuxPath, listPanesArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -462,7 +512,9 @@ func (r *TeamRuntime) ListPanes(target string) ([]string, error) {
 // CapturePaneID gets the stable pane ID for a pane index
 func (r *TeamRuntime) CapturePaneID(target string, index int) (string, error) {
 	paneTarget := fmt.Sprintf("%s.%d", target, index)
-	cmd := exec.Command(r.tmuxPath, "display-message", "-t", paneTarget, "-p", "#{pane_id}")
+	base := r.tmuxBaseArgs()
+	displayArgs := append(base, "display-message", "-t", paneTarget, "-p", "#{pane_id}")
+	cmd := exec.Command(r.TmuxPath, displayArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
