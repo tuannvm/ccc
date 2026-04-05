@@ -13,6 +13,13 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
   - Prevents hanging sessions when Claude Code is waiting for trust confirmation
 
 ### Added
+- **Team session skills**: Claude skills for 3-pane team communication
+  - `ccc-interpane` skill for inter-pane messaging via @mentions and tmux
+  - `ccc-team-session` skill for team session creation and management
+  - Auto-bootstrap via `CCC_ROLE` environment variable
+  - ACK protocol (ACK/Done/NACK) for message acknowledgment
+  - Validation test suite: `~/.claude/skills/ccc-interpane/test.sh`
+  - Located in `plugins/` directory with install script: `plugins/install-skills.sh`
 - **Telegram Bot API 9.5 streaming**: Real-time typing effect for AI responses
   - Uses `sendMessageDraft` API method for smooth character-by-character updates
   - No "edited" tag appears on messages
