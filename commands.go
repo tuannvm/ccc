@@ -1026,11 +1026,13 @@ func listen() error {
 						if err := downloadTelegramFile(config, photo.FileID, imgPath); err != nil {
 							sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Download failed: %v", err))
 						} else {
+							var prompt string
 							caption := msg.Caption
-							if caption == "" {
-								caption = "Analyze this image:"
+							if caption != "" {
+								prompt = fmt.Sprintf("read @%s — %s", imgPath, caption)
+							} else {
+								prompt = fmt.Sprintf("read @%s", imgPath)
 							}
-							prompt := fmt.Sprintf("%s %s", caption, imgPath)
 							sendMessage(config, chatID, threadID, fmt.Sprintf("📷 Image saved, sending to Claude..."))
 							photoLedgerID := fmt.Sprintf("tg:%d:photo", msg.MessageID)
 							appendMessage(&MessageRecord{
