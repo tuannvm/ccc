@@ -836,7 +836,10 @@ func switchSessionInWindow(sessionName string, workDir string, providerName stri
 
 	// After starting Claude, poll for consent dialog and auto-accept it
 	// This is needed for new sessions where Claude Code 2.1.84+ shows a workspace trust dialog
-	if shouldRestart {
+	// IMPORTANT: Only poll for new sessions (sessionID == ""), not when resuming.
+	// Consent dialogs only appear on first startup, not when resuming existing sessions.
+	// Polling during resume can interfere with message delivery by sending spurious Enter keys.
+	if shouldRestart && sessionID == "" {
 		listenLog("Polling for consent dialog after Claude startup...")
 		pollDeadline := time.Now().Add(10 * time.Second)
 		consumedDialog := false
