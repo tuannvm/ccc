@@ -78,7 +78,7 @@ func handleSendFile(filePath string) error {
 	token := hex.EncodeToString(tokenBytes)
 
 	// Register with relay
-	regPayload, _ := json.Marshal(map[string]interface{}{
+	regPayload, _ := json.Marshal(map[string]any{
 		"token":    token,
 		"filename": fileName,
 		"size":     fileSize,

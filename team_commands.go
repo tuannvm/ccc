@@ -121,10 +121,10 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	// Path is the actual working directory for file operations
 	// SessionName is the user-provided name for identification
 	sessInfo := &SessionInfo{
-		Path:         workDir,     // Actual working directory
-		SessionName:  name,        // User-provided name
+		Path:         workDir, // Actual working directory
+		SessionName:  name,    // User-provided name
 		ProviderName: providerName,
-		Type:         "team",              // Using string directly, will convert to SessionKind
+		Type:         "team", // Using string directly, will convert to SessionKind
 		LayoutName:   "team-3pane",
 		Panes:        make(map[session.PaneRole]*PaneInfo),
 	}
@@ -439,94 +439,4 @@ func (tc *TeamCommands) DeleteTeam(args []string) error {
 
 	fmt.Printf("Deleted team session '%s'\n", name)
 	return nil
-}
-
-// TeamSessionInfo holds information about a team session for display
-type TeamSessionInfo struct {
-	Name      string
-	TopicID   int64
-	Path      string
-	Panes     []TeamPaneStatus
-	Active    bool
-	CreatedAt string
-}
-
-// TeamPaneStatus holds status information for a single pane
-type TeamPaneStatus struct {
-	Role       session.PaneRole
-	PaneID     string
-	ClaudePID  int
-	ClaudeRunning bool
-}
-
-// formatTeamSessions formats team session info for display
-func formatTeamSessions(sessions []TeamSessionInfo) string {
-	if len(sessions) == 0 {
-		return "  (no team sessions found)"
-	}
-
-	var result string
-	for _, sess := range sessions {
-		status := " "
-		if sess.Active {
-			status = "*"
-		}
-		result += fmt.Sprintf("%s %s (topic: %d)\n", status, sess.Name, sess.TopicID)
-		for _, pane := range sess.Panes {
-			claudeStatus := " "
-			if pane.ClaudeRunning {
-				claudeStatus = "C"
-			}
-			result += fmt.Sprintf("    [%s] Pane %s: %s (Claude: %s)\n",
-				claudeStatus, pane.PaneID, pane.Role, claudeStatus)
-		}
-	}
-	return result
-}
-
-// validateTeamSession validates that a team session has correct structure
-func validateTeamSession(sess *SessionInfo) error {
-	if sess.Type != session.SessionKindTeam {
-		return fmt.Errorf("session type is not 'team'")
-	}
-
-	if sess.LayoutName != "team-3pane" {
-		return fmt.Errorf("invalid layout for team session: %s", sess.LayoutName)
-	}
-
-	if len(sess.Panes) != 3 {
-		return fmt.Errorf("team session must have exactly 3 panes, got %d", len(sess.Panes))
-	}
-
-	requiredRoles := []session.PaneRole{
-		session.RolePlanner,
-		session.RoleExecutor,
-		session.RoleReviewer,
-	}
-
-	for _, role := range requiredRoles {
-		if _, exists := sess.Panes[role]; !exists {
-			return fmt.Errorf("team session missing required role: %s", role)
-		}
-	}
-
-	return nil
-}
-
-// Exit codes for team commands
-const (
-	ExitSuccess     = 0
-	ExitUsageError  = 1
-	ExitConfigError = 2
-	ExitTmuxError   = 3
-)
-
-// handleCommandError handles errors from team commands with appropriate exit codes
-func handleCommandError(err error, defaultExitCode int) {
-	if err == nil {
-		return
-	}
-
-	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	os.Exit(defaultExitCode)
 }

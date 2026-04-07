@@ -337,7 +337,7 @@ func ensureProviderSettings(provider Provider) error {
 	settingsPath := filepath.Join(configDir, "settings.json")
 
 	// Read existing settings or create new
-	var settings map[string]interface{}
+	var settings map[string]any
 	data, err := os.ReadFile(settingsPath)
 	if err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
@@ -347,11 +347,11 @@ func ensureProviderSettings(provider Provider) error {
 		}
 		// Initialize map if JSON was null (json.Unmarshal leaves it as nil)
 		if settings == nil {
-			settings = make(map[string]interface{})
+			settings = make(map[string]any)
 		}
 	} else if os.IsNotExist(err) {
 		// File doesn't exist, create new settings
-		settings = make(map[string]interface{})
+		settings = make(map[string]any)
 	} else {
 		// Other error (permission, I/O, etc.) - return error to avoid data loss
 		return fmt.Errorf("failed to read settings file: %w", err)
@@ -369,7 +369,7 @@ func ensureProviderSettings(provider Provider) error {
 	// Check if trustedDirectories and trustDirectories auto-approve are already configured
 	_, hasTrustedDirs := settings["trustedDirectories"]
 	hasTrustDirAutoApprove := false
-	if autoApprove, ok := settings["autoApprove"].(map[string]interface{}); ok {
+	if autoApprove, ok := settings["autoApprove"].(map[string]any); ok {
 		if trustDirs, ok := autoApprove["trustDirectories"].(bool); ok {
 			hasTrustDirAutoApprove = trustDirs
 		}
@@ -379,7 +379,7 @@ func ensureProviderSettings(provider Provider) error {
 	if !hasTrustedDirs || !hasTrustDirAutoApprove {
 		// Add trusted directories
 		// Trust home directory and common project locations
-		trustedDirs := []interface{}{
+		trustedDirs := []any{
 			home,
 			filepath.Join(home, "Projects"),
 			filepath.Join(home, "Projects", "cli"),
@@ -387,7 +387,7 @@ func ensureProviderSettings(provider Provider) error {
 		}
 
 		// If existing trusted directories exist, preserve them
-		if existingDirs, ok := settings["trustedDirectories"].([]interface{}); ok && len(existingDirs) > 0 {
+		if existingDirs, ok := settings["trustedDirectories"].([]any); ok && len(existingDirs) > 0 {
 			for _, dir := range existingDirs {
 				if dirStr, ok := dir.(string); ok {
 					trustedDirs = append(trustedDirs, dirStr)
@@ -399,11 +399,11 @@ func ensureProviderSettings(provider Provider) error {
 
 		// Add autoApprove for trust directories
 		// Preserve existing autoApprove settings if they exist
-		var autoApprove map[string]interface{}
-		if existingAA, ok := settings["autoApprove"].(map[string]interface{}); ok {
+		var autoApprove map[string]any
+		if existingAA, ok := settings["autoApprove"].(map[string]any); ok {
 			autoApprove = existingAA
 		} else {
-			autoApprove = make(map[string]interface{})
+			autoApprove = make(map[string]any)
 		}
 		autoApprove["trustDirectories"] = true
 		settings["autoApprove"] = autoApprove
