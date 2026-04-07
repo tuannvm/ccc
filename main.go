@@ -232,13 +232,14 @@ func main() {
 
 	case "hook-stop-retry":
 		// Background process: retry transcript read 3x at 2s intervals
-		// Args: sessName topicID transcriptPath
-		if len(os.Args) < 5 {
+		// Args: sessName topicID transcriptPath claudeSessionID
+		if len(os.Args) < 6 {
 			os.Exit(1)
 		}
 		var tid int64
 		fmt.Sscan(os.Args[3], &tid)
-		handleStopRetry(os.Args[2], tid, os.Args[4])
+		claudeSessionID := os.Args[5]
+		handleStopRetry(os.Args[2], tid, os.Args[4], claudeSessionID)
 
 	case "hook-post-tool":
 		if err := handlePostToolHook(); err != nil {
@@ -254,6 +255,12 @@ func main() {
 
 	case "hook-notification":
 		if err := handleNotificationHook(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "hook-session-start":
+		if err := handleSessionStartHook(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

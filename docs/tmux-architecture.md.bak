@@ -1,0 +1,543 @@
+# Tmux Pane Architecture (Design Spec)
+
+> **Status**: Design document for a proposed multi-pane tmux architecture. This describes a system to be built, not current functionality.
+>
+> **Last Updated**: 2026-03-20
+> **Status**: ⚠️ *Planning Phase — Not Implemented*
+
+## Overview
+
+A proposed tmux-based architecture for multi-bot collaboration, where each Telegram topic maps to a tmux window with three role-based panes (Planner | Executor | Reviewer).
+
+## Current Reality vs. This Design
+
+| This Document | Current Codebase Reality |
+|--------------|--------------------------|
+| 3-pane layout (Planner \| Executor \| Reviewer) | Single pane per session |
+| `TmuxWindow`, `TmuxPane` types | Uses `SessionInfo` in `config.Sessions` |
+| `PostResponse` hook for @mention routing | Hook doesn't exist in Claude Code |
+| `bot_tokens`, `bot_usernames` config fields | Single `BotToken` field; usernames read from Telegram at runtime |
+| `MessageRouter` with `routeUpdate()` | Monolithic `listen()` function in `commands.go` |
+| `/new`, `/worktree` create 3-pane windows | Create single-pane sessions |
+
+## Hierarchy Mapping
+
+```
+Telegram                   Tmux
+─────────────────────────────────────────
+Group                      Session (ccc)
+└── Topic                  └── Window (topic name)
+    └── Planner role          └── Pane 0 (left)
+    └── Executor role         └── Pane 1 (middle)
+    └── Reviewer role         └── Pane 2 (right)
+```
+
+## Visual Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         TMUX SESSION: ccc                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  WINDOW: feature-api-development (Telegram Topic ID: 12345)   │  │
+│  ├──────────────┬──────────────┬──────────────────────────────────┤  │
+│  │              │              │                                  │  │
+│  │   PANE 0     │   PANE 1     │           PANE 2                 │  │
+│  │   Planner    │   Executor   │          Reviewer               │  │
+│  │              │              │                                  │  │
+│  │ @planner     │ @executor    │     @reviewer                    │  │
+│  │ working...   │ running...   │     analyzing...                 │  │
+│  │              │              │                                  │  │
+│  │ Planning     │ Executing    │     Reviewing                    │  │
+│  │ steps for    │ git clone    │     /path/to/file                │  │
+│  │ REST API     │              │                                  │  │
+│  │              │              │                                  │  │
+│  │ $            │ $            │     $                            │  │
+│  └──────────────┴──────────────┴──────────────────────────────────┘  │
+│                                                                       │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  WINDOW: bugfix-auth-flow (Telegram Topic ID: 12346)           │  │
+│  ├──────────────┬──────────────┬──────────────────────────────────┤  │
+│  │   Planner    │   Executor   │          Reviewer               │  │
+│  │              │              │                                  │  │
+│  │ Analyzing    │              │     LGTM! ✓                      │  │
+│  │ auth issue   │              │                                  │  │
+│  │              │              │                                  │  │
+│  └──────────────┴──────────────┴──────────────────────────────────┘  │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Pane Responsibilities
+
+### Pane 0 (Left) - Planner
+- Receives and processes planning requests
+- Creates structured plans
+- Delegates to executor via @mention
+- Shows planning context and history
+
+### Pane 1 (Middle) - Executor
+- Receives tasks from planner
+- Executes code changes
+- Runs commands and tests
+- Shows working directory and git status
+
+### Pane 2 (Right) - Reviewer
+- Reviews changes from executor
+- Provides feedback
+- Shows code diffs and analysis
+- Can request fixes from executor
+
+## Inter-Pane Communication (Proposed Design)
+
+### Architecture Decision: Hybrid Approach
+
+After architectural review (Codex 5.3, Gemini 2.5, Opus 4.6), the consensus is:
+
+> **Do NOT rely on SKILL.md instructions alone for message routing.** LLM instruction-following is probabilistic; message delivery must be deterministic.
+
+**Solution**: Hybrid — Claude expresses intent via @mention, CCC's Go code handles delivery.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Claude in Pane 0                             │
+│  User: "Implement the API"                                       │
+│  Claude: "I'll delegate this. @executor please implement the    │
+│           REST API endpoints."                                    │
+│      │                                                           │
+│      │ CCC Stop Hook fires (existing Claude Code hook)           │
+│      │                                                           │
+│      ▼                                                           │
+│  CCC Go Code:                                                    │
+│  1. Parse response for @mentions                                 │
+│  2. Extract: role=executor, msg="please implement the API"       │
+│  3. Check pane 1 state (capture-pane, look for prompt)           │
+│  4. If ready: tmux load-buffer + paste-buffer -t pane.1          │
+│  5. If busy: queue message, retry in 10s                         │
+│  6. Log delivery attempt                                         │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Pane 1 (Executor)                             │
+│  Message appears: "please implement the REST API endpoints"     │
+│  Claude processes and begins implementation...                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why Not SKILL.md-Only?
+
+| Issue | SKILL.md-Only | Hybrid (Skill + Go Router) |
+|-------|--------------|---------------------------|
+| Claude forgets to route | ❌ Message lost | ✅ Hook catches it |
+| Wrong pane index | ❌ Goes to wrong bot | ✅ Go validates mapping |
+| Shell quoting breaks | ❌ Malformed send-keys | ✅ load-buffer handles safely |
+| Target pane busy | ❌ Message lost/corrupted | ✅ Detect, queue, retry |
+| No delivery confirmation | ❌ Fire-and-pray | ✅ Log + retry on failure |
+| No retry logic | ❌ Silent failure | ✅ Exponential backoff |
+
+### Implementation: CCC Stop Hook
+
+Use the **existing `Stop` hook** (already supported by Claude Code) — not a fictional `PostResponse` hook.
+
+```go
+// In hooks.go — extend handleStopHook()
+
+func handleStopHook() error {
+    // Read transcript to get Claude's last response
+    transcript, err := readTranscript()
+    if err != nil {
+        return err
+    }
+
+    // Parse for @mentions: @executor, @reviewer, @planner
+    mentions := parseMentions(transcript)
+    if len(mentions) == 0 {
+        return nil
+    }
+
+    // Route each mention deterministically via Go code
+    for _, mention := range mentions {
+        if err := routeToPane(mention.Role, mention.Message, mention.Context); err != nil {
+            log.Printf("Failed to route to %s: %v", mention.Role, err)
+        }
+    }
+
+    return nil
+}
+
+type Mention struct {
+    Role    string // "executor", "reviewer", "planner"
+    Message string // The message content after @role
+    Context string // Surrounding context for disambiguation
+}
+
+func routeToPane(role string, message string, context string) error {
+    // Get current window/pane info from tmux
+    currentPane := os.Getenv("TMUX_PANE")
+    if currentPane == "" {
+        return fmt.Errorf("not in tmux")
+    }
+
+    // Find target pane by role
+    targetPane, err := findPaneByRole(currentPane, role)
+    if err != nil {
+        return err
+    }
+
+    // Check if target pane has active Claude prompt
+    if !tmuxPaneHasActiveClaudePrompt(targetPane) {
+        // Queue for retry or report busy
+        return queueMessage(targetPane, role, message)
+    }
+
+    // Safe delivery via tmux buffer (not raw send-keys)
+    return sendToPaneSafely(targetPane, message)
+}
+
+func sendToPaneSafely(paneID string, message string) error {
+    // Use load-buffer + paste-buffer to avoid shell quoting issues
+    bufferName := fmt.Sprintf("ccc-msg-%s", randomID())
+
+    // Load message into tmux buffer
+    if err := tmux("load-buffer", "-b", bufferName, "-", []byte(message)); err != nil {
+        return err
+    }
+
+    // Paste buffer into target pane
+    if err := tmux("paste-buffer", "-b", bufferName, "-t", paneID, "-d"); err != nil {
+        return err
+    }
+
+    // Send Enter to submit
+    return tmux("send-keys", "-t", paneID, "Enter")
+}
+
+func findPaneByRole(currentPane string, role string) (string, error) {
+    // Get all panes in current window
+    panes, err := tmuxListPanes()
+    if err != nil {
+        return "", err
+    }
+
+    // Role-to-pane-index mapping (stable across sessions)
+    roleToIndex := map[string]int{
+        "planner":  0,
+        "executor": 1,
+        "reviewer": 2,
+    }
+
+    targetIndex, ok := roleToIndex[role]
+    if !ok {
+        return "", fmt.Errorf("unknown role: %s", role)
+    }
+
+    // Find pane with matching index
+    for _, p := range panes {
+        if p.Index == targetIndex {
+            return p.ID, nil // Use stable pane ID (%12 format), not index
+        }
+    }
+
+    return "", fmt.Errorf("pane for role %s not found", role)
+}
+```
+
+### SKILL.md Role (Interface, Not Router)
+
+The skill is simple — tells Claude what to say, not how to route:
+
+```markdown
+# Multi-Pane Collaboration
+
+You are working in a multi-pane tmux session with three roles:
+- **Pane 0**: @planner — creates plans, delegates work
+- **Pane 1**: @executor — executes code, runs commands
+- **Pane 2**: @reviewer — reviews changes, provides feedback
+
+## Delegating Work
+
+To delegate work to another role, use @mentions in your response:
+- "@executor please implement the REST API"
+- "@reviewer please review my changes"
+- "@planner help me refine this approach"
+
+**Important**: After you mention another role, CCC will automatically route your message to their pane. Do NOT attempt to send tmux commands manually.
+
+## Receiving Work
+
+When another role delegates to you, you'll receive their message as input. Process it and respond with your work.
+```
+
+## Proposed Go Implementation
+
+### Window Structure
+
+```go
+// Tmux window represents a Telegram topic with 3 panes
+type TmuxWindow struct {
+    SessionName string   // "ccc"
+    WindowName  string   // Topic-safe name (e.g., "feature-api-development")
+    TopicID     int64    // Telegram topic ID
+    Panes       [3]*TmuxPane
+}
+
+type TmuxPane struct {
+    PaneID      int      // 0, 1, or 2
+    Role        string   // "planner", "executor", "reviewer"
+    PaneIndex   int      // Tmux pane index (0, 1, 2)
+    PaneTmuxID  string   // Stable tmux pane ID (e.g., "%12")
+    WorkingDir  string   // Shared working directory
+    ClaudePID   int      // Claude process ID for health checking
+}
+
+// Create window with 3 panes for a topic
+func CreateTopicWindow(topicID int64, topicName string) (*TmuxWindow, error) {
+    windowName := tmuxSafeName(topicName)
+
+    // Create new window in ccc session
+    if err := tmux("new-window", "-n", windowName, "-t", "ccc:"); err != nil {
+        return nil, err
+    }
+
+    window := &TmuxWindow{
+        SessionName: "ccc",
+        WindowName:  windowName,
+        TopicID:     topicID,
+        Panes:       [3]*TmuxPane{},
+    }
+
+    target := "ccc:" + windowName
+
+    // Pane 0 (left): Planner - exists by default
+    pane0Info, _ := tmuxCapturePaneInfo(target + ".0")
+    window.Panes[0] = &TmuxPane{
+        PaneID:     0,
+        Role:       "planner",
+        PaneIndex:  0,
+        PaneTmuxID: pane0Info.ID,
+        WorkingDir: sharedWorkDir,
+    }
+
+    // Pane 1 (middle): Executor - split vertical
+    tmux("split-window", "-h", "-t", target)
+    pane1Info, _ := tmuxCapturePaneInfo(target + ".1")
+    window.Panes[1] = &TmuxPane{
+        PaneID:     1,
+        Role:       "executor",
+        PaneIndex:  1,
+        PaneTmuxID: pane1Info.ID,
+        WorkingDir: sharedWorkDir,
+    }
+
+    // Pane 2 (right): Reviewer - split from pane 1
+    tmux("select-pane", "-t", target + ".1")
+    tmux("split-window", "-h", "-t", target)
+    pane2Info, _ := tmuxCapturePaneInfo(target + ".2")
+    window.Panes[2] = &TmuxPane{
+        PaneID:     2,
+        Role:       "reviewer",
+        PaneIndex:  2,
+        PaneTmuxID: pane2Info.ID,
+        WorkingDir: sharedWorkDir,
+    }
+
+    // Equalize pane sizes
+    tmux("select-layout", "-t", target, "even-horizontal")
+
+    return window, nil
+}
+```
+
+### Topic Lifecycle
+
+```go
+// Track active topic windows
+var topicWindows = make(map[int64]*TmuxWindow)
+var topicWindowsMutex sync.RWMutex
+
+// Get or create window for topic
+func GetOrCreateTopicWindow(topicID int64, topicName string) (*TmuxWindow, error) {
+    topicWindowsMutex.Lock()
+    defer topicWindowsMutex.Unlock()
+
+    if window, exists := topicWindows[topicID]; exists {
+        return window, nil
+    }
+
+    window, err := CreateTopicWindow(topicID, topicName)
+    if err != nil {
+        return nil, err
+    }
+
+    topicWindows[topicID] = window
+    return window, nil
+}
+
+// Clean up window when topic is deleted
+func DeleteTopicWindow(topicID int64) error {
+    topicWindowsMutex.Lock()
+    defer topicWindowsMutex.Unlock()
+
+    window, exists := topicWindows[topicID]
+    if !exists {
+        return nil
+    }
+
+    target := fmt.Sprintf("%s:%s", window.SessionName, window.WindowName)
+    if err := tmux("kill-window", "-t", target); err != nil {
+        return err
+    }
+
+    delete(topicWindows, topicID)
+    return nil
+}
+```
+
+## User Experience
+
+### High-Level View (Telegram)
+```
+You see the conversation flow:
+@planner_bot: "Here's my plan..."
+@executor_bot: "Implementing..."
+@reviewer_bot: "Review complete..."
+```
+
+### Low-Level View (Tmux)
+```
+You can drill down to see details:
+- Pane 0: See planner's thinking process
+- Pane 1: See executor's terminal output
+- Pane 2: See reviewer's analysis and diffs
+```
+
+### Switching Between Views
+
+```bash
+# In tmux, switch panes:
+Ctrl+B, Left Arrow   # Switch to Planner pane
+Ctrl+B, Down Arrow   # Switch to Executor pane
+Ctrl+B, Right Arrow  # Switch to Reviewer pane
+
+# Or use pane numbers:
+Ctrl+B, q, then 0/1/2
+
+# Zoom into a pane (temporarily make it full window):
+Ctrl+B, z
+# Press again to unzoom
+```
+
+## Benefits
+
+1. **Parallel Visibility**: See all 3 bots working simultaneously
+2. **Debugging**: Each bot's session is isolated but visible
+3. **Context Switching**: Easy to jump between high-level (Telegram) and low-level (tmux)
+4. **Audit Trail**: Each pane maintains its own history
+5. **Interactive Intervention**: Can type into any pane to guide specific bot
+
+## Proposed Configuration
+
+```json
+{
+  "tmux": {
+    "session_name": "ccc",
+    "pane_layout": "even-horizontal"
+  },
+  "multi_pane": {
+    "enabled": true,
+    "roles": ["planner", "executor", "reviewer"],
+    "role_shortcuts": {
+      "planner": "@planner",
+      "executor": "@executor",
+      "reviewer": "@reviewer"
+    }
+  }
+}
+```
+
+## Proposed CLI Commands
+
+```bash
+# Create a new 3-pane session for a topic
+ccc new-multi <name> --topic <topic-id>
+
+# List all active multi-pane sessions
+ccc list-multi
+
+# Send a message to a specific role's pane
+ccc send-to <session> <role> "<message>"
+
+# Example: send to executor pane
+ccc send-to feature-api executor "git status"
+
+# Attach to a specific pane
+ccc attach <session> --role executor
+```
+
+## Message Routing Protocol
+
+### Message Format
+
+```
+MSG <msgid> <from_role> <to_role> <timestamp>
+<message_body>
+/MSG
+```
+
+### Delivery Semantics
+
+- **At-least-once delivery**: Retry until ack or timeout
+- **Idempotent processing**: Duplicate msgid ignored
+- **Busy-wait with backoff**: If target not ready, retry with exponential backoff
+- **Delivery confirmation**: Log each attempt; success/failure
+
+### Failure Handling
+
+| Failure Mode | Handling |
+|-------------|----------|
+| Target pane doesn't exist | Fatal error, report to user |
+| Target pane mid-execution | Queue message, retry in 10s |
+| Target pane crashed | Report error, mark session unhealthy |
+| Send command fails | Retry up to 3 times, then escalate |
+
+## Implementation Phases
+
+### Phase 1: Foundation
+- [ ] `TmuxWindow`, `TmuxPane` types
+- [ ] `CreateTopicWindow()` with 3-pane layout
+- [ ] Topic lifecycle management
+- [ ] CLI commands for multi-pane sessions
+
+### Phase 2: Message Routing
+- [ ] Stop hook extension for @mention detection
+- [ ] `routeToPane()` with pane state checking
+- [ ] Safe message delivery (load-buffer + paste-buffer)
+- [ ] Retry logic with exponential backoff
+
+### Phase 3: Reliability
+- [ ] Message queuing for busy panes
+- [ ] Delivery confirmation logging
+- [ ] Health monitoring per pane
+- [ ] Error reporting and escalation
+
+### Phase 4: Integration
+- [ ] Telegram topic-to-window mapping
+- [ ] `/new-multi`, `/worktree-multi` commands
+- [ ] SKILL.md generation per role
+- [ ] Testing and validation
+
+## Open Questions
+
+1. **Message persistence**: Should undelivered messages persist to disk?
+2. **Ordering guarantees**: Should messages be delivered in order?
+3. **Loop prevention**: How to prevent @mention loops?
+4. **User intervention**: How should manual pane input interact with routed messages?
+5. **Session recovery**: What happens if tmux crashes but sessions are restorable?
+
+## References
+
+- **Fact-check**: Original design document contained non-existent hooks and types. This revision aligns with actual codebase.
+- **Architectural Review**: Codex 5.3 (4/10), Gemini 2.5 (3/10), Opus 4.6 (2/10) — all rejected SKILL.md-only approach.
+- **Existing Patterns**: CCC already has `tmux.go` with pane checking utilities; `hooks.go` with Stop hook handler.

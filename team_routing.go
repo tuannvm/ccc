@@ -9,6 +9,51 @@ import (
 	"github.com/tuannvm/ccc/session"
 )
 
+// isBuiltinCommand checks if a message is a built-in CCC command that should bypass team routing
+// These commands are handled by CCC directly, not sent to Claude in a team session
+func isBuiltinCommand(text string) bool {
+	// Get the first word (command)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return false
+	}
+
+	command := strings.ToLower(fields[0])
+
+	// List of built-in commands that should bypass team routing
+	builtinCommands := []string{
+		"/stop",
+		"/delete",
+		"/resume",
+		"/providers",
+		"/provider",
+		"/new",
+		"/worktree",
+		"/team",
+		"/cleanup",
+		"/c",
+		"/stats",
+		"/update",
+		"/version",
+		"/auth",
+		"/restart",
+		"/continue",
+	}
+
+	for _, cmd := range builtinCommands {
+		if command == cmd || strings.HasPrefix(command, cmd+" ") {
+			return true
+		}
+	}
+
+	return false
+}
+
 // handleTeamSessionMessage routes a Telegram message to the appropriate pane in a team session
 // Returns true if the message was handled (team session), false if not (standard session)
 func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID int64, threadID int64) bool {
@@ -108,9 +153,11 @@ func switchToTeamWindow(sessionName string, role session.PaneRole) error {
 	sanitizedName := tmuxSafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
-	// Select the window to make it active
+	// Select the window to make it active (optional for headless tmux)
+	// In headless environments (no attached client), select-window fails but send-keys still works
 	if err := exec.Command(tmuxPath, "select-window", "-t", target).Run(); err != nil {
-		return fmt.Errorf("failed to select window: %w", err)
+		// Log but don't fail - send-keys will work even if select-window fails
+		listenLog("[team routing] select-window failed (may be headless): %v", err)
 	}
 
 	return nil
@@ -128,81 +175,4 @@ func getSessionNameFromInfo(info *SessionInfo) string {
 		return path[idx+1:]
 	}
 	return path
-}
-
-// prependRolePrefix adds the role name prefix to outgoing messages from team sessions
-func prependRolePrefix(role session.PaneRole, message string) string {
-	// Map role to display name
-	roleNames := map[session.PaneRole]string{
-		session.RolePlanner:  "[Planner]",
-		session.RoleExecutor: "[Executor]",
-		session.RoleReviewer: "[Reviewer]",
-		session.RoleStandard: "", // No prefix for standard sessions
-	}
-
-	if prefix, ok := roleNames[role]; ok && prefix != "" {
-		return prefix + " " + message
-	}
-	return message
-}
-
-// isTeamSessionCommand checks if a text message is a team-specific command
-func isTeamSessionCommand(text string) bool {
-	teamCommands := []string{
-		"/planner", "/plan", "/p",
-		"/executor", "/exec", "/e",
-		"/reviewer", "/rev", "/r",
-		"@planner", "@executor", "@reviewer",
-	}
-
-	textLower := strings.ToLower(strings.TrimSpace(text))
-	for _, cmd := range teamCommands {
-		if strings.HasPrefix(textLower, cmd+" ") || textLower == cmd {
-			return true
-		}
-	}
-
-	return false
-}
-
-// parseTeamCommand extracts the role and message from a team command
-// Returns: role, message, isTeamCommand
-func parseTeamCommand(text string) (session.PaneRole, string, bool) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return session.RoleExecutor, text, false
-	}
-
-	// Check for command prefixes
-	fields := strings.Fields(text)
-	if len(fields) == 0 {
-		return session.RoleExecutor, text, false
-	}
-
-	prefix := strings.ToLower(fields[0])
-
-	// Map prefixes to roles
-	prefixToRole := map[string]session.PaneRole{
-		"/planner":   session.RolePlanner,
-		"/plan":      session.RolePlanner,
-		"/p":         session.RolePlanner,
-		"@planner":   session.RolePlanner,
-		"/executor":  session.RoleExecutor,
-		"/exec":      session.RoleExecutor,
-		"/e":         session.RoleExecutor,
-		"@executor":  session.RoleExecutor,
-		"/reviewer":  session.RoleReviewer,
-		"/rev":       session.RoleReviewer,
-		"/r":         session.RoleReviewer,
-		"@reviewer":  session.RoleReviewer,
-	}
-
-	if role, ok := prefixToRole[prefix]; ok {
-		// Strip the prefix from the message
-		message := strings.Join(fields[1:], " ")
-		return role, message, true
-	}
-
-	// No team command prefix - goes to executor by default
-	return session.RoleExecutor, text, false
 }

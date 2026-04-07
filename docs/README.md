@@ -13,6 +13,37 @@ All documentation lives in this git repository. This is the single source of tru
 | [approach-comparison.md](approach-comparison.md) | Single-bot vs three-bot analysis | 2026-03-20 14:13 |
 | [ralph-loop-status.md](ralph-loop-status.md) | Ralph Wiggum iteration findings | 2026-03-20 14:33 |
 
+## Team Session Skills
+
+For 3-pane team sessions (Planner/Executor/Reviewer), use these Claude skills:
+
+| Skill | Purpose |
+|-------|---------|
+| `ccc-interpane` | Inter-pane messaging via @mentions and tmux |
+| `ccc-team-session` | Team session creation & management |
+
+### Installation
+
+```bash
+# Clone ccc repo
+git clone https://github.com/tuannvm/ccc.git
+cd ccc
+
+# Install skills to ~/.claude/skills/
+./plugins/install-skills.sh
+```
+
+Skills auto-load in Claude Code when `CCC_ROLE` environment variable is set.
+
+### Quick Start
+
+1. **Create a team session**: Use `ccc team create` or manual tmux setup
+2. **Start Claude in each pane**: Set `CCC_ROLE=planner|executor|reviewer`
+3. **Communicate via @mentions**: Skills auto-load based on `CCC_ROLE`
+4. **Run validation**: `~/.claude/skills/ccc-interpane/test.sh`
+
+See [multi-bot-design.md](multi-bot-design.md) for architecture details.
+
 ## Quick Links
 
 - **Architecture**: [multi-bot-design.md](multi-bot-design.md) - Start here
@@ -25,6 +56,7 @@ All documentation lives in this git repository. This is the single source of tru
 - `27c1935` - Fixed hook format to match CCC implementation
 - `3865c71` - Updated ralph-loop-status with internal event bus
 - `d262bdd` - Added internal event bus to main design
+- `2026-04-03` - Added team session skills documentation
 
 ## Related
 

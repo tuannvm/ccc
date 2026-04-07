@@ -49,11 +49,12 @@ func (r *TeamHookRouter) RouteHook(transcriptPath string, sess session.Session) 
 }
 
 // inferRoleFromPath extracts the role from a transcript file path
+// Only matches full role names: planner, executor, reviewer
 // Returns empty string if no role is found
 func inferRoleFromPath(path string) session.PaneRole {
 	base := filepath.Base(path)
 
-	// Check for role in filename (e.g., "session-planner.jsonl")
+	// Check for full role names in filename (e.g., "session-planner.jsonl")
 	for _, role := range []session.PaneRole{
 		session.RolePlanner,
 		session.RoleExecutor,

@@ -13,12 +13,26 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
   - Prevents hanging sessions when Claude Code is waiting for trust confirmation
 
 ### Added
+- **Team session skills**: Claude skills for 3-pane team communication
+  - `ccc-interpane` skill for inter-pane messaging via @mentions and tmux
+  - `ccc-team-session` skill for team session creation and management
+  - Auto-bootstrap via `CCC_ROLE` environment variable
+  - ACK protocol (ACK/Done/NACK) for message acknowledgment
+  - Validation test suite: `~/.claude/skills/ccc-interpane/test.sh`
+  - Located in `plugins/` directory with install script: `plugins/install-skills.sh`
 - **Telegram Bot API 9.5 streaming**: Real-time typing effect for AI responses
   - Uses `sendMessageDraft` API method for smooth character-by-character updates
   - No "edited" tag appears on messages
   - Higher rate limits than traditional editMessageText
   - Configurable via `enable_streaming` in config.json
   - Thread-safe implementation with atomic state management
+- **Inter-pane communication for team sessions**: Team sessions now support @mention-based routing between planner, executor, and reviewer panes
+  - `@planner`, `@executor`, `@reviewer` mentions route messages to target panes via tmux
+  - Automatic deduplication prevents duplicate delivery of the same request
+  - Hop count tracking prevents infinite message loops (max 5 hops)
+  - Message queuing when target pane is busy (max 25 messages per role, 75 global)
+  - Persistent routing state survives restarts via `.config/ccc/sessions/<name>/interpane/`
+  - Full test coverage for mention parsing, role inference, and message queue management
 - **Worktree auto-generation**: `/worktree` command now supports auto-generating worktree names
   - Run `/worktree` in a session topic to let Claude Code generate a unique name
   - Generated names follow Claude's adjective-noun-noun pattern (e.g., `merry-wishing-crystal`)

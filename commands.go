@@ -1208,6 +1208,12 @@ func listen() error {
 					continue
 				}
 
+				// Team sessions handle /stop differently via team routing
+				if config.IsTeamSession(threadID) {
+					sendMessage(config, chatID, threadID, "ℹ️ Use @planner/stop, @executor/stop, or @reviewer/stop in team sessions.")
+					continue
+				}
+
 				sessName := getSessionByTopic(config, threadID)
 				if sessName == "" {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
@@ -1273,6 +1279,11 @@ func listen() error {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
 					continue
 				}
+				// Team sessions don't support /continue via single-session handler
+				if config.IsTeamSession(threadID) {
+					sendMessage(config, chatID, threadID, "❌ /continue is not available in team sessions.")
+					continue
+				}
 				// Use the stored path from config, fallback to resolveProjectPath
 				sessionInfo := config.Sessions[sessName]
 				workDir := getSessionWorkDir(config, sessName, sessionInfo)
@@ -1301,6 +1312,11 @@ func listen() error {
 				sessName := getSessionByTopic(config, threadID)
 				if sessName == "" {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
+					continue
+				}
+				// Team sessions don't support /delete via single-session handler
+				if config.IsTeamSession(threadID) {
+					sendMessage(config, chatID, threadID, "❌ /delete is not available in team sessions. Use `ccc team delete <name>` from CLI instead.")
 					continue
 				}
 
@@ -1344,6 +1360,11 @@ func listen() error {
 				if isGroup && threadID > 0 {
 					sessName := getSessionByTopic(config, threadID)
 					if sessName != "" {
+						// Team sessions don't support /providers via single-session handler
+						if config.IsTeamSession(threadID) {
+							sendMessage(config, chatID, threadID, "❌ /providers is not available in team sessions.")
+							continue
+						}
 						sessionInfo := config.Sessions[sessName]
 
 						// Show current provider and selection keyboard
@@ -1410,6 +1431,11 @@ func listen() error {
 				sessName := getSessionByTopic(config, threadID)
 				if sessName == "" {
 					sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
+					continue
+				}
+				// Team sessions don't support /resume via single-session handler
+				if config.IsTeamSession(threadID) {
+					sendMessage(config, chatID, threadID, "❌ /resume is not available in team sessions.")
 					continue
 				}
 				sessionInfo := config.Sessions[sessName]
@@ -1650,6 +1676,26 @@ func listen() error {
 						providerName = strings.TrimSpace(parts[1])
 					}
 
+					// Check for duplicate team session BEFORE any provider validation or creation
+					teamExists := false
+					var existingTopicID int64
+					for topicID, sessInfo := range config.TeamSessions {
+						if sessInfo != nil {
+							sessName := getSessionNameFromInfo(sessInfo)
+							if sessName == teamName {
+								teamExists = true
+								existingTopicID = topicID
+								break
+							}
+						}
+					}
+
+					// If duplicate exists, warn and skip creation
+					if teamExists {
+						sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, existingTopicID))
+						continue
+					}
+
 					// Validate provider if specified using getProvider()
 					if providerName != "" {
 						provider := getProvider(config, providerName)
@@ -1665,17 +1711,6 @@ func listen() error {
 
 					// Always show keyboard if no explicit provider selected
 					if providerName == "" {
-						// Check if team session already exists
-						for topicID, sessInfo := range config.TeamSessions {
-							if sessInfo != nil {
-								sessName := getSessionNameFromInfo(sessInfo)
-								if sessName == teamName {
-									sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
-									continue
-								}
-							}
-						}
-
 						// Build provider selection keyboard using getProviderNames()
 						var buttons [][]InlineKeyboardButton
 
@@ -1695,18 +1730,6 @@ func listen() error {
 						msg := fmt.Sprintf("🤖 Select provider for team '%s':", teamName)
 						sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
 						continue
-					}
-
-					// Direct creation (provider specified or single provider)
-					// Check for existing team session
-					for topicID, sessInfo := range config.TeamSessions {
-						if sessInfo != nil {
-							sessName := getSessionNameFromInfo(sessInfo)
-							if sessName == teamName {
-								sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
-								continue
-							}
-						}
 					}
 
 					// Use provider from arg or default to active provider
@@ -1753,8 +1776,9 @@ func listen() error {
 					// Create Telegram topic
 					topicID, err := createForumTopic(config, teamName, providerName, "")
 					if err != nil {
-						// Cleanup: kill the tmux window we just created
-						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+						// Cleanup: kill the tmux window we just created (sanitize name)
+						sanitizedName := strings.ReplaceAll(teamName, ".", "__")
+						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 						continue
 					}
@@ -1765,9 +1789,10 @@ func listen() error {
 					// Save to config
 					config.SetTeamSession(topicID, sessInfo)
 					if err := saveConfig(config); err != nil {
-						// Cleanup: delete topic and kill window
+						// Cleanup: delete topic and kill window (sanitize name)
+						sanitizedName := strings.ReplaceAll(teamName, ".", "__")
 						deleteForumTopic(config, topicID)
-						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+						exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 						sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
 						continue
 					}
@@ -2268,11 +2293,23 @@ func listen() error {
 
 				// Check if this is a team session (NEW: multi-pane support)
 				if config.IsTeamSession(threadID) {
-					// Handle team session routing (goes to specific pane)
-					if handled := handleTeamSessionMessage(config, text, threadID, chatID, threadID); handled {
+					// /team variants should reach /team handler (line 1649) for restart/creation.
+					// Builtin commands (except /team) are rejected in team sessions.
+					// Non-builtin messages route to team panes via handleTeamSessionMessage.
+					if strings.HasPrefix(text, "/team") {
+						// /team handler is earlier in listen() — fall through to it.
+						// No continue here — we want to reach the /team handler.
+					} else if isBuiltinCommand(text) {
+						// Builtin commands are rejected in team sessions
+						sendMessage(config, chatID, threadID, "❌ This command is not available in team sessions.")
+						continue
+					} else {
+						// Route non-builtin messages to team pane
+						handleTeamSessionMessage(config, text, threadID, chatID, threadID)
 						continue
 					}
-					// If handleTeamSessionMessage returns false, fall through to standard handling
+					// For /team variants: fall through to /team handler (earlier in code)
+					// For all other team session messages: handled by the branches above (continue)
 				}
 
 				sessName := getSessionByTopic(config, threadID)
@@ -2288,6 +2325,12 @@ func listen() error {
 					if needsSwitch {
 						// Switch to the correct session in the single ccc window
 						sessionInfo := config.Sessions[sessName]
+						if sessionInfo == nil {
+							// sessName is from TeamSessions, not Sessions — shouldn't happen
+							// after the IsTeamSession check above, but guard defensively
+							sendMessage(config, chatID, threadID, "❌ Command not available in team sessions.")
+							continue
+						}
 						workDir := getSessionWorkDir(config, sessName, sessionInfo)
 						if _, err := os.Stat(workDir); os.IsNotExist(err) {
 							os.MkdirAll(workDir, 0755)
@@ -2553,8 +2596,9 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 	// Create Telegram topic
 	topicID, err := createForumTopic(config, teamName, providerName, "")
 	if err != nil {
-		// Cleanup: kill the tmux window we just created
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		// Cleanup: kill the tmux window we just created (sanitize name)
+		sanitizedName := strings.ReplaceAll(teamName, ".", "__")
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 		if cb.Message != nil {
 			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to create topic: %v", err))
@@ -2568,9 +2612,10 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 	// Save to config
 	config.SetTeamSession(topicID, sessInfo)
 	if err := saveConfig(config); err != nil {
-		// Cleanup: delete topic and kill window
+		// Cleanup: delete topic and kill window (sanitize name)
+		sanitizedName := strings.ReplaceAll(teamName, ".", "__")
 		deleteForumTopic(config, topicID)
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+sanitizedName).Run()
 		if cb.Message != nil {
 			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to save config: %v", err))

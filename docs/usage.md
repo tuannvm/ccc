@@ -255,6 +255,61 @@ Creates `myproject_experiment-x` session from the `myproject` base session.
 - **Provider inheritance**: Uses base session's provider and API configuration
 - **Easy switching**: `ccc attach myproject-feature-auth` to resume
 
+## Team Sessions
+
+For complex tasks, use a 3-pane team session with specialized roles:
+
+```
+┌──────────┬──────────┬──────────┐
+│ Planner  │ Executor │ Reviewer │
+│ Creates  │ Executes │ Reviews  │
+│ plans    │ code     │ changes  │
+└──────────┴──────────┴──────────┘
+```
+
+### Auto-Bootstrap Mechanism
+
+When Claude Code starts in a team pane, the `CCC_ROLE` environment variable identifies your role:
+- `CCC_ROLE=planner` - Task decomposition and delegation
+- `CCC_ROLE=executor` - Code implementation and testing
+- `CCC_ROLE=reviewer` - Code review and approval
+
+### Communication
+
+Use @mentions to send messages between panes:
+
+| Mention | Target Pane |
+|---------|-------------|
+| `@planner` | Pane 0 |
+| `@executor` | Pane 1 |
+| `@reviewer` | Pane 2 |
+
+The `ccc-interpane` skill auto-loads when `CCC_ROLE` is set, providing tmux-based messaging commands.
+
+### Setup
+
+1. **Install skills plugin:**
+   ```bash
+   ./plugins/install-skills.sh
+   ```
+   This copies skills to `~/.claude/skills/` where Claude Code can find them.
+
+2. **Create tmux window with 3 panes**
+3. **Name each pane by role:** `tmux select-pane -t :.0 -T "Planner"`
+4. **Start Claude in each pane with** `CCC_ROLE=<role>`
+5. **Skills auto-load based on `CCC_ROLE`**
+
+### Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `ccc-interpane` | Inter-pane messaging via tmux |
+| `ccc-team-session` | Team session management |
+
+Run validation: `~/.claude/skills/ccc-interpane/test.sh`
+
+See [multi-bot-design.md](multi-bot-design.md) for architecture details.
+
 ## Advanced Usage
 
 ### Detached Sessions
