@@ -9,6 +9,7 @@ import (
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 
 	"github.com/tuannvm/ccc/pkg/tmux"
@@ -93,7 +94,7 @@ func handleProvidersCommand(config *Config, chatID, threadID int64, text string,
 			}
 
 			var buttons [][]InlineKeyboardButton
-			providerNames := getProviderNames(config)
+			providerNames := providerpkg.GetProviderNames(config)
 			for _, name := range providerNames {
 				label := name
 				if current == name || (sessionInfo.ProviderName == "" && config.ActiveProvider == name) {
@@ -114,7 +115,7 @@ func handleProvidersCommand(config *Config, chatID, threadID int64, text string,
 	// Not in a topic - show all available providers
 	var msg []string
 	msg = append(msg, "📋 Available providers:")
-	providerNames := getProviderNames(config)
+	providerNames := providerpkg.GetProviderNames(config)
 	for _, name := range providerNames {
 		active := ""
 		if config.ActiveProvider == name || (config.ActiveProvider == "" && name == "anthropic") {
@@ -175,7 +176,7 @@ func parseNameAndProvider(arg string) (name, provider string) {
 		parts := strings.SplitN(arg, " --provider ", 2)
 		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 	}
-	if !isGitURL(arg) {
+	if !configpkg.IsGitURL(arg) {
 		if idx := strings.Index(arg, "@"); idx > 0 {
 			return arg[:idx], strings.TrimSpace(arg[idx+1:])
 		}

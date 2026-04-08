@@ -47,7 +47,7 @@ func SendFile(cfg *config.Config, chatID int64, threadID int64, filePath string,
 		body,
 	)
 	if err != nil {
-		return redactTokenError(err, cfg.BotToken)
+		return RedactTokenError(err, cfg.BotToken)
 	}
 	defer resp.Body.Close()
 
@@ -103,7 +103,7 @@ func DownloadTelegramFile(cfg *config.Config, fileID string, destPath string) er
 func TelegramGet(token string, url string) (*http.Response, error) {
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, redactTokenError(err, token)
+		return nil, RedactTokenError(err, token)
 	}
 	return resp, nil
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/hooks"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
@@ -135,7 +137,7 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	if winName, err := exec.Command(tmux.TmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
 		name := strings.TrimSpace(string(winName))
 		if name != "" {
-			os.Remove(telegramActiveFlag(name))
+			os.Remove(hooks.TelegramActiveFlag(name))
 		}
 	}
 
@@ -192,11 +194,11 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 
 		// Determine which provider to use using the Provider interface
 		// getProvider returns nil only for unknown providers
-		provider := getProvider(config, providerOverride)
+		provider := providerpkg.GetProvider(config, providerOverride)
 
 		// Validate provider - getProvider returns nil for unknown providers
 		if providerOverride != "" && provider == nil {
-			return fmt.Errorf("unknown provider: %s (available providers: %v)", providerOverride, getProviderNames(config))
+			return fmt.Errorf("unknown provider: %s (available providers: %v)", providerOverride, providerpkg.GetProviderNames(config))
 		}
 
 		// Apply provider env in the following cases:
@@ -208,7 +210,7 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		// Ensure provider settings have trusted directories configured
 		// This prevents "Do you trust the files in this folder?" prompts
 		// Works with both BuiltinProvider and ConfiguredProvider
-		if err := ensureProviderSettings(provider); err != nil {
+		if err := providerpkg.EnsureProviderSettings(provider); err != nil {
 			listenLog("Failed to update provider settings: %v", err)
 		}
 

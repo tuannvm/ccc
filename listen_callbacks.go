@@ -9,6 +9,7 @@ import (
 
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
+	"github.com/tuannvm/ccc/pkg/auth"
 )
 
 // handleCallbackQuery processes callback queries from inline keyboard button presses
@@ -18,7 +19,7 @@ func handleCallbackQuery(config *Config, cb *CallbackQuery) {
 	}
 
 	// Authorization check: depends on multi-user mode
-	if !isAuthorizedCallback(config, cb) {
+	if !auth.IsAuthorizedCallback(config, cb) {
 		return
 	}
 

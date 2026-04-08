@@ -1,16 +1,19 @@
-package main
+package service
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
-func installService() error {
+// InstallService installs the ccc background service (launchd on macOS, systemd on Linux)
+func InstallService() error {
 	home, _ := os.UserHomeDir()
 
 	// Detect OS and install appropriate service
@@ -101,4 +104,37 @@ WantedBy=default.target
 
 	fmt.Println("✅ Service installed and started (systemd)")
 	return nil
+}
+
+// StopListenerService stops the background listener service
+func StopListenerService() {
+	home, _ := os.UserHomeDir()
+	if _, err := os.Stat("/Library"); err == nil {
+		// macOS - launchd
+		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.ccc.plist")
+		exec.Command("launchctl", "unload", plistPath).Run()
+	} else {
+		// Linux - systemd
+		exec.Command("systemctl", "--user", "stop", "ccc").Run()
+	}
+	// Also kill any manual listener via lock file PID
+	lockPath := filepath.Join(configpkg.CacheDir(), "ccc.lock")
+	if data, err := os.ReadFile(lockPath); err == nil {
+		pidStr := strings.TrimSpace(string(data))
+		if pidStr != "" {
+			exec.Command("kill", pidStr).Run()
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+}
+
+// StartListenerService starts the background listener service
+func StartListenerService() {
+	home, _ := os.UserHomeDir()
+	if _, err := os.Stat("/Library"); err == nil {
+		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.ccc.plist")
+		exec.Command("launchctl", "load", plistPath).Run()
+	} else {
+		exec.Command("systemctl", "--user", "start", "ccc").Run()
+	}
 }

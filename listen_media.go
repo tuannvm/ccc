@@ -11,6 +11,7 @@ import (
 	"github.com/tuannvm/ccc/pkg/tmux"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/transcribe"
 )
 
 // Media message handlers for voice, photo, and document messages.
@@ -32,7 +33,7 @@ func handleVoiceMessage(config *Config, msg TelegramMessage, chatID, threadID in
 	if err := telegram.DownloadTelegramFile(config, msg.Voice.FileID, audioPath); err != nil {
 		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Download failed: %v", err))
 	} else {
-		transcription, err := transcribeAudio(config, audioPath)
+		transcription, err := transcribe.TranscribeAudio(config, audioPath)
 		os.Remove(audioPath)
 		if err != nil {
 			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Transcription failed: %v", err))

@@ -12,18 +12,18 @@ import (
 	"github.com/tuannvm/ccc/pkg/config"
 )
 
-const maxResponseSize = 10 * 1024 * 1024 // 10MB
+const MaxResponseSize = 10 * 1024 * 1024 // 10MB
 
 // TelegramAPI performs a Telegram API call
 func TelegramAPI(cfg *config.Config, method string, params url.Values) (*TelegramResponse, error) {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", cfg.BotToken, method)
 	resp, err := http.PostForm(apiURL, params)
 	if err != nil {
-		return nil, redactTokenError(err, cfg.BotToken)
+		return nil, RedactTokenError(err, cfg.BotToken)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
 	var result TelegramResponse
 	json.Unmarshal(body, &result)
 	return &result, nil
@@ -238,10 +238,19 @@ func splitMessage(text string, maxLen int) []string {
 	return messages
 }
 
-// redactTokenError replaces the bot token in error messages with "***"
-func redactTokenError(err error, token string) error {
+// RedactTokenError replaces the bot token in error messages with "***"
+func RedactTokenError(err error, token string) error {
 	if err == nil || token == "" {
 		return err
 	}
 	return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), token, "***"))
+}
+
+// TelegramClientGet performs an HTTP GET with a custom client and redacts the bot token from any errors
+func TelegramClientGet(client *http.Client, token string, reqURL string) (*http.Response, error) {
+	resp, err := client.Get(reqURL)
+	if err != nil {
+		return nil, RedactTokenError(err, token)
+	}
+	return resp, nil
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 // TestGetSessionByTopic tests the getSessionByTopic function
@@ -92,31 +93,31 @@ func TestBaselineProviderResolution(t *testing.T) {
 	}
 
 	// Test getActiveProvider - it returns *ProviderConfig, not Provider interface
-	active := getActiveProvider(config)
+	active := providerpkg.GetActiveProvider(config)
 	if active == nil {
 		t.Error("getActiveProvider returned nil")
 	} else if active.BaseURL != "https://custom.ai" {
-		t.Errorf("getActiveProvider().BaseURL: got %q, want 'https://custom.ai'", active.BaseURL)
+		t.Errorf("providerpkg.GetActiveProvider().BaseURL: got %q, want 'https://custom.ai'", active.BaseURL)
 	}
 
 	// Test getProvider with specific name
-	provider := getProvider(config, "anthropic")
+	provider := providerpkg.GetProvider(config, "anthropic")
 	if provider == nil {
-		t.Error("getProvider('anthropic') returned nil")
+		t.Error("providerpkg.GetProvider('anthropic') returned nil")
 	} else if provider.Name() != "anthropic" {
-		t.Errorf("getProvider('anthropic').Name(): got %q, want 'anthropic'", provider.Name())
+		t.Errorf("providerpkg.GetProvider('anthropic').Name(): got %q, want 'anthropic'", provider.Name())
 	}
 
 	// Test getProvider with empty string (should return active)
-	provider = getProvider(config, "")
+	provider = providerpkg.GetProvider(config, "")
 	if provider == nil {
-		t.Error("getProvider('') returned nil")
+		t.Error("providerpkg.GetProvider('') returned nil")
 	} else if provider.Name() != "custom-provider" {
-		t.Errorf("getProvider('').Name(): got %q, want 'custom-provider'", provider.Name())
+		t.Errorf("providerpkg.GetProvider('').Name(): got %q, want 'custom-provider'", provider.Name())
 	}
 
 	// Test getProviderNames
-	names := getProviderNames(config)
+	names := providerpkg.GetProviderNames(config)
 	if len(names) != 2 {
 		t.Errorf("getProviderNames length: got %d, want 2", len(names))
 	}
@@ -243,15 +244,15 @@ func TestBaselinePathUtilities(t *testing.T) {
 	}
 
 	// Test expandPath
-	path = expandPath("~/test/path")
+	path = configpkg.ExpandPath("~/test/path")
 	expected = filepath.Join(tmpDir, "test/path")
 	if path != expected {
-		t.Errorf("expandPath(~/test/path): got %q, want %q", path, expected)
+		t.Errorf("configpkg.ExpandPath(~/test/path): got %q, want %q", path, expected)
 	}
 
 	// Test expandPath with non-tilde path
-	path = expandPath("/absolute/path")
+	path = configpkg.ExpandPath("/absolute/path")
 	if path != "/absolute/path" {
-		t.Errorf("expandPath(absolute): got %q, want '/absolute/path'", path)
+		t.Errorf("configpkg.ExpandPath(absolute): got %q, want '/absolute/path'", path)
 	}
 }

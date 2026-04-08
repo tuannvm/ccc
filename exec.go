@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
@@ -86,7 +87,7 @@ func runClaude(prompt string) (string, error) {
 	// Load config and apply provider settings
 	config, err := config.Load()
 	if err == nil {
-		provider := getProvider(config, "")
+		provider := providerpkg.GetProvider(config, "")
 		cmd.Env = applyProviderEnv(cmd.Env, provider, config)
 	}
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 
 	"github.com/tuannvm/ccc/pkg/tmux"
@@ -145,7 +146,7 @@ func startLocalSession(config *Config, sessionName, workDir, message string) err
 // startTelegramSession starts a session with Telegram integration.
 func startTelegramSession(config *Config, sessionName, workDir, message string) error {
 	// Get provider
-	provider := getActiveProvider(config)
+	provider := providerpkg.GetActiveProvider(config)
 	providerName := ""
 	if provider != nil && config.ActiveProvider != "" {
 		providerName = config.ActiveProvider

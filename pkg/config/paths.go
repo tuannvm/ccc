@@ -77,7 +77,7 @@ func ResolveProjectPath(config *Config, name string) string {
 }
 
 // expandPath expands ~ to home directory
-func expandPath(path string) string {
+func ExpandPath(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, path[2:])
@@ -86,7 +86,7 @@ func expandPath(path string) string {
 }
 
 // isGitURL detects if the input string is a git repository URL
-func isGitURL(s string) bool {
+func IsGitURL(s string) bool {
 	// HTTPS and HTTP URLs
 	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
 		return true
@@ -117,7 +117,7 @@ func isGitURL(s string) bool {
 // Handles: https://user:pass@host/repo, https://token@host/repo, ssh://user:pass@host/repo
 // Returns a safe URL with credentials removed
 // Only redacts if @ is in the authority (before first /), not in the path
-func redactGitURL(url string) string {
+func RedactGitURL(url string) string {
 	// HTTPS/HTTP URLs with credentials
 	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
 		rest := url
@@ -162,7 +162,7 @@ func redactGitURL(url string) string {
 
 // redactGitURLsInText finds and redacts credentials in any git URLs within text
 // Returns text with credentials removed from HTTP/HTTPS/SSH URLs
-func redactGitURLsInText(text string) string {
+func RedactGitURLsInText(text string) string {
 	var result strings.Builder
 	remaining := text
 
@@ -229,7 +229,7 @@ func redactGitURLsInText(text string) string {
 
 		if mightHaveCreds {
 			// Try to redact - redactGitURL will validate and only redact if appropriate
-			redactedURL := redactGitURL(url)
+			redactedURL := RedactGitURL(url)
 			result.WriteString(redactedURL)
 		} else {
 			// No @ in authority part, keep original URL
@@ -257,7 +257,7 @@ func redactGitURLsInText(text string) string {
 // - git@github.com:user/repo -> user-repo
 // - alice@git.example.com:team/repo.git -> team-repo (generic SCP URLs)
 // Returns empty string for malformed URLs or unsafe paths (., .., contains slashes)
-func extractRepoName(url string) string {
+func ExtractRepoName(url string) string {
 	// Remove .git suffix if present
 	url = strings.TrimSuffix(url, ".git")
 
@@ -381,7 +381,7 @@ const (
 // Returns (CloneResult, nil) on success, with CloneResult indicating if it was newly cloned or already existed
 // Returns an error if cloning fails or if directory exists with unexpected content
 // Uses context for timeout control to prevent blocking indefinitely
-func cloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error) {
+func CloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error) {
 	// Check if directory already exists
 	if _, err := os.Stat(targetPath); err == nil {
 		// Directory exists, check if it's a git repo

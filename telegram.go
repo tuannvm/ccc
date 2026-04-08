@@ -7,39 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
-
-const maxResponseSize = 10 * 1024 * 1024 // 10MB
-
-// redactTokenError replaces the bot token in error messages with "***"
-func redactTokenError(err error, token string) error {
-	if err == nil || token == "" {
-		return err
-	}
-	return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), token, "***"))
-}
-
-// telegramGet performs an HTTP GET and redacts the bot token from any errors
-func telegramGet(token string, url string) (*http.Response, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, redactTokenError(err, token)
-	}
-	return resp, nil
-}
-
-// telegramClientGet performs an HTTP GET with a custom client and redacts the bot token from any errors
-func telegramClientGet(client *http.Client, token string, url string) (*http.Response, error) {
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, redactTokenError(err, token)
-	}
-	return resp, nil
-}
 
 // updateCCC downloads the latest ccc binary from GitHub releases and restarts
 func updateCCC(config *Config, chatID, threadID int64, offset int) {

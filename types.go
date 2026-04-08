@@ -3,7 +3,9 @@ package main
 import (
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
+	"github.com/tuannvm/ccc/pkg/auth"
 	"github.com/tuannvm/ccc/pkg/ledger"
+	"github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/session"
 )
@@ -64,10 +66,35 @@ type HookData = hooks.HookData
 // HookToolInput holds parsed tool input for known tool types
 type HookToolInput = hooks.HookToolInput
 
+// ToolState is an alias for hooks.ToolState
+type ToolState = hooks.ToolState
+
+// ToolCall is an alias for hooks.ToolCall
+type ToolCall = hooks.ToolCall
+
 // ========== Ledger Type Aliases ==========
 
 // MessageRecord tracks the delivery state of a single message
 type MessageRecord = ledger.MessageRecord
+
+// ========== Provider Type Aliases ==========
+
+// Provider is an alias for provider.Provider
+type Provider = provider.Provider
+
+// ModelConfig is an alias for provider.ModelConfig
+type ModelConfig = provider.ModelConfig
+
+// BuiltinProvider is an alias for provider.BuiltinProvider
+type BuiltinProvider = provider.BuiltinProvider
+
+// ConfiguredProvider is an alias for provider.ConfiguredProvider
+type ConfiguredProvider = provider.ConfiguredProvider
+
+// ========== Auth Type Aliases ==========
+
+// OTPPermissionResponse is an alias for auth.OTPPermissionResponse
+type OTPPermissionResponse = auth.OTPPermissionResponse
 
 // ========== OTP Type Aliases ==========
 

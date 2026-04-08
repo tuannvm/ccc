@@ -31,7 +31,6 @@ type HandlerCallbacks struct {
 	ClearToolState     func(sessionName string)
 	AddTextToToolState func(sessName string, text string, ts int64)
 	FormatToolMessage  func(state *ToolState) string
-	CollapseToolMessage func(cfg *config.Config, sessName string, topicID int64)
 
 	// Thinking indicators
 	SetThinking    func(sessionName string)
@@ -409,7 +408,6 @@ func HandleUserPromptHook(callbacks *HandlerCallbacks) error {
 	callbacks.PersistClaudeSessionID(cfg, sessName, hookData.SessionID, hookData.TranscriptPath)
 
 	// Collapse tool message from previous turn
-	callbacks.CollapseToolMessage(cfg, sessName, topicID)
 	callbacks.ClearToolState(sessName)
 
 	// Skip if this prompt came from Telegram (already visible in the chat).

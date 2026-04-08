@@ -17,6 +17,9 @@ import (
 	"github.com/tuannvm/ccc/pkg/telegram"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/diagnostics"
+	"github.com/tuannvm/ccc/pkg/auth"
+	"github.com/tuannvm/ccc/pkg/hooks"
 )
 
 // Main listen loop — polls Telegram for updates and dispatches commands.
@@ -94,10 +97,10 @@ func listen() error {
 				if info == nil || info.TopicID == 0 || cfg.GroupID == 0 {
 					continue
 				}
-				if flagInfo, err := os.Stat(thinkingFlag(sessName)); err == nil {
+				if flagInfo, err := os.Stat(hooks.ThinkingFlag(sessName)); err == nil {
 					// Auto-expire after 10 minutes to handle missed stop hooks
 					if time.Since(flagInfo.ModTime()) > 10*time.Minute {
-						clearThinking(sessName)
+						hooks.ClearThinking(sessName)
 						continue
 					}
 					telegram.SendTypingAction(cfg, cfg.GroupID, info.TopicID)
@@ -108,14 +111,14 @@ func listen() error {
 
 	for {
 		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=30", config.BotToken, offset)
-		resp, err := telegramClientGet(client, config.BotToken, reqURL)
+		resp, err := telegram.TelegramClientGet(client, config.BotToken, reqURL)
 		if err != nil {
 			listenLog("Network error: %v (retrying...)", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, telegram.MaxResponseSize))
 		resp.Body.Close()
 
 		var updates TelegramUpdate
@@ -143,7 +146,7 @@ func listen() error {
 			msg := update.Message
 
 			// Authorization check: depends on multi-user mode
-			if !isAuthorizedMessage(config, msg) {
+			if !auth.IsAuthorizedMessage(config, msg) {
 				continue
 			}
 
@@ -185,7 +188,7 @@ func listen() error {
 				text = strings.TrimSpace(text)
 			}
 
-			listenLog("[%s] @%s: %s", msg.Chat.Type, msg.From.Username, redactGitURLsInText(text))
+			listenLog("[%s] @%s: %s", msg.Chat.Type, msg.From.Username, configpkg.RedactGitURLsInText(text))
 
 			// Handle OTP code responses (for permission approval)
 			if handleOTPResponse(config, text, chatID, threadID) {
@@ -224,7 +227,7 @@ func listen() error {
 			}
 
 			if text == "/stats" {
-				stats := getSystemStats()
+				stats := diagnostics.GetSystemStats()
 				telegram.SendMessage(config, chatID, threadID, stats)
 				continue
 			}

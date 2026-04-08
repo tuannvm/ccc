@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 
@@ -71,11 +72,11 @@ func handleProviderChange(config *Config, cb *CallbackQuery, sessionName, provid
 		return
 	}
 
-	provider := getProvider(config, providerName)
+	provider := providerpkg.GetProvider(config, providerName)
 	if provider == nil {
 		if cb.Message != nil {
 			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Provider '%s' not found. Available: %v", providerName, getProviderNames(config)))
+				fmt.Sprintf("❌ Provider '%s' not found. Available: %v", providerName, providerpkg.GetProviderNames(config)))
 		}
 		return
 	}

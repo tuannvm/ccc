@@ -6,18 +6,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // sendToTmuxFromTelegram sets the Telegram active flag before sending,
 // so the permission hook knows this input came from Telegram and requires OTP.
 func sendToTmuxFromTelegram(target string, windowName string, text string) error {
-	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
+	os.WriteFile(hooks.TelegramActiveFlag(windowName), []byte("1"), 0600)
 	return sendToTmux(target, text)
 }
 
 func sendToTmuxFromTelegramWithDelay(target string, windowName string, text string, delay time.Duration) error {
-	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
+	os.WriteFile(hooks.TelegramActiveFlag(windowName), []byte("1"), 0600)
 	return sendToTmuxWithDelay(target, text, delay)
 }
 

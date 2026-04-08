@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/auth"
+	"github.com/tuannvm/ccc/pkg/service"
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // Setup and group configuration commands.
@@ -31,7 +30,7 @@ func setup(botToken string) error {
 
 	// Stop listener to avoid getUpdates conflict (409 Conflict)
 	fmt.Println("Stopping listener...")
-	stopListenerService()
+	service.StopListenerService()
 
 	// Step 1: Permission mode
 	fmt.Println("Step 1/6: Permission mode")
@@ -67,12 +66,12 @@ func setup(botToken string) error {
 
 	offset := 0
 	for {
-		resp, err := telegramGet(botToken, fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=30", botToken, offset))
+		resp, err := telegram.TelegramGet(botToken, fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=30", botToken, offset))
 		if err != nil {
 			return fmt.Errorf("failed to get updates: %w", err)
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, telegram.MaxResponseSize))
 		resp.Body.Close()
 
 		var updates TelegramUpdate
@@ -114,12 +113,12 @@ step2:
 
 	for time.Now().Before(deadline) {
 		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=5", config.BotToken, offset)
-		resp, err := telegramClientGet(client, config.BotToken, reqURL)
+		resp, err := telegram.TelegramClientGet(client, config.BotToken, reqURL)
 		if err != nil {
 			continue
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, telegram.MaxResponseSize))
 		resp.Body.Close()
 
 		var updates TelegramUpdate
@@ -141,11 +140,6 @@ step2:
 
 step3:
 	// Step 3: Install Claude hook and skill
-	fmt.Println("Step 4/6: Installing Claude hook and skill...")
-	if err := installHook(); err != nil {
-		fmt.Printf("⚠️  Hook installation failed: %v\n", err)
-		fmt.Println("   You can install it later with: ccc install")
-	}
 	if err := installSkill(); err != nil {
 		fmt.Printf("⚠️  Skill installation failed: %v\n", err)
 	} else {
@@ -154,7 +148,7 @@ step3:
 
 	// Step 4: Install service
 	fmt.Println("Step 5/6: Installing background service...")
-	if err := installService(); err != nil {
+	if err := service.InstallService(); err != nil {
 		fmt.Printf("⚠️  Service installation failed: %v\n", err)
 		fmt.Println("   You can start manually with: ccc listen")
 	} else {
@@ -164,7 +158,7 @@ step3:
 	// Step 6: Apply permission mode
 	fmt.Println("Step 6/6: Configuring permission mode...")
 	if permMode == "otp" {
-		msg, err := setupOTP(config)
+		msg, err := auth.SetupOTP(config)
 		if err != nil {
 			fmt.Printf("⚠️  OTP setup failed: %v\n", err)
 		} else {
@@ -204,7 +198,7 @@ step3:
 	// Restart listener service
 	fmt.Println()
 	fmt.Println("Restarting listener...")
-	startListenerService()
+	service.StartListenerService()
 
 	return nil
 }
@@ -218,12 +212,12 @@ func setGroup(config *Config) error {
 
 	for {
 		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=30", config.BotToken, offset)
-		resp, err := telegramClientGet(client, config.BotToken, reqURL)
+		resp, err := telegram.TelegramClientGet(client, config.BotToken, reqURL)
 		if err != nil {
 			return err
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, telegram.MaxResponseSize))
 		resp.Body.Close()
 
 		var updates TelegramUpdate
@@ -244,36 +238,5 @@ func setGroup(config *Config) error {
 				return nil
 			}
 		}
-	}
-}
-
-func stopListenerService() {
-	home, _ := os.UserHomeDir()
-	if _, err := os.Stat("/Library"); err == nil {
-		// macOS - launchd
-		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.ccc.plist")
-		exec.Command("launchctl", "unload", plistPath).Run()
-	} else {
-		// Linux - systemd
-		exec.Command("systemctl", "--user", "stop", "ccc").Run()
-	}
-	// Also kill any manual listener via lock file PID
-	lockPath := filepath.Join(configpkg.CacheDir(), "ccc.lock")
-	if data, err := os.ReadFile(lockPath); err == nil {
-		pidStr := strings.TrimSpace(string(data))
-		if pidStr != "" {
-			exec.Command("kill", pidStr).Run()
-		}
-	}
-	time.Sleep(500 * time.Millisecond)
-}
-
-func startListenerService() {
-	home, _ := os.UserHomeDir()
-	if _, err := os.Stat("/Library"); err == nil {
-		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.ccc.plist")
-		exec.Command("launchctl", "load", plistPath).Run()
-	} else {
-		exec.Command("systemctl", "--user", "start", "ccc").Run()
 	}
 }

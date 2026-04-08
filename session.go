@@ -9,6 +9,7 @@ import (
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
@@ -30,19 +31,6 @@ type sessionMatch struct {
 }
 
 // tmuxSafeName is in tmux_session.go (wrapper for tmux.SafeName)
-
-// getWindowID safely looks up the tmux WindowID from config for a session name.
-// Returns empty string if the session or WindowID is not set.
-func getWindowID(config *Config, sessionName string) string {
-	if config == nil || config.Sessions == nil {
-		return ""
-	}
-	info, exists := config.Sessions[sessionName]
-	if !exists || info == nil {
-		return ""
-	}
-	return info.WindowID
-}
 
 // getSessionWorkDir returns the correct working directory for a session.
 // For worktree sessions, this returns the base repository path (not the .claude/worktrees path).
@@ -321,7 +309,7 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Get the provider to use for this session
-	provider := getActiveProvider(config)
+	provider := providerpkg.GetActiveProvider(config)
 	providerName := ""
 	if provider != nil && config.ActiveProvider != "" {
 		providerName = config.ActiveProvider

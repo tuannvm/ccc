@@ -1,4 +1,4 @@
-package main
+package diagnostics
 
 import (
 	"encoding/json"
@@ -6,17 +6,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/auth"
 	"github.com/tuannvm/ccc/pkg/tmux"
+	"github.com/tuannvm/ccc/pkg/transcribe"
 )
 
-// Diagnostics: system stats and doctor command.
-
-// getSystemStats returns machine stats (works on Linux and macOS)
-func getSystemStats() string {
+// GetSystemStats returns machine stats (works on Linux and macOS)
+func GetSystemStats() string {
 	var sb strings.Builder
 	hostname, _ := os.Hostname()
 	sb.WriteString(fmt.Sprintf("🖥 %s\n\n", hostname))
@@ -26,80 +25,107 @@ func getSystemStats() string {
 		sb.WriteString(fmt.Sprintf("⏱ %s\n", strings.TrimSpace(string(out))))
 	}
 
-	// CPU info
-	if out, err := exec.Command("uname", "-m").Output(); err == nil {
-		arch := strings.TrimSpace(string(out))
-		// Count cores: nproc on Linux, sysctl on macOS
-		var cores string
-		if c, err := exec.Command("nproc").Output(); err == nil {
-			cores = strings.TrimSpace(string(c))
-		} else if c, err := exec.Command("sysctl", "-n", "hw.ncpu").Output(); err == nil {
-			cores = strings.TrimSpace(string(c))
+	// CPU
+	if out, err := exec.Command("nproc").Output(); err == nil {
+		sb.WriteString(fmt.Sprintf("🧠 CPUs: %s", strings.TrimSpace(string(out))))
+	} else if out, err := exec.Command("sysctl", "-n", "hw.ncpu").Output(); err == nil {
+		sb.WriteString(fmt.Sprintf("🧠 CPUs: %s", strings.TrimSpace(string(out))))
+	}
+	if load, err := exec.Command("bash", "-c", "cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null").Output(); err == nil {
+		loadStr := strings.TrimSpace(string(load))
+		if loadStr != "" {
+			sb.WriteString(fmt.Sprintf(" (load: %s)", loadStr))
 		}
-		sb.WriteString(fmt.Sprintf("🧠 CPU: %s cores (%s)\n", cores, arch))
+	}
+	sb.WriteString("\n")
+
+	// Memory
+	if out, err := exec.Command("bash", "-c", "free -h --si 2>/dev/null | awk '/^Mem:/{print $3\"/\"$2}' || vm_stat | head -5").Output(); err == nil {
+		sb.WriteString(fmt.Sprintf("💾 RAM: %s\n", strings.TrimSpace(string(out))))
 	}
 
-	// Memory: Linux uses free, macOS uses vm_stat + sysctl
-	if out, err := exec.Command("free", "-h").Output(); err == nil {
-		// Linux
+	// Disk
+	home, _ := os.UserHomeDir()
+	if out, err := exec.Command("df", "-h", home).Output(); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) >= 2 {
+			fields := strings.Fields(lines[1])
+			if len(fields) >= 5 {
+				sb.WriteString(fmt.Sprintf("💿 Disk: %s used of %s (%s available)\n", fields[2], fields[1], fields[3]))
+			}
+		}
+	}
+
+	// Top processes
+	if out, err := exec.Command("bash", "-c", "ps aux --sort=-%mem 2>/dev/null | head -6 || ps aux -m | head -6").Output(); err == nil {
+		sb.WriteString("\n📊 Top processes:\n")
 		lines := strings.Split(string(out), "\n")
-		for _, l := range lines {
-			if strings.HasPrefix(l, "Mem:") {
-				fields := strings.Fields(l)
-				if len(fields) >= 4 {
-					sb.WriteString(fmt.Sprintf("💾 RAM: %s used / %s total (available: %s)\n", fields[2], fields[1], fields[6]))
-				}
+		for i, line := range lines {
+			if i > 5 {
 				break
 			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if i > 0 {
+				fields := strings.Fields(line)
+				if len(fields) >= 11 {
+					sb.WriteString(fmt.Sprintf("  %-8s %5s%% %5s%% %s\n", fields[0], fields[2], fields[3], fields[10]))
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("  %s\n", line))
+			}
 		}
+	}
+
+	// Active tmux sessions
+	if tmux.TmuxPath != "" {
+		if out, err := exec.Command(tmux.TmuxPath, "list-sessions", "-F", "#{session_name} #{session_windows}w").Output(); err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			sb.WriteString(fmt.Sprintf("\n🐚 tmux sessions (%d):\n", len(lines)))
+			for _, line := range lines {
+				if line != "" {
+					sb.WriteString(fmt.Sprintf("  • %s\n", line))
+				}
+			}
+		}
+	}
+
+	// Active CCC sessions
+	config, err := configpkg.Load()
+	if err == nil && config != nil && len(config.Sessions) > 0 {
+		sb.WriteString(fmt.Sprintf("\n📂 CCC sessions (%d):\n", len(config.Sessions)))
+		for name, info := range config.Sessions {
+			if info == nil {
+				continue
+			}
+			status := "stopped"
+			if info.Panes != nil {
+				for _, pane := range info.Panes {
+					if pane != nil && pane.ClaudeSessionID != "" {
+						status = "active"
+						break
+					}
+				}
+			}
+			sb.WriteString(fmt.Sprintf("  • %s (%s)\n", name, status))
+		}
+	}
+
+	// Load averages
+	sb.WriteString("\n📈 Load averages: ")
+	if out, err := exec.Command("bash", "-c", "cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}' || sysctl -n vm.loadavg 2>/dev/null | awk '{print $2, $3, $4}'").Output(); err == nil {
+		sb.WriteString(string(out))
 	} else {
-		// macOS fallback
-		total, _ := exec.Command("sysctl", "-n", "hw.memsize").Output()
-		if len(total) > 0 {
-			totalBytes := strings.TrimSpace(string(total))
-			// Parse and convert to GB
-			if tb, err := strconv.ParseUint(totalBytes, 10, 64); err == nil {
-				totalGB := float64(tb) / (1024 * 1024 * 1024)
-				sb.WriteString(fmt.Sprintf("💾 RAM: %.1f GB total\n", totalGB))
-			}
-		}
-	}
-
-	// Disk usage
-	if out, err := exec.Command("df", "-h", "/").Output(); err == nil {
-		lines := strings.Split(string(out), "\n")
-		if len(lines) >= 2 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 5 {
-				sb.WriteString(fmt.Sprintf("💿 Disk /: %s used / %s (%s)\n", fields[2], fields[1], fields[4]))
-			}
-		}
-	}
-	if out, err := exec.Command("df", "-h", "/home").Output(); err == nil {
-		lines := strings.Split(string(out), "\n")
-		if len(lines) >= 2 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 5 {
-				// Only show if different from /
-				sb.WriteString(fmt.Sprintf("💿 Disk /home: %s used / %s (%s)\n", fields[2], fields[1], fields[4]))
-			}
-		}
-	}
-
-	// Tmux sessions
-	if out, err := exec.Command("tmux", "list-sessions").Output(); err == nil {
-		sessions := strings.TrimSpace(string(out))
-		if sessions != "" {
-			count := len(strings.Split(sessions, "\n"))
-			sb.WriteString(fmt.Sprintf("\n📟 Tmux sessions: %d\n", count))
-			sb.WriteString(sessions)
-		}
+		sb.WriteString("(unavailable)\n")
 	}
 
 	return sb.String()
 }
 
-func doctor() {
+// Doctor checks all dependencies and configuration
+func Doctor() {
 	fmt.Println("🩺 ccc doctor")
 	fmt.Println("=============")
 	fmt.Println()
@@ -254,7 +280,7 @@ func doctor() {
 	}
 
 	// Check transcription support
-	doctorCheckWhisper()
+	transcribe.DoctorCheckWhisper()
 
 	// Check OAuth token
 	fmt.Print("oauth token....... ")
@@ -268,7 +294,7 @@ func doctor() {
 
 	// Check OTP (permission approval)
 	fmt.Print("OTP (permissions). ")
-	if config != nil && isOTPEnabled(config) {
+	if config != nil && auth.IsOTPEnabled(config) {
 		fmt.Println("✅ enabled")
 	} else {
 		fmt.Println("⚠️  disabled (run: ccc setup <token> to enable)")

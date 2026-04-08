@@ -20,7 +20,7 @@ import (
 const (
 	maxTelegramFileSize = 50 * 1024 * 1024 // 50MB
 	defaultRelayURL     = "https://ccc-relay.fly.dev"
-	maxResponseSize     = 10 * 1024 * 1024 // 10MB
+	MaxResponseSize     = 10 * 1024 * 1024 // 10MB
 )
 
 // relayTransfer tracks an active file transfer through the relay
@@ -150,7 +150,7 @@ func StreamFileToRelay(relayURL, token, filePath, fileName string, fileSize int6
 			if err != nil {
 				continue
 			}
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
 			resp.Body.Close()
 
 			status := string(body)

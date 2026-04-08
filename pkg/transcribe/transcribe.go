@@ -1,6 +1,6 @@
 //go:build voice
 
-package main
+package transcribe
 
 import (
 	"context"
@@ -13,20 +13,20 @@ import (
 
 	"github.com/mutablelogic/go-whisper/pkg/schema"
 	whisper "github.com/mutablelogic/go-whisper/pkg/whisper"
-	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/config"
 )
 
-const voiceSupported = true
+const VoiceSupported = true
 
 const whisperModelName = "ggml-small.bin"
 const whisperModelURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
 
 func getModelsDir() string {
-	return filepath.Join(configpkg.CacheDir(), "models")
+	return filepath.Join(config.CacheDir(), "models")
 }
 
-// ensureModel downloads the whisper model if not present
-func ensureModel() (string, error) {
+// EnsureModel downloads the whisper model if not present
+func EnsureModel() (string, error) {
 	modelsDir := getModelsDir()
 	modelPath := filepath.Join(modelsDir, whisperModelName)
 	if _, err := os.Stat(modelPath); err == nil {
@@ -70,12 +70,12 @@ func ensureModel() (string, error) {
 	return modelPath, nil
 }
 
-// transcribeAudio transcribes audio using native go-whisper
-func transcribeAudio(config *Config, audioPath string) (string, error) {
+// TranscribeAudio transcribes audio using native go-whisper
+func TranscribeAudio(cfg *config.Config, audioPath string) (string, error) {
 	modelsDir := getModelsDir()
 
 	// Ensure model exists
-	if _, err := ensureModel(); err != nil {
+	if _, err := EnsureModel(); err != nil {
 		return "", fmt.Errorf("model setup failed: %w", err)
 	}
 
@@ -92,8 +92,8 @@ func transcribeAudio(config *Config, audioPath string) (string, error) {
 
 	var result strings.Builder
 	err = manager.WithModel(model, func(task *whisper.Task) error {
-		if config.TranscriptionLang != "" {
-			if err := task.SetLanguage(config.TranscriptionLang); err != nil {
+		if cfg.TranscriptionLang != "" {
+			if err := task.SetLanguage(cfg.TranscriptionLang); err != nil {
 				return fmt.Errorf("failed to set language: %w", err)
 			}
 		}
@@ -113,7 +113,8 @@ func transcribeAudio(config *Config, audioPath string) (string, error) {
 	return strings.TrimSpace(result.String()), nil
 }
 
-func doctorCheckWhisper() {
+// DoctorCheckWhisper checks whisper model status for diagnostics
+func DoctorCheckWhisper() {
 	fmt.Print("whisper model..... ")
 	modelPath := filepath.Join(getModelsDir(), whisperModelName)
 	if _, err := os.Stat(modelPath); err == nil {

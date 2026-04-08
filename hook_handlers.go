@@ -6,6 +6,7 @@ import (
 	"github.com/tuannvm/ccc/pkg/ledger"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
+	"github.com/tuannvm/ccc/pkg/auth"
 )
 
 // newHandlerCallbacks builds the standard callback struct for hook handlers.
@@ -16,15 +17,14 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 		FindSession:             findSession,
 		PersistClaudeSessionID:  persistClaudeSessionID,
 		GetSessionWorkDir:       getSessionWorkDir,
-		LoadToolState:           loadToolState,
-		SaveToolState:           saveToolState,
-		ClearToolState:          clearToolState,
-		AddTextToToolState:      addTextToToolState,
-		FormatToolMessage:       formatToolMessage,
-		CollapseToolMessage:     collapseToolMessage,
-		SetThinking:             setThinking,
-		ClearThinking:           clearThinking,
-		TelegramActiveFlag:      telegramActiveFlag,
+		LoadToolState:           hooks.LoadToolState,
+		SaveToolState:           hooks.SaveToolState,
+		ClearToolState:          hooks.ClearToolState,
+		AddTextToToolState:      hooks.AddTextToToolState,
+		FormatToolMessage:       hooks.FormatToolMessage,
+		SetThinking:             hooks.SetThinking,
+		ClearThinking:           hooks.ClearThinking,
+		TelegramActiveFlag:      hooks.TelegramActiveFlag,
 		SendMessage:             telegram.SendMessage,
 		SendMessageHTML:         telegram.SendMessageHTMLGetID,
 		SendMessageGetID:        telegram.SendMessageGetID,
@@ -35,18 +35,18 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 		UpdateDelivery: func(sessName, msgID, field string, value bool) {
 			ledger.UpdateDelivery(sessName, msgID, field, value)
 		},
-		IsOTPEnabled:       isOTPEnabled,
-		HasValidOTPGrant:   hasValidOTPGrant,
-		WriteOTPRequest:    func(sessionID string, req *hooks.OTPPermissionRequest) { writeOTPRequest(sessionID, req) },
-		WriteOTPGrant:      writeOTPGrant,
-		WaitForOTPResponse: waitForOTPResponse,
+		IsOTPEnabled:       auth.IsOTPEnabled,
+		HasValidOTPGrant:   auth.HasValidOTPGrant,
+		WriteOTPRequest:    func(sessionID string, req *hooks.OTPPermissionRequest) { auth.WriteOTPRequest(sessionID, req) },
+		WriteOTPGrant:      auth.WriteOTPGrant,
+		WaitForOTPResponse: auth.WaitForOTPResponse,
 		TmuxSafeName:       tmux.SafeName,
-		WritePromptAck:     writePromptAck,
+		WritePromptAck:     hooks.WritePromptAck,
 		InferRoleFromTranscriptPath: func(transcriptPath string) string {
 			return string(inferRoleFromTranscriptPath(transcriptPath))
 		},
-		ToolInputSummary: toolInputSummary,
-		ReadHookStdin:    readHookStdin,
+		ToolInputSummary: hooks.ToolInputSummary,
+		ReadHookStdin:    hooks.ReadHookStdin,
 		CCCPath:          tmux.CCCPath,
 	}
 }
@@ -69,6 +69,54 @@ func handlePostToolHook() error {
 
 func handleNotificationHook() error {
 	return hooks.HandleNotificationHook(newHandlerCallbacks())
+}
+
+// deliverUnsentTexts scans transcript tail and sends any assistant text
+// blocks not yet delivered to Telegram (using ledger dedup).
+func deliverUnsentTexts(cfg *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, claudeSessionID string) int {
+	return hooks.DeliverUnsentTexts(&hooks.DeliverUnsentTextsConfig{
+		Config:            cfg,
+		SessionName:       sessName,
+		TopicID:           topicID,
+		TranscriptPath:    transcriptPath,
+		InsertIntoToolMsg: insertIntoToolMsg,
+		ClaudeSessionID:   claudeSessionID,
+		LoadToolState:      hooks.LoadToolState,
+		AddTextToToolState: hooks.AddTextToToolState,
+		SaveToolState:      hooks.SaveToolState,
+		FormatToolMessage:  hooks.FormatToolMessage,
+		EditMessageHTML:    telegram.EditMessageHTML,
+		SendMessageHTML:    sendAssistantMessage,
+		SendMessageGetID:   telegram.SendMessageGetID,
+		SendMessage:        telegram.SendMessage,
+		IsDelivered:        ledger.IsDelivered,
+		AppendMessage: func(msg *ledger.MessageRecord) {
+			ledger.AppendMessage(msg)
+		},
+		ClearToolState:              hooks.ClearToolState,
+		InferRoleFromTranscriptPath: inferRoleFromTranscriptPath,
+	})
+}
+
+// handleStopRetry retries transcript reading 3 times at 2-second intervals
+func handleStopRetry(sessName string, topicID int64, transcriptPath string) error {
+	return hooks.HandleStopRetry(&hooks.HandleStopRetryConfig{
+		SessionName:        sessName,
+		TopicID:            topicID,
+		TranscriptPath:     transcriptPath,
+		LoadConfig:         configpkg.Load,
+		DeliverUnsentTexts: deliverUnsentTexts,
+	})
+}
+
+// hookLog writes debug log entries
+func hookLog(format string, args ...any) {
+	hooks.HookLog(format, args...)
+}
+
+// sendAssistantMessage sends an assistant text message with optional streaming
+func sendAssistantMessage(cfg *Config, chatID int64, threadID int64, text string) (int64, error) {
+	return hooks.SendAssistantMessage(cfg, chatID, threadID, text)
 }
 
 // Ensure session.PaneRole string conversion compiles

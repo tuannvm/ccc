@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 
 	"github.com/tuannvm/ccc/session"
@@ -22,9 +23,9 @@ func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string
 		teamName, providerName := parseNameAndProvider(arg)
 
 		if providerName != "" {
-			provider := getProvider(config, providerName)
+			provider := providerpkg.GetProvider(config, providerName)
 			if provider == nil {
-				available := getProviderNames(config)
+				available := providerpkg.GetProviderNames(config)
 				msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 					providerName, strings.Join(available, ", "))
 				telegram.SendMessage(config, chatID, threadID, msg)
@@ -45,7 +46,7 @@ func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string
 			}
 
 			var buttons [][]InlineKeyboardButton
-			providerNames := getProviderNames(config)
+			providerNames := providerpkg.GetProviderNames(config)
 			for _, name := range providerNames {
 				label := name
 				if config.ActiveProvider == name {

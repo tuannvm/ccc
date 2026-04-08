@@ -9,6 +9,7 @@ import (
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
@@ -65,7 +66,7 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 		parts := strings.SplitN(arg, " --provider ", 2)
 		sessionInput = strings.TrimSpace(parts[0])
 		providerName = strings.TrimSpace(parts[1])
-	} else if !isGitURL(arg) {
+	} else if !configpkg.IsGitURL(arg) {
 		if idx := strings.Index(arg, "@"); idx > 0 {
 			sessionInput = arg[:idx]
 			providerName = strings.TrimSpace(arg[idx+1:])
@@ -75,9 +76,9 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 	gitURL := ""
 	sessionName := sessionInput
 
-	if isGitURL(sessionInput) {
+	if configpkg.IsGitURL(sessionInput) {
 		gitURL = sessionInput
-		sessionName = extractRepoName(sessionInput)
+		sessionName = configpkg.ExtractRepoName(sessionInput)
 
 		if sessionName == "" {
 			telegram.SendMessage(config, chatID, threadID, "❌ Invalid git URL: could not extract repository name")
@@ -85,9 +86,9 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 		}
 
 		if providerName != "" {
-			provider := getProvider(config, providerName)
+			provider := providerpkg.GetProvider(config, providerName)
 			if provider == nil {
-				available := getProviderNames(config)
+				available := providerpkg.GetProviderNames(config)
 				msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 					providerName, strings.Join(available, ", "))
 				telegram.SendMessage(config, chatID, threadID, msg)
@@ -106,11 +107,11 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 			workDir = existing.Path
 		}
 
-		displayURL := redactGitURL(gitURL)
+		displayURL := configpkg.RedactGitURL(gitURL)
 		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("📥 Cloning %s into session '%s'...", displayURL, sessionName))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		result, err := cloneRepo(ctx, gitURL, workDir)
+		result, err := configpkg.CloneRepo(ctx, gitURL, workDir)
 		cancel()
 
 		if err != nil {
@@ -128,9 +129,9 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 			return
 		}
 
-		if result == CloneResultCloned {
+		if result == configpkg.CloneResultCloned {
 			telegram.SendMessage(config, chatID, threadID, "✅ Repository cloned")
-		} else if result == CloneResultAlreadyExists {
+		} else if result == configpkg.CloneResultAlreadyExists {
 			telegram.SendMessage(config, chatID, threadID, "✅ Repository ready (using existing clone)")
 		}
 
@@ -138,9 +139,9 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 	}
 
 	if providerName != "" {
-		provider := getProvider(config, providerName)
+		provider := providerpkg.GetProvider(config, providerName)
 		if provider == nil {
-			available := getProviderNames(config)
+			available := providerpkg.GetProviderNames(config)
 			msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 				providerName, strings.Join(available, ", "))
 			telegram.SendMessage(config, chatID, threadID, msg)
@@ -156,7 +157,7 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 		}
 
 		var buttons [][]InlineKeyboardButton
-		providerNames := getProviderNames(config)
+		providerNames := providerpkg.GetProviderNames(config)
 		for _, name := range providerNames {
 			label := name
 			if config.ActiveProvider == name {
