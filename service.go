@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 func installService() error {
@@ -26,7 +29,7 @@ func installLaunchdService(home string) error {
 	}
 
 	plistPath := filepath.Join(plistDir, "com.ccc.plist")
-	logPath := filepath.Join(cacheDir(), "ccc.log")
+	logPath := filepath.Join(configpkg.CacheDir(), "ccc.log")
 
 	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -49,7 +52,7 @@ func installLaunchdService(home string) error {
     <string>%s</string>
 </dict>
 </plist>
-`, cccPath, logPath, logPath)
+`, tmux.CCCPath, logPath, logPath)
 
 	if err := os.WriteFile(plistPath, []byte(plist), 0644); err != nil {
 		return fmt.Errorf("failed to write plist: %w", err)
@@ -83,7 +86,7 @@ RestartSec=10
 
 [Install]
 WantedBy=default.target
-`, cccPath)
+`, tmux.CCCPath)
 
 	if err := os.WriteFile(servicePath, []byte(service), 0644); err != nil {
 		return fmt.Errorf("failed to write service file: %w", err)

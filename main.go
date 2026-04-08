@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/relay"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 const version = "1.7.0"
@@ -11,7 +15,7 @@ const version = "1.7.0"
 const WorktreeAutoGenerate = "AUTO" // Special value for auto-generating worktree names
 
 func init() {
-	initPaths()
+	tmux.InitPaths()
 }
 
 func main() {
@@ -91,14 +95,14 @@ func main() {
 		doctor()
 
 	case "config":
-		config, err := loadConfig()
+		config, err := configpkg.Load()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		if len(os.Args) < 3 {
 			// Show current config
-			fmt.Printf("projects_dir: %s\n", getProjectsDir(config))
+			fmt.Printf("projects_dir: %s\n", configpkg.GetProjectsDir(config))
 			if config.OAuthToken != "" {
 				fmt.Println("oauth_token: configured")
 			} else {
@@ -125,7 +129,7 @@ func main() {
 			// Show specific key
 			switch key {
 			case "projects-dir":
-				fmt.Println(getProjectsDir(config))
+				fmt.Println(configpkg.GetProjectsDir(config))
 			case "oauth-token":
 				if config.OAuthToken != "" {
 					fmt.Println("configured")
@@ -160,28 +164,28 @@ func main() {
 		switch key {
 		case "projects-dir":
 			config.ProjectsDir = value
-			if err := saveConfig(config); err != nil {
+			if err := configpkg.Save(config); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("✅ projects_dir set to: %s\n", getProjectsDir(config))
+			fmt.Printf("✅ projects_dir set to: %s\n", configpkg.GetProjectsDir(config))
 		case "oauth-token":
 			config.OAuthToken = value
-			if err := saveConfig(config); err != nil {
+			if err := configpkg.Save(config); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 				os.Exit(1)
 			}
 			fmt.Println("✅ OAuth token saved")
 		case "bot-token":
 			config.BotToken = value
-			if err := saveConfig(config); err != nil {
+			if err := configpkg.Save(config); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 				os.Exit(1)
 			}
 			fmt.Println("✅ Bot token saved")
 		case "transcription-lang":
 			config.TranscriptionLang = value
-			if err := saveConfig(config); err != nil {
+			if err := configpkg.Save(config); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 				os.Exit(1)
 			}
@@ -195,7 +199,7 @@ func main() {
 		}
 
 	case "setgroup":
-		config, err := loadConfig()
+		config, err := configpkg.Load()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -293,7 +297,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Usage: ccc send <file>\n")
 			os.Exit(1)
 		}
-		if err := handleSendFile(os.Args[2]); err != nil {
+		if err := relay.HandleSendFile(os.Args[2]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -334,14 +338,14 @@ func main() {
 		if len(os.Args) >= 3 {
 			port = os.Args[2]
 		}
-		runRelayServer(port)
+		relay.RunRelayServer(port)
 
 	default:
 		message := strings.Join(os.Args[1:], " ")
 
 		// If a message is provided, try to send it as a notification first (preserves old behavior)
 		if message != "" {
-			config, err := loadConfig()
+			config, err := configpkg.Load()
 			if err == nil && config.Away {
 				// Away mode is on: send as notification to existing session
 				sendErr := send(message)

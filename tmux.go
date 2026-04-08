@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // shellQuote safely quotes a string for shell command arguments
@@ -123,13 +126,13 @@ func unsetEnvVars(env []string, keys []string) []string {
 // worktreeName, if non-empty, creates/uses a git worktree session
 // This function stays in root because it references types and functions defined here.
 func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string, worktreeName string) error {
-	if claudePath == "" {
+	if tmux.ClaudePath == "" {
 		return fmt.Errorf("claude binary not found")
 	}
 
 	// Clean stale Telegram flag from previous sessions.
 	// Use window_name to identify the session
-	if winName, err := exec.Command(tmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
+	if winName, err := exec.Command(tmux.TmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
 		name := strings.TrimSpace(string(winName))
 		if name != "" {
 			os.Remove(telegramActiveFlag(name))
@@ -155,7 +158,7 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 
 	// Build the claude command with all args
 	// Execute claude directly to ensure provider env vars are not overridden by shell rc files
-	cmd := exec.Command(claudePath, args...)
+	cmd := exec.Command(tmux.ClaudePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -168,10 +171,10 @@ func runClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	configDirCode := os.Getenv("CLAUDE_CODE_CONFIG_DIR")
 	configDirZai := os.Getenv("CLAUDE_CONFIG_DIR")
 	homeDir := os.Getenv("HOME")
-	listenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", claudePath, args, cwd, configDirCode, configDirZai, homeDir)
+	listenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", tmux.ClaudePath, args, cwd, configDirCode, configDirZai, homeDir)
 
 	// Load config and apply provider settings
-	config, err := loadConfig()
+	config, err := config.Load()
 	if err == nil {
 		// CRITICAL: Ensure hooks are installed in the current project directory
 		// Hooks are essential for ccc functionality (Telegram, OTP, tool tracking)

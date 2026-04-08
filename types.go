@@ -64,11 +64,6 @@ type HookData = hooks.HookData
 // HookToolInput holds parsed tool input for known tool types
 type HookToolInput = hooks.HookToolInput
 
-// parseHookData unmarshals raw JSON and populates ToolInput
-func parseHookData(data []byte) (HookData, error) {
-	return hooks.ParseHookData(data)
-}
-
 // ========== Ledger Type Aliases ==========
 
 // MessageRecord tracks the delivery state of a single message

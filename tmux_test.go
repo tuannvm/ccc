@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // TestTmuxSafeName tests the tmuxSafeName function
@@ -22,9 +24,9 @@ func TestTmuxSafeName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tmuxSafeName(tt.input)
+			result := tmux.SafeName(tt.input)
 			if result != tt.expected {
-				t.Errorf("tmuxSafeName(%q) = %q, want %q", tt.input, result, tt.expected)
+				t.Errorf("tmux.SafeName(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -45,9 +47,9 @@ func TestWindowNameFromTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := windowNameFromTarget(tt.target)
+			result := tmux.WindowNameFromTarget(tt.target)
 			if result != tt.expected {
-				t.Errorf("windowNameFromTarget(%q) = %q, want %q", tt.target, result, tt.expected)
+				t.Errorf("tmux.WindowNameFromTarget(%q) = %q, want %q", tt.target, result, tt.expected)
 			}
 		})
 	}
@@ -62,21 +64,21 @@ func TestCaptureVisiblePane(t *testing.T) {
 	}
 
 	// Initialize paths
-	initPaths()
+	tmux.InitPaths()
 
 	// Check if ccc session exists
-	if !cccSessionExists() {
+	if !tmux.SessionExists() {
 		t.Skip("ccc tmux session not found, skipping TestCaptureVisiblePane")
 	}
 
 	// Find an existing window to test
-	target, err := findExistingWindow("test")
+	target, err := tmux.FindExistingWindow("test")
 	if err != nil {
 		t.Skip("no test window found, skipping TestCaptureVisiblePane")
 	}
 
 	// Test capturing visible pane
-	content := captureVisiblePane(target)
+	content := tmux.CaptureVisiblePane(target)
 	if content == "" {
 		t.Error("captureVisiblePane returned empty string")
 	}
@@ -99,10 +101,10 @@ func TestAutoAcceptTrustDialog(t *testing.T) {
 	}
 
 	// Initialize paths
-	initPaths()
+	tmux.InitPaths()
 
 	// Test with invalid target (no actual dialog expected)
-	result := autoAcceptTrustDialog("invalid:target.pane")
+	result := tmux.AutoAcceptTrustDialog("invalid:target.pane")
 	if result {
 		t.Error("autoAcceptTrustDialog returned true for invalid target")
 	}

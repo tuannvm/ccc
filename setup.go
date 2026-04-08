@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // Setup and group configuration commands.
@@ -22,7 +23,7 @@ func setup(botToken string) error {
 	fmt.Println()
 
 	// Load existing config if present (preserve sessions, group, etc.)
-	config, _ := loadConfig()
+	config, _ := configpkg.Load()
 	if config == nil {
 		config = &Config{Sessions: make(map[string]*SessionInfo)}
 	}
@@ -87,7 +88,7 @@ func setup(botToken string) error {
 			offset = update.UpdateID + 1
 			if update.Message.Chat.ID != 0 {
 				config.ChatID = update.Message.Chat.ID
-				if err := saveConfig(config); err != nil {
+				if err := configpkg.Save(config); err != nil {
 					return fmt.Errorf("failed to save config: %w", err)
 				}
 				fmt.Printf("✅ Connected! (User: @%s)\n\n", update.Message.From.Username)
@@ -130,7 +131,7 @@ step2:
 			// Only accept group configuration from the owner (security: prevent hijacking)
 			if chat.Type == "supergroup" && update.Message.From.ID == config.ChatID {
 				config.GroupID = chat.ID
-				saveConfig(config)
+				configpkg.Save(config)
 				fmt.Printf("✅ Group configured!\n\n")
 				goto step3
 			}
@@ -174,7 +175,7 @@ step3:
 		}
 	} else {
 		config.OTPSecret = ""
-		if err := saveConfig(config); err != nil {
+		if err := configpkg.Save(config); err != nil {
 			fmt.Printf("⚠️  Failed to save config: %v\n", err)
 		}
 		fmt.Println("✅ Auto-approve mode — all remote permissions granted automatically")
@@ -235,7 +236,7 @@ func setGroup(config *Config) error {
 			chat := update.Message.Chat
 			if chat.Type == "supergroup" && update.Message.From.ID == config.ChatID {
 				config.GroupID = chat.ID
-				if err := saveConfig(config); err != nil {
+				if err := configpkg.Save(config); err != nil {
 					return err
 				}
 				fmt.Printf("Group set: %d\n", chat.ID)
@@ -257,7 +258,7 @@ func stopListenerService() {
 		exec.Command("systemctl", "--user", "stop", "ccc").Run()
 	}
 	// Also kill any manual listener via lock file PID
-	lockPath := filepath.Join(cacheDir(), "ccc.lock")
+	lockPath := filepath.Join(configpkg.CacheDir(), "ccc.lock")
 	if data, err := os.ReadFile(lockPath); err == nil {
 		pidStr := strings.TrimSpace(string(data))
 		if pidStr != "" {

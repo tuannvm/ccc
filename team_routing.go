@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/routing"
 	"github.com/tuannvm/ccc/session"
 )
@@ -20,14 +22,14 @@ func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID
 	// Get the team session info
 	sessInfo, exists := config.GetTeamSession(topicID)
 	if !exists || sessInfo == nil {
-		sendMessage(config, chatID, threadID, "❌ Team session not found. Use /team new to create one.")
+		telegram.SendMessage(config, chatID, threadID, "❌ Team session not found. Use /team new to create one.")
 		return true // Handled (with error)
 	}
 
 	// Get the layout for this session
 	layout, ok := session.GetLayout(sessInfo.GetLayoutName())
 	if !ok {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Unknown layout: %s", sessInfo.GetLayoutName()))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Unknown layout: %s", sessInfo.GetLayoutName()))
 		return true
 	}
 
@@ -37,7 +39,7 @@ func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID
 	// Route the message to get target role and stripped message
 	role, messageText, err := router.RouteMessage(text, layout)
 	if err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Routing error: %v", err))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Routing error: %v", err))
 		return true
 	}
 
@@ -47,25 +49,25 @@ func handleTeamSessionMessage(config *Config, text string, topicID int64, chatID
 	// Get the tmux target for this role
 	target, err := getTeamRoleTarget(sessionName, role)
 	if err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get pane target: %v", err))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get pane target: %v", err))
 		return true
 	}
 
 	// Check if we need to switch sessions
-	currentSession := getCurrentSessionName()
-	needsSwitch := currentSession != tmuxSafeName(sessionName)
+	currentSession := tmux.GetCurrentSessionName()
+	needsSwitch := currentSession != tmux.SafeName(sessionName)
 
 	if needsSwitch {
 		// Switch to the session (but don't restart Claude, just select the window)
 		if err := switchToTeamWindow(sessionName, role); err != nil {
-			sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch to session: %v", err))
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch to session: %v", err))
 			return true
 		}
 	}
 
 	// Send the message to the target pane
-	if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessionName), messageText); err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send message: %v", err))
+	if err := sendToTmuxFromTelegram(target, tmux.SafeName(sessionName), messageText); err != nil {
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send message: %v", err))
 		return true
 	}
 
@@ -81,7 +83,7 @@ func getTeamRoleTarget(sessionName string, role session.PaneRole) (string, error
 		return "", fmt.Errorf("session name cannot be empty")
 	}
 	// Sanitize session name for tmux (dots become double underscores)
-	sanitizedName := tmuxSafeName(sessionName)
+	sanitizedName := tmux.SafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
 	// Map role to pane index (tmux uses 1-based indexing)
@@ -105,11 +107,11 @@ func switchToTeamWindow(sessionName string, role session.PaneRole) error {
 		return fmt.Errorf("session name cannot be empty")
 	}
 	// Sanitize session name for tmux (dots become double underscores)
-	sanitizedName := tmuxSafeName(sessionName)
+	sanitizedName := tmux.SafeName(sessionName)
 	target := "ccc-team:" + sanitizedName
 
 	// Select the window to make it active
-	if err := exec.Command(tmuxPath, "select-window", "-t", target).Run(); err != nil {
+	if err := exec.Command(tmux.TmuxPath, "select-window", "-t", target).Run(); err != nil {
 		return fmt.Errorf("failed to select window: %w", err)
 	}
 
@@ -183,18 +185,18 @@ func parseTeamCommand(text string) (session.PaneRole, string, bool) {
 
 	// Map prefixes to roles
 	prefixToRole := map[string]session.PaneRole{
-		"/planner":   session.RolePlanner,
-		"/plan":      session.RolePlanner,
-		"/p":         session.RolePlanner,
-		"@planner":   session.RolePlanner,
-		"/executor":  session.RoleExecutor,
-		"/exec":      session.RoleExecutor,
-		"/e":         session.RoleExecutor,
-		"@executor":  session.RoleExecutor,
-		"/reviewer":  session.RoleReviewer,
-		"/rev":       session.RoleReviewer,
-		"/r":         session.RoleReviewer,
-		"@reviewer":  session.RoleReviewer,
+		"/planner":  session.RolePlanner,
+		"/plan":     session.RolePlanner,
+		"/p":        session.RolePlanner,
+		"@planner":  session.RolePlanner,
+		"/executor": session.RoleExecutor,
+		"/exec":     session.RoleExecutor,
+		"/e":        session.RoleExecutor,
+		"@executor": session.RoleExecutor,
+		"/reviewer": session.RoleReviewer,
+		"/rev":      session.RoleReviewer,
+		"/r":        session.RoleReviewer,
+		"@reviewer": session.RoleReviewer,
 	}
 
 	if role, ok := prefixToRole[prefix]; ok {

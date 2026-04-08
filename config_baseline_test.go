@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // ============================================================================
@@ -36,10 +38,10 @@ func TestBaselineConfigLoadSave(t *testing.T) {
 		ActiveProvider:    "test-provider",
 		Providers: map[string]*ProviderConfig{
 			"test-provider": {
-				AuthToken:  "provider-token",
-				AuthEnvVar: "TEST_API_KEY",
+				AuthToken:   "provider-token",
+				AuthEnvVar:  "TEST_API_KEY",
 				BaseURL:     "https://api.example.com",
-				ApiTimeout: 30000,
+				ApiTimeout:  30000,
 				OpusModel:   "claude-3-opus-20250114",
 				SonnetModel: "claude-3-5-20241022",
 			},
@@ -54,12 +56,12 @@ func TestBaselineConfigLoadSave(t *testing.T) {
 	}
 
 	// Save config
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		t.Fatalf("saveConfig failed: %v", err)
 	}
 
 	// Load config back
-	loaded, err := loadConfig()
+	loaded, err := configpkg.Load()
 	if err != nil {
 		t.Fatalf("loadConfig failed: %v", err)
 	}

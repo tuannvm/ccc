@@ -13,6 +13,7 @@ import (
 
 	"github.com/mutablelogic/go-whisper/pkg/schema"
 	whisper "github.com/mutablelogic/go-whisper/pkg/whisper"
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 const voiceSupported = true
@@ -21,7 +22,7 @@ const whisperModelName = "ggml-small.bin"
 const whisperModelURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
 
 func getModelsDir() string {
-	return filepath.Join(cacheDir(), "models")
+	return filepath.Join(configpkg.CacheDir(), "models")
 }
 
 // ensureModel downloads the whisper model if not present

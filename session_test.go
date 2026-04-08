@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // TestGetSessionByTopic tests the getSessionByTopic function
@@ -214,30 +216,30 @@ func TestBaselinePathUtilities(t *testing.T) {
 	}
 
 	// Test getProjectsDir
-	projectsDir := getProjectsDir(config)
+	projectsDir := configpkg.GetProjectsDir(config)
 	expected := filepath.Join(tmpDir, "CustomProjects")
 	if projectsDir != expected {
 		t.Errorf("getProjectsDir: got %q, want %q", projectsDir, expected)
 	}
 
 	// Test resolveProjectPath with absolute path
-	path := resolveProjectPath(config, "/absolute/path")
+	path := configpkg.ResolveProjectPath(config, "/absolute/path")
 	if path != "/absolute/path" {
-		t.Errorf("resolveProjectPath(absolute): got %q, want '/absolute/path'", path)
+		t.Errorf("configpkg.ResolveProjectPath(absolute): got %q, want '/absolute/path'", path)
 	}
 
 	// Test resolveProjectPath with home-relative path
-	path = resolveProjectPath(config, "~/from/home")
+	path = configpkg.ResolveProjectPath(config, "~/from/home")
 	expected = filepath.Join(tmpDir, "from/home")
 	if path != expected {
-		t.Errorf("resolveProjectPath(~/from/home): got %q, want %q", path, expected)
+		t.Errorf("configpkg.ResolveProjectPath(~/from/home): got %q, want %q", path, expected)
 	}
 
 	// Test resolveProjectPath with relative path
-	path = resolveProjectPath(config, "relative/path")
+	path = configpkg.ResolveProjectPath(config, "relative/path")
 	expected = filepath.Join(tmpDir, "CustomProjects", "relative/path")
 	if path != expected {
-		t.Errorf("resolveProjectPath(relative): got %q, want %q", path, expected)
+		t.Errorf("configpkg.ResolveProjectPath(relative): got %q, want %q", path, expected)
 	}
 
 	// Test expandPath

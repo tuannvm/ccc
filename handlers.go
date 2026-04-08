@@ -5,6 +5,10 @@ import (
 	"os"
 	"os/exec"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
+
 	"github.com/tuannvm/ccc/session"
 )
 
@@ -15,22 +19,22 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 	existing, exists := config.Sessions[sessionName]
 	if exists && existing != nil && existing.TopicID != 0 {
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("⚠️ Session '%s' already exists.\n\nUse /new without args in that topic to restart.", sessionName))
 		}
 		return
 	}
 
-	topicID, err := createForumTopic(config, sessionName, providerName, "")
+	topicID, err := telegram.CreateForumTopic(config, sessionName, providerName, "")
 	if err != nil {
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to create topic: %v", err))
 		}
 		return
 	}
 
-	workDir := resolveProjectPath(config, sessionName)
+	workDir := configpkg.ResolveProjectPath(config, sessionName)
 	if exists && existing != nil && existing.Path != "" {
 		workDir = existing.Path
 	}
@@ -40,19 +44,19 @@ func handleNewWithProvider(config *Config, cb *CallbackQuery, sessionName, provi
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	saveConfig(config)
+	configpkg.Save(config)
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
 	}
 
 	resultMsg := fmt.Sprintf("🚀 Session '%s' started!\n🤖 Provider: %s\n\nSend messages here to interact with Claude.", sessionName, providerName)
-	if err := switchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		resultMsg = fmt.Sprintf("❌ Failed to start session: %v", err)
 	}
 
 	if cb.Message != nil {
-		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
+		telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
 	}
 }
 
@@ -61,7 +65,7 @@ func handleProviderChange(config *Config, cb *CallbackQuery, sessionName, provid
 	sess, exists := config.Sessions[sessionName]
 	if !exists || sess == nil {
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Session '%s' not found.", sessionName))
 		}
 		return
@@ -70,18 +74,18 @@ func handleProviderChange(config *Config, cb *CallbackQuery, sessionName, provid
 	provider := getProvider(config, providerName)
 	if provider == nil {
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Provider '%s' not found. Available: %v", providerName, getProviderNames(config)))
 		}
 		return
 	}
 
 	sess.ProviderName = providerName
-	saveConfig(config)
+	configpkg.Save(config)
 
 	resultMsg := fmt.Sprintf("✅ Provider changed to %s for session '%s'\n\nRestart with /new to apply the new provider.", provider.Name(), sessionName)
 	if cb.Message != nil {
-		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
+		telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
 	}
 }
 
@@ -92,7 +96,7 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 			sessName := getSessionNameFromInfo(sessInfo)
 			if sessName == teamName {
 				if cb.Message != nil {
-					editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+					telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 						fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d).\n\nUse /team without args in that topic to restart.", teamName, topicID))
 				}
 				return
@@ -100,7 +104,7 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 		}
 	}
 
-	workDir := resolveProjectPath(config, teamName)
+	workDir := configpkg.ResolveProjectPath(config, teamName)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
 	}
@@ -120,7 +124,7 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 	runtime := session.GetRuntime(session.SessionKindTeam)
 	if runtime == nil {
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				"❌ Team runtime not available. Check your installation.")
 		}
 		return
@@ -128,17 +132,17 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 
 	if err := runtime.EnsureLayout(sessInfo, workDir); err != nil {
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to create team layout: %v", err))
 		}
 		return
 	}
 
-	topicID, err := createForumTopic(config, teamName, providerName, "")
+	topicID, err := telegram.CreateForumTopic(config, teamName, providerName, "")
 	if err != nil {
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to create topic: %v", err))
 		}
 		return
@@ -146,11 +150,11 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 
 	sessInfo.TopicID = topicID
 	config.SetTeamSession(topicID, sessInfo)
-	if err := saveConfig(config); err != nil {
-		deleteForumTopic(config, topicID)
+	if err := configpkg.Save(config); err != nil {
+		telegram.DeleteForumTopic(config, topicID)
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
 		if cb.Message != nil {
-			editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
+			telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID,
 				fmt.Sprintf("❌ Failed to save config: %v", err))
 		}
 		return
@@ -175,6 +179,6 @@ func handleTeamWithProvider(config *Config, cb *CallbackQuery, teamName, provide
 	resultMsg += "  <msg> (no cmd)   - Send to executor (default)"
 
 	if cb.Message != nil {
-		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
+		telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
 	}
 }

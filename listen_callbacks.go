@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // handleCallbackQuery processes callback queries from inline keyboard button presses
@@ -19,7 +22,7 @@ func handleCallbackQuery(config *Config, cb *CallbackQuery) {
 		return
 	}
 
-	answerCallbackQuery(config, cb.ID)
+	telegram.AnswerCallbackQuery(config, cb.ID)
 
 	// Parse callback data
 	parts := strings.Split(cb.Data, ":")
@@ -83,7 +86,7 @@ func handleQuestionCallback(config *Config, cb *CallbackQuery, parts []string) {
 	if cb.Message != nil {
 		originalText := cb.Message.Text
 		newText := fmt.Sprintf("%s\n\n✓ Selected option %d", originalText, optionIndex+1)
-		editMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, newText)
+		telegram.EditMessageRemoveKeyboard(config, cb.Message.Chat.ID, cb.Message.MessageID, newText)
 	}
 
 	// Switch to the session and send arrow keys
@@ -105,23 +108,23 @@ func handleQuestionCallback(config *Config, cb *CallbackQuery, parts []string) {
 
 	// Switch to the session (preserve session context for callbacks)
 	// Since currentSession == sessionName, this will skip restart
-	if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err != nil {
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err != nil {
 		return
 	}
 
-	target, _ := getCccWindowTarget(sessionName)
+	target, _ := tmux.GetWindowTarget(sessionName)
 	// Send arrow down keys to select option, then Enter
 	for range optionIndex {
-		exec.Command(tmuxPath, "send-keys", "-t", target, "Down").Run()
+		exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "Down").Run()
 		time.Sleep(50 * time.Millisecond)
 	}
-	exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
+	exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "Enter").Run()
 	listenLog("[callback] Selected option %d for %s (question %d/%d)", optionIndex, sessionName, questionIndex+1, totalQuestions)
 
 	// After the last question, send Enter to confirm "Submit answers"
 	if totalQuestions > 0 && questionIndex == totalQuestions-1 {
 		time.Sleep(300 * time.Millisecond)
-		exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run()
+		exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "Enter").Run()
 		listenLog("[callback] Auto-submitted answers for %s", sessionName)
 	}
 }

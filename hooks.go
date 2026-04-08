@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 )
 
@@ -22,13 +23,13 @@ type ToolCall = hooks.ToolCall
 // telegramActiveFlag returns the path of the flag file that indicates
 // a Telegram message is being processed by a tmux session.
 func telegramActiveFlag(tmuxName string) string {
-	return filepath.Join(cacheDir(), "telegram-active-"+tmuxName)
+	return filepath.Join(configpkg.CacheDir(), "telegram-active-"+tmuxName)
 }
 
 // thinkingFlag returns the path of the flag file that indicates
 // Claude is actively processing in a session (for typing indicator).
 func thinkingFlag(sessionName string) string {
-	return filepath.Join(cacheDir(), "thinking-"+sessionName)
+	return filepath.Join(configpkg.CacheDir(), "thinking-"+sessionName)
 }
 
 func setThinking(sessionName string) {
@@ -42,7 +43,7 @@ func clearThinking(sessionName string) {
 // promptAckPath returns the path of the ack file that confirms
 // Claude received a prompt sent from Telegram via tmux send-keys.
 func promptAckPath(sessionName string) string {
-	return filepath.Join(cacheDir(), "prompt-ack-"+sessionName)
+	return filepath.Join(configpkg.CacheDir(), "prompt-ack-"+sessionName)
 }
 
 func writePromptAck(sessionName string) {
@@ -51,7 +52,7 @@ func writePromptAck(sessionName string) {
 
 // toolStatePath returns the path for tool call display state
 func toolStatePath(sessionName string) string {
-	return filepath.Join(cacheDir(), "tools-"+sessionName+".json")
+	return filepath.Join(configpkg.CacheDir(), "tools-"+sessionName+".json")
 }
 
 func loadToolState(sessionName string) *ToolState {

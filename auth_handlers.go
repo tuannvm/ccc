@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // Auth handlers for OAuth flow and help text.
@@ -14,18 +17,18 @@ const authTmuxSession = "claude-auth"
 
 func handleAuth(config *Config, chatID, threadID int64) {
 	if !authInProgress.TryLock() {
-		sendMessage(config, chatID, threadID, "⚠️ Auth already in progress")
+		telegram.SendMessage(config, chatID, threadID, "⚠️ Auth already in progress")
 		return
 	}
 
-	sendMessage(config, chatID, threadID, "🔐 Starting Claude auth...")
+	telegram.SendMessage(config, chatID, threadID, "🔐 Starting Claude auth...")
 
-	killTmuxSession(authTmuxSession)
+	tmux.KillSession(authTmuxSession)
 	time.Sleep(500 * time.Millisecond)
 
 	home, _ := os.UserHomeDir()
-	if err := exec.Command(tmuxPath, "new-session", "-d", "-s", authTmuxSession, "-c", home).Run(); err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create tmux session: %v", err))
+	if err := exec.Command(tmux.TmuxPath, "new-session", "-d", "-s", authTmuxSession, "-c", home).Run(); err != nil {
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create tmux session: %v", err))
 		authInProgress.Unlock()
 		return
 	}
@@ -77,21 +80,21 @@ func handleAuth(config *Config, chatID, threadID int64) {
 	}
 
 	time.Sleep(500 * time.Millisecond)
-	cmdStr := envCmd + claudePath + " --dangerously-skip-permissions"
-	exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, cmdStr, "C-m").Run()
+	cmdStr := envCmd + tmux.ClaudePath + " --dangerously-skip-permissions"
+	exec.Command(tmux.TmuxPath, "send-keys", "-t", authTmuxSession, cmdStr, "C-m").Run()
 
 	var oauthURL string
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
-		out, err := exec.Command(tmuxPath, "capture-pane", "-t", authTmuxSession, "-p", "-S", "-30").Output()
+		out, err := exec.Command(tmux.TmuxPath, "capture-pane", "-t", authTmuxSession, "-p", "-S", "-30").Output()
 		if err != nil {
 			continue
 		}
 		pane := string(out)
 
 		if strings.Contains(pane, "Dark mode") || strings.Contains(pane, "❯") || strings.Contains(pane, "Welcome back") {
-			sendMessage(config, chatID, threadID, "✅ Claude is already authenticated!")
-			killTmuxSession(authTmuxSession)
+			telegram.SendMessage(config, chatID, threadID, "✅ Claude is already authenticated!")
+			tmux.KillSession(authTmuxSession)
 			authInProgress.Unlock()
 			return
 		}
@@ -115,60 +118,60 @@ func handleAuth(config *Config, chatID, threadID int64) {
 	}
 
 	if oauthURL == "" {
-		sendMessage(config, chatID, threadID, "❌ Could not find OAuth URL. Try again.")
-		killTmuxSession(authTmuxSession)
+		telegram.SendMessage(config, chatID, threadID, "❌ Could not find OAuth URL. Try again.")
+		tmux.KillSession(authTmuxSession)
 		authInProgress.Unlock()
 		return
 	}
 
 	authWaitingCode = true
-	sendMessage(config, chatID, threadID, fmt.Sprintf("🔗 Open this URL and authorize:\n\n%s\n\nThen paste the code here.", oauthURL))
+	telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("🔗 Open this URL and authorize:\n\n%s\n\nThen paste the code here.", oauthURL))
 }
 
 func handleAuthCode(config *Config, chatID, threadID int64, code string) {
 	authWaitingCode = false
 	code = strings.TrimSpace(code)
 
-	sendMessage(config, chatID, threadID, "🔄 Sending code to Claude...")
+	telegram.SendMessage(config, chatID, threadID, "🔄 Sending code to Claude...")
 
-	exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, "-l", code).Run()
+	exec.Command(tmux.TmuxPath, "send-keys", "-t", authTmuxSession, "-l", code).Run()
 	time.Sleep(200 * time.Millisecond)
-	exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, "C-m").Run()
+	exec.Command(tmux.TmuxPath, "send-keys", "-t", authTmuxSession, "C-m").Run()
 
 	for i := 0; i < 10; i++ {
 		time.Sleep(2 * time.Second)
-		out, _ := exec.Command(tmuxPath, "capture-pane", "-t", authTmuxSession, "-p").Output()
+		out, _ := exec.Command(tmux.TmuxPath, "capture-pane", "-t", authTmuxSession, "-p").Output()
 		pane := string(out)
 
 		if strings.Contains(pane, "Yes, I accept") {
-			exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, "Down").Run()
+			exec.Command(tmux.TmuxPath, "send-keys", "-t", authTmuxSession, "Down").Run()
 			time.Sleep(200 * time.Millisecond)
-			exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, "C-m").Run()
+			exec.Command(tmux.TmuxPath, "send-keys", "-t", authTmuxSession, "C-m").Run()
 			continue
 		}
 
 		if strings.Contains(pane, "Press Enter") || strings.Contains(pane, "Enter to confirm") {
-			exec.Command(tmuxPath, "send-keys", "-t", authTmuxSession, "C-m").Run()
+			exec.Command(tmux.TmuxPath, "send-keys", "-t", authTmuxSession, "C-m").Run()
 			continue
 		}
 
 		if strings.Contains(pane, "❯") {
-			sendMessage(config, chatID, threadID, "✅ Auth successful! Claude is ready.")
-			killTmuxSession(authTmuxSession)
+			telegram.SendMessage(config, chatID, threadID, "✅ Auth successful! Claude is ready.")
+			tmux.KillSession(authTmuxSession)
 			authInProgress.Unlock()
 			return
 		}
 	}
 
-	out, _ := exec.Command(tmuxPath, "capture-pane", "-t", authTmuxSession, "-p").Output()
+	out, _ := exec.Command(tmux.TmuxPath, "capture-pane", "-t", authTmuxSession, "-p").Output()
 	pane := string(out)
 	if strings.Contains(pane, "Login successful") || strings.Contains(pane, "❯") {
-		sendMessage(config, chatID, threadID, "✅ Auth successful!")
+		telegram.SendMessage(config, chatID, threadID, "✅ Auth successful!")
 	} else {
-		sendMessage(config, chatID, threadID, "⚠️ Auth may have failed. Check VPS manually.")
+		telegram.SendMessage(config, chatID, threadID, "⚠️ Auth may have failed. Check VPS manually.")
 	}
 
-	killTmuxSession(authTmuxSession)
+	tmux.KillSession(authTmuxSession)
 	authInProgress.Unlock()
 }
 

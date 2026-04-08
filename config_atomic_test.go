@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // TestAtomicSaveConfigConcurrent tests that concurrent writes don't corrupt config
@@ -30,7 +32,7 @@ func TestAtomicSaveConfigConcurrent(t *testing.T) {
 		ChatID:   12345,
 		Sessions: make(map[string]*SessionInfo),
 	}
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		t.Fatalf("Initial save failed: %v", err)
 	}
 
@@ -53,7 +55,7 @@ func TestAtomicSaveConfigConcurrent(t *testing.T) {
 					},
 				},
 			}
-			if err := saveConfig(cfg); err != nil {
+			if err := configpkg.Save(cfg); err != nil {
 				errCh <- fmt.Errorf("goroutine %d: %w", sessionNum, err)
 			}
 		}(i)
@@ -126,7 +128,7 @@ func TestAtomicSaveConfigPreservesOriginal(t *testing.T) {
 			"original": {TopicID: 100, Path: "/original/path"},
 		},
 	}
-	if err := saveConfig(initialConfig); err != nil {
+	if err := configpkg.Save(initialConfig); err != nil {
 		t.Fatalf("Initial save failed: %v", err)
 	}
 
@@ -148,7 +150,7 @@ func TestAtomicSaveConfigPreservesOriginal(t *testing.T) {
 		BotToken: "new-token",
 		ChatID:   99999,
 	}
-	if err := saveConfig(newConfig); err == nil {
+	if err := configpkg.Save(newConfig); err == nil {
 		t.Error("Expected save to fail on read-only directory, but it succeeded")
 	}
 
@@ -196,7 +198,7 @@ func TestAtomicSaveConfigPermissions(t *testing.T) {
 		},
 	}
 
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		t.Fatalf("saveConfig failed: %v", err)
 	}
 
@@ -228,7 +230,7 @@ func TestAtomicSaveConfigTempCleanup(t *testing.T) {
 
 	// Write initial config
 	initialConfig := &Config{BotToken: "initial"}
-	if err := saveConfig(initialConfig); err != nil {
+	if err := configpkg.Save(initialConfig); err != nil {
 		t.Fatalf("Initial save failed: %v", err)
 	}
 
@@ -244,7 +246,7 @@ func TestAtomicSaveConfigTempCleanup(t *testing.T) {
 
 	// Try to save (should fail during rename)
 	newConfig := &Config{BotToken: "new-token"}
-	err = saveConfig(newConfig)
+	err = configpkg.Save(newConfig)
 
 	// Restore permissions before any assertions
 	os.Chmod(configDir, 0755)

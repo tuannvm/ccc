@@ -8,15 +8,17 @@ import (
 	"strings"
 	"time"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+
 	qrterminal "github.com/mdp/qrterminal/v3"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
 
 // OTP permission request/response files
-var otpRequestPrefix = filepath.Join(cacheDir(), "otp-request-")
-var otpResponsePrefix = filepath.Join(cacheDir(), "otp-response-")
-var otpGrantPrefix = filepath.Join(cacheDir(), "otp-grant-")
+var otpRequestPrefix = filepath.Join(configpkg.CacheDir(), "otp-request-")
+var otpResponsePrefix = filepath.Join(configpkg.CacheDir(), "otp-response-")
+var otpGrantPrefix = filepath.Join(configpkg.CacheDir(), "otp-grant-")
 
 const otpGrantDuration = 5 * time.Minute
 const otpPermissionTimeout = 5 * time.Minute
@@ -61,7 +63,7 @@ func setupOTP(config *Config) (string, error) {
 	}
 
 	config.OTPSecret = secret
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 

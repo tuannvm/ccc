@@ -12,6 +12,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/ledger"
+	"github.com/tuannvm/ccc/pkg/telegram"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // Main listen loop — polls Telegram for updates and dispatches commands.
@@ -21,7 +26,7 @@ func listen() error {
 	time.Sleep(time.Duration(os.Getpid()%500) * time.Millisecond)
 
 	// Use a lock file to ensure only one instance runs
-	lockPath := filepath.Join(cacheDir(), "ccc.lock")
+	lockPath := filepath.Join(configpkg.CacheDir(), "ccc.lock")
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open lock file: %w", err)
@@ -42,25 +47,25 @@ func listen() error {
 		defer listenLogFile.Close()
 	}
 
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("not configured. Run: ccc setup <bot_token>")
 	}
 
 	listenLog("Bot started (chat: %d, group: %d, sessions: %d)", config.ChatID, config.GroupID, len(config.Sessions))
 
-	setBotCommands(config.BotToken)
+	telegram.SetBotCommands(config.BotToken)
 
 	// Recover undelivered Telegram messages from ledger
 	for sessName, info := range config.Sessions {
 		if info == nil || info.TopicID == 0 || config.GroupID == 0 {
 			continue
 		}
-		undelivered := findUndelivered(sessName, "telegram")
+		undelivered := ledger.FindUndelivered(sessName, "telegram")
 		for _, ur := range undelivered {
 			if ur.Type == "assistant_text" || ur.Type == "notification" {
-				sendMessage(config, config.GroupID, info.TopicID, fmt.Sprintf("*%s:*\n%s", sessName, ur.Text))
-				updateDelivery(sessName, ur.ID, "telegram_delivered", true)
+				telegram.SendMessage(config, config.GroupID, info.TopicID, fmt.Sprintf("*%s:*\n%s", sessName, ur.Text))
+				ledger.UpdateDelivery(sessName, ur.ID, "telegram_delivered", true)
 			}
 		}
 	}
@@ -81,7 +86,7 @@ func listen() error {
 	go func() {
 		for {
 			time.Sleep(4 * time.Second)
-			cfg, err := loadConfig()
+			cfg, err := configpkg.Load()
 			if err != nil || cfg == nil {
 				continue
 			}
@@ -95,7 +100,7 @@ func listen() error {
 						clearThinking(sessName)
 						continue
 					}
-					sendTypingAction(cfg, cfg.GroupID, info.TopicID)
+					telegram.SendTypingAction(cfg, cfg.GroupID, info.TopicID)
 				}
 			}
 		}
@@ -194,7 +199,7 @@ func listen() error {
 				if err != nil {
 					output = fmt.Sprintf("⚠️ %s\n\nExit: %v", output, err)
 				}
-				sendMessage(config, chatID, threadID, output)
+				telegram.SendMessage(config, chatID, threadID, output)
 				continue
 			}
 
@@ -204,7 +209,7 @@ func listen() error {
 			}
 
 			if text == "/restart" {
-				sendMessage(config, chatID, threadID, "🔄 Restarting ccc service...")
+				telegram.SendMessage(config, chatID, threadID, "🔄 Restarting ccc service...")
 				// Re-exec ourselves to restart cleanly
 				go func() {
 					time.Sleep(500 * time.Millisecond)
@@ -220,12 +225,12 @@ func listen() error {
 
 			if text == "/stats" {
 				stats := getSystemStats()
-				sendMessage(config, chatID, threadID, stats)
+				telegram.SendMessage(config, chatID, threadID, stats)
 				continue
 			}
 
 			if text == "/version" {
-				sendMessage(config, chatID, threadID, fmt.Sprintf("ccc %s", version))
+				telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("ccc %s", version))
 				continue
 			}
 

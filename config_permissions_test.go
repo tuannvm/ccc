@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // TestConfigFilePermissions tests that config is saved with correct permissions
@@ -24,7 +26,7 @@ func TestConfigFilePermissions(t *testing.T) {
 		Sessions: make(map[string]*SessionInfo),
 	}
 
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		t.Fatalf("saveConfig failed: %v", err)
 	}
 

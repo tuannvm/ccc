@@ -145,7 +145,7 @@ func (r *TeamRuntime) getSessionName(sess Session) string {
 	// Use GetName() which handles SessionName field for team sessions
 	name := sess.GetName()
 	// Sanitize for tmux: replace dots with double underscores
-	// This matches the behavior of tmuxSafeName() in the main package
+	// This matches the behavior of tmux.SafeName() in the main package
 	// Double underscores avoid conflicts with natural underscores in names
 	return strings.ReplaceAll(name, ".", "__")
 }

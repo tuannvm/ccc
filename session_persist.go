@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+
+	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/session"
 )
 
@@ -57,13 +60,13 @@ func inferRoleFromTranscriptPath(transcriptPath string) session.PaneRole {
 // Falls back to pane index if names are not set: 1=planner, 2=executor, 3=reviewer
 // Returns empty string if tmux is not available or query fails
 func inferRoleFromTmuxPane(sessionName string) session.PaneRole {
-	if tmuxPath == "" || sessionName == "" {
+	if tmux.TmuxPath == "" || sessionName == "" {
 		return ""
 	}
 	// Query tmux for the active pane name in the session window
 	// Format: "ccc-team:session-name"
 	target := fmt.Sprintf("ccc-team:%s", sessionName)
-	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{pane_name}")
+	cmd := exec.Command(tmux.TmuxPath, "display-message", "-t", target, "-p", "#{pane_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		hookLog("inferRoleFromTmuxPane: tmux query failed: %v", err)
@@ -81,7 +84,7 @@ func inferRoleFromTmuxPane(sessionName string) session.PaneRole {
 		return role
 	}
 	// Fallback: Try pane index if names are not set (for legacy sessions)
-	cmd2 := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{pane_index}")
+	cmd2 := exec.Command(tmux.TmuxPath, "display-message", "-t", target, "-p", "#{pane_index}")
 	out2, err2 := cmd2.Output()
 	if err2 != nil {
 		hookLog("inferRoleFromTmuxPane: pane index query failed: %v", err2)
@@ -159,7 +162,7 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 						}
 					}
 					pane.ClaudeSessionID = claudeSessionID
-					saveConfig(config)
+					configpkg.Save(config)
 					hookLog("persisted claude_session_id=%s for team session=%s role=%s", claudeSessionID, sessName, role)
 				} else {
 					hookLog("persistClaudeSessionID: pane role=%s already has this claude_session_id", role)
@@ -192,7 +195,7 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 		if role != "" {
 			if pane, exists := sessInfo.Panes[role]; exists && pane != nil && pane.ClaudeSessionID == "" {
 				pane.ClaudeSessionID = claudeSessionID
-				saveConfig(config)
+				configpkg.Save(config)
 				hookLog("persistClaudeSessionID: FALLBACK - stored claude_session_id=%s in role=%s using tmux pane index", claudeSessionID, role)
 				return
 			}
@@ -207,7 +210,7 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 				break
 			}
 		}
-		saveConfig(config)
+		configpkg.Save(config)
 		return
 	}
 
@@ -234,10 +237,10 @@ func persistClaudeSessionID(config *Config, sessName string, claudeSessionID str
 	// Only save if the ID actually changed OR we cleared a duplicate
 	if info.ClaudeSessionID != claudeSessionID {
 		info.ClaudeSessionID = claudeSessionID
-		saveConfig(config)
+		configpkg.Save(config)
 		hookLog("persisted claude_session_id=%s for session=%s", claudeSessionID, sessName)
 	} else if duplicateCleared {
-		saveConfig(config)
+		configpkg.Save(config)
 		hookLog("persisted claude_session_id=%s for session=%s (duplicate cleared)", claudeSessionID, sessName)
 	}
 }

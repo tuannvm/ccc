@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
+
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // Listen command handlers — extracted from the listen() loop for readability.
@@ -14,10 +19,10 @@ import (
 
 // handleContinueCommand handles the /continue command - restart session preserving conversation history
 func handleContinueCommand(config *Config, chatID, threadID int64) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 	sessName := getSessionByTopic(config, threadID)
 	if sessName == "" {
-		sendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
+		telegram.SendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
 		return
 	}
 	sessionInfo := config.Sessions[sessName]
@@ -31,49 +36,49 @@ func handleContinueCommand(config *Config, chatID, threadID int64) {
 	}
 	resumeSessionID := sessionInfo.ClaudeSessionID
 
-	if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
+	if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 	} else {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("🔄 Session '%s' restarted with conversation history", sessName))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("🔄 Session '%s' restarted with conversation history", sessName))
 	}
 }
 
 // handleDeleteCommand handles the /delete command - delete session and thread
 func handleDeleteCommand(config *Config, chatID, threadID int64) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 	sessName := getSessionByTopic(config, threadID)
 	if sessName == "" {
-		sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
+		telegram.SendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
 		return
 	}
 
 	// Check if this is the currently active session and stop Claude if so
-	target, err := findExistingWindow(sessName)
+	target, err := tmux.FindExistingWindow(sessName)
 	if err == nil {
-		cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#{window_name}")
+		cmd := exec.Command(tmux.TmuxPath, "display-message", "-t", target, "-p", "#{window_name}")
 		out, err := cmd.Output()
 		if err == nil {
 			currentWindowName := strings.TrimSpace(string(out))
-			expectedName := tmuxSafeName(sessName)
+			expectedName := tmux.SafeName(sessName)
 			if currentWindowName == expectedName {
-				exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
+				exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "C-c").Run()
 				time.Sleep(100 * time.Millisecond)
-				exec.Command(tmuxPath, "kill-window", "-t", target).Run()
+				exec.Command(tmux.TmuxPath, "kill-window", "-t", target).Run()
 			}
 		}
 	}
 
 	topicID := config.Sessions[sessName].TopicID
 	delete(config.Sessions, sessName)
-	saveConfig(config)
-	if err := deleteForumTopic(config, topicID); err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session deleted but failed to delete thread: %v", err))
+	configpkg.Save(config)
+	if err := telegram.DeleteForumTopic(config, topicID); err != nil {
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session deleted but failed to delete thread: %v", err))
 	}
 }
 
 // handleProvidersCommand handles the /providers and /provider commands
 func handleProvidersCommand(config *Config, chatID, threadID int64, text string, isGroup bool) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 
 	if isGroup && threadID > 0 {
 		sessName := getSessionByTopic(config, threadID)
@@ -101,7 +106,7 @@ func handleProvidersCommand(config *Config, chatID, threadID int64, text string,
 			}
 
 			msg := fmt.Sprintf("🤖 **%s**\n\nCurrent provider: %s\n\nSelect a new provider:", sessName, current)
-			sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
+			telegram.SendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
 			return
 		}
 	}
@@ -124,14 +129,14 @@ func handleProvidersCommand(config *Config, chatID, threadID int64, text string,
 	if len(msg) == 1 {
 		msg = append(msg, "\nNo additional providers configured.\n\nConfigure providers in ~/.config/ccc/config.json.")
 	}
-	sendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
+	telegram.SendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
 }
 
 // handleCleanupCommand handles the /cleanup command - delete tmux sessions and Telegram topics
 func handleCleanupCommand(config *Config, chatID, threadID int64) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 	if len(config.Sessions) == 0 {
-		sendMessage(config, chatID, threadID, "No sessions to clean up.")
+		telegram.SendMessage(config, chatID, threadID, "No sessions to clean up.")
 		return
 	}
 
@@ -139,14 +144,14 @@ func handleCleanupCommand(config *Config, chatID, threadID int64) {
 	var errors []string
 
 	for sessName, info := range config.Sessions {
-		if target, err := findExistingWindow(sessName); err == nil && target != "" {
-			exec.Command(tmuxPath, "send-keys", "-t", target, "C-c").Run()
+		if target, err := tmux.FindExistingWindow(sessName); err == nil && target != "" {
+			exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "C-c").Run()
 			time.Sleep(100 * time.Millisecond)
-			exec.Command(tmuxPath, "kill-window", "-t", target).Run()
+			exec.Command(tmux.TmuxPath, "kill-window", "-t", target).Run()
 		}
 
 		if info.TopicID > 0 && config.GroupID > 0 {
-			if err := deleteForumTopic(config, info.TopicID); err != nil {
+			if err := telegram.DeleteForumTopic(config, info.TopicID); err != nil {
 				errors = append(errors, fmt.Sprintf("%s: %v", sessName, err))
 			}
 		}
@@ -155,13 +160,13 @@ func handleCleanupCommand(config *Config, chatID, threadID int64) {
 	}
 
 	config.Sessions = make(map[string]*SessionInfo)
-	saveConfig(config)
+	configpkg.Save(config)
 
 	msg := fmt.Sprintf("🧹 Cleaned %d sessions: %s", len(cleaned), strings.Join(cleaned, ", "))
 	if len(errors) > 0 {
 		msg += fmt.Sprintf("\n\n⚠️ Errors:\n%s", strings.Join(errors, "\n"))
 	}
-	sendMessage(config, chatID, threadID, msg)
+	telegram.SendMessage(config, chatID, threadID, msg)
 }
 
 // parseNameAndProvider parses "name@provider" or "name --provider provider" syntax

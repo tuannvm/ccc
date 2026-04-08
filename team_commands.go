@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/session"
 )
 
@@ -85,7 +87,7 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	name := args[0]
 
 	// Load config
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -108,7 +110,7 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 
 	// Resolve working directory - create folder with team name
 	// Supports: name, ~/path, /absolute/path
-	workDir := resolveProjectPath(config, name)
+	workDir := configpkg.ResolveProjectPath(config, name)
 
 	// Create directory if it doesn't exist
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
@@ -146,7 +148,7 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 	}
 
 	// Local setup succeeded - now create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName, "")
+	topicID, err := telegram.CreateForumTopic(config, name, providerName, "")
 	if err != nil {
 		// Cleanup: kill the tmux window we just created
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+name).Run()
@@ -158,9 +160,9 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 
 	// Save to config
 	config.SetTeamSession(topicID, sessInfo)
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		// Cleanup: delete topic and kill window
-		deleteForumTopic(config, topicID)
+		telegram.DeleteForumTopic(config, topicID)
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+name).Run()
 		return fmt.Errorf("failed to save config: %w", err)
 	}
@@ -191,7 +193,7 @@ func (tc *TeamCommands) NewTeam(args []string) error {
 
 // ListTeams lists all active team sessions
 func (tc *TeamCommands) ListTeams() error {
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -231,7 +233,7 @@ func (tc *TeamCommands) StartTeam(args []string) error {
 
 	name := args[0]
 
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -283,7 +285,7 @@ func (tc *TeamCommands) AttachTeam(args []string) error {
 		}
 	}
 
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -338,7 +340,7 @@ func (tc *TeamCommands) StopTeam(args []string) error {
 
 	name := args[0]
 
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -385,7 +387,7 @@ func (tc *TeamCommands) StopTeam(args []string) error {
 
 	// Save updated config
 	config.SetTeamSession(topicID, sessInfo)
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
@@ -402,7 +404,7 @@ func (tc *TeamCommands) DeleteTeam(args []string) error {
 
 	name := args[0]
 
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -433,7 +435,7 @@ func (tc *TeamCommands) DeleteTeam(args []string) error {
 
 	// Remove from config
 	config.DeleteTeamSession(topicID)
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 

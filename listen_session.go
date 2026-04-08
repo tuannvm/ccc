@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/ledger"
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // handleSessionMessage routes a text message to the appropriate session
 func handleSessionMessage(config *Config, text string, chatID, threadID int64, updateID int) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 
 	// Check if this is a team session (NEW: multi-pane support)
 	if config.IsTeamSession(threadID) {
@@ -26,8 +32,8 @@ func handleSessionMessage(config *Config, text string, chatID, threadID int64, u
 
 		// Only switch if the requested session is different from current
 		// Compare using tmux-safe names since window names are sanitized
-		currentSession := getCurrentSessionName()
-		needsSwitch := currentSession != tmuxSafeName(sessName)
+		currentSession := tmux.GetCurrentSessionName()
+		needsSwitch := currentSession != tmux.SafeName(sessName)
 
 		if needsSwitch {
 			// Switch to the correct session in the single ccc window
@@ -52,15 +58,15 @@ func handleSessionMessage(config *Config, text string, chatID, threadID int64, u
 			}
 
 			// Switch to the session in the single ccc window (always restart when switching sessions)
-			if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
-				sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
+			if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+				telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 				return
 			}
 
 			// Get the target for the project window
-			target, err = getCccWindowTarget(sessName)
+			target, err = tmux.GetWindowTarget(sessName)
 			if err != nil {
-				sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
+				telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
 				return
 			}
 
@@ -68,11 +74,11 @@ func handleSessionMessage(config *Config, text string, chatID, threadID int64, u
 			time.Sleep(1 * time.Second)
 
 			// Replay any undelivered terminal messages for this session
-			undelivered := findUndelivered(sessName, "terminal")
+			undelivered := ledger.FindUndelivered(sessName, "terminal")
 			for _, ur := range undelivered {
 				if ur.Type == "user_prompt" && ur.Origin == "telegram" {
-					if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessName), ur.Text); err == nil {
-						updateDelivery(sessName, ur.ID, "terminal_delivered", true)
+					if err := sendToTmuxFromTelegram(target, tmux.SafeName(sessName), ur.Text); err == nil {
+						ledger.UpdateDelivery(sessName, ur.ID, "terminal_delivered", true)
 					}
 					time.Sleep(500 * time.Millisecond)
 				}
@@ -81,9 +87,9 @@ func handleSessionMessage(config *Config, text string, chatID, threadID int64, u
 			listenLog("sendToTmux: target=%s session=%s (switched from %s)", target, sessName, currentSession)
 		} else {
 			// Already in the correct session, just get the target
-			target, err = getCccWindowTarget(sessName)
+			target, err = tmux.GetWindowTarget(sessName)
 			if err != nil {
-				sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
+				telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to get ccc window: %v", err))
 				return
 			}
 			listenLog("sendToTmux: target=%s session=%s (already active)", target, sessName)
@@ -91,7 +97,7 @@ func handleSessionMessage(config *Config, text string, chatID, threadID int64, u
 
 		// Record in ledger before sending
 		ledgerID := fmt.Sprintf("tg:%d", updateID)
-		appendMessage(&MessageRecord{
+		ledger.AppendMessage(&MessageRecord{
 			ID:                ledgerID,
 			Session:           sessName,
 			Type:              "user_prompt",
@@ -101,13 +107,13 @@ func handleSessionMessage(config *Config, text string, chatID, threadID int64, u
 			TelegramDelivered: true,
 		})
 
-		if err := sendToTmuxFromTelegram(target, tmuxSafeName(sessName), text); err != nil {
+		if err := sendToTmuxFromTelegram(target, tmux.SafeName(sessName), text); err != nil {
 			listenLog("sendToTmux FAILED: target=%s err=%v", target, err)
-			sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 		} else {
-			updateDelivery(sessName, ledgerID, "terminal_delivered", true)
+			ledger.UpdateDelivery(sessName, ledgerID, "terminal_delivered", true)
 		}
 	} else {
-		sendMessage(config, chatID, threadID, "⚠️ No session linked to this topic. Use /new <name> to create one.")
+		telegram.SendMessage(config, chatID, threadID, "⚠️ No session linked to this topic. Use /new <name> to create one.")
 	}
 }

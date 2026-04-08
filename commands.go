@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // Shared logging and state for the listen loop and related commands.
@@ -23,7 +25,7 @@ func listenLog(format string, args ...any) {
 }
 
 func initListenLog() {
-	logPath := filepath.Join(cacheDir(), "ccc.log")
+	logPath := filepath.Join(configpkg.CacheDir(), "ccc.log")
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		listenLogFile = f

@@ -5,11 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // handlePrivateChat handles one-shot Claude execution in private chat
 func handlePrivateChat(config *Config, msg TelegramMessage, chatID, threadID int64) {
-	sendMessage(config, chatID, threadID, "🤖 Running Claude...")
+	telegram.SendMessage(config, chatID, threadID, "🤖 Running Claude...")
 
 	prompt := strings.TrimSpace(msg.Text)
 	if msg.ReplyToMessage != nil && msg.ReplyToMessage.Text != "" {
@@ -28,7 +30,7 @@ func handlePrivateChat(config *Config, msg TelegramMessage, chatID, threadID int
 	go func(p string, cid int64) {
 		defer func() {
 			if r := recover(); r != nil {
-				sendMessage(config, cid, 0, fmt.Sprintf("💥 Panic: %v", r))
+				telegram.SendMessage(config, cid, 0, fmt.Sprintf("💥 Panic: %v", r))
 			}
 		}()
 		output, err := runClaude(p)
@@ -39,6 +41,6 @@ func handlePrivateChat(config *Config, msg TelegramMessage, chatID, threadID int
 				output = fmt.Sprintf("⚠️ %s\n\nExit: %v", output, err)
 			}
 		}
-		sendMessage(config, cid, 0, output)
+		telegram.SendMessage(config, cid, 0, output)
 	}(prompt, chatID)
 }

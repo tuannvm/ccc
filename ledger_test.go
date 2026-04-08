@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/ledger"
 )
 
 // TestLedgerAppendAndRead tests basic ledger operations
@@ -11,7 +14,7 @@ func TestLedgerAppendAndRead(t *testing.T) {
 	// Use a unique session name with temp suffix so the ledger file doesn't collide
 	session := "test-ledger-" + filepath.Base(t.TempDir())
 	// Clean up after test
-	defer os.Remove(ledgerPath(session))
+	defer os.Remove(filepath.Join(config.CacheDir(), "ledger-"+session+".jsonl"))
 
 	// Append a message
 	rec := &MessageRecord{
@@ -23,12 +26,12 @@ func TestLedgerAppendAndRead(t *testing.T) {
 		TerminalDelivered: false,
 		TelegramDelivered: true,
 	}
-	if err := appendMessage(rec); err != nil {
+	if err := ledger.AppendMessage(rec); err != nil {
 		t.Fatalf("appendMessage failed: %v", err)
 	}
 
 	// Read back
-	records := readLedger(session)
+	records := ledger.ReadLedger(session)
 	if len(records) != 1 {
 		t.Fatalf("readLedger returned %d records, want 1", len(records))
 	}
@@ -40,12 +43,12 @@ func TestLedgerAppendAndRead(t *testing.T) {
 	}
 
 	// Update delivery
-	if err := updateDelivery(session, "test:1", "terminal_delivered", true); err != nil {
+	if err := ledger.UpdateDelivery(session, "test:1", "terminal_delivered", true); err != nil {
 		t.Fatalf("updateDelivery failed: %v", err)
 	}
 
 	// Read again — should be merged
-	records = readLedger(session)
+	records = ledger.ReadLedger(session)
 	if len(records) != 1 {
 		t.Fatalf("readLedger returned %d records after update, want 1", len(records))
 	}
@@ -54,15 +57,15 @@ func TestLedgerAppendAndRead(t *testing.T) {
 	}
 
 	// Test isDelivered
-	if !isDelivered(session, "test:1", "terminal") {
-		t.Error("isDelivered(terminal) should be true")
+	if !ledger.IsDelivered(session, "test:1", "terminal") {
+		t.Error("ledger.IsDelivered(terminal) should be true")
 	}
-	if !isDelivered(session, "test:1", "telegram") {
-		t.Error("isDelivered(telegram) should be true")
+	if !ledger.IsDelivered(session, "test:1", "telegram") {
+		t.Error("ledger.IsDelivered(telegram) should be true")
 	}
 
 	// Test findUndelivered
-	appendMessage(&MessageRecord{
+	ledger.AppendMessage(&MessageRecord{
 		ID:                "test:2",
 		Session:           session,
 		Type:              "assistant_text",
@@ -72,9 +75,9 @@ func TestLedgerAppendAndRead(t *testing.T) {
 		TelegramDelivered: false,
 	})
 
-	undelivered := findUndelivered(session, "telegram")
+	undelivered := ledger.FindUndelivered(session, "telegram")
 	if len(undelivered) != 1 {
-		t.Fatalf("findUndelivered(telegram) returned %d, want 1", len(undelivered))
+		t.Fatalf("ledger.FindUndelivered(telegram) returned %d, want 1", len(undelivered))
 	}
 	if undelivered[0].ID != "test:2" {
 		t.Errorf("undelivered ID = %q, want test:2", undelivered[0].ID)
@@ -83,9 +86,9 @@ func TestLedgerAppendAndRead(t *testing.T) {
 
 // TestLedgerDedup tests that contentHash produces consistent hashes
 func TestLedgerDedup(t *testing.T) {
-	h1 := contentHash("hello world")
-	h2 := contentHash("hello world")
-	h3 := contentHash("different text")
+	h1 := ledger.ContentHash("hello world")
+	h2 := ledger.ContentHash("hello world")
+	h3 := ledger.ContentHash("different text")
 
 	if h1 != h2 {
 		t.Errorf("same content produced different hashes: %s vs %s", h1, h2)

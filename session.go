@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // Session matching priority constants
@@ -49,7 +53,7 @@ func getSessionWorkDir(config *Config, sessionName string, sessionInfo *SessionI
 			sessionInfo = config.Sessions[sessionName]
 		}
 		if sessionInfo == nil {
-			return resolveProjectPath(config, sessionName)
+			return configpkg.ResolveProjectPath(config, sessionName)
 		}
 	}
 
@@ -82,7 +86,7 @@ func getSessionWorkDir(config *Config, sessionName string, sessionInfo *SessionI
 	}
 
 	// Use new default path (~/Projects/<sessionName>)
-	return resolveProjectPath(config, sessionName)
+	return configpkg.ResolveProjectPath(config, sessionName)
 }
 
 // findSessionForPath finds the best matching session for a given directory path.
@@ -192,7 +196,6 @@ func waitForNewWorktree(basePath string, existingNames map[string]bool, timeout 
 	return ""
 }
 
-
 // startSession creates/attaches to a tmux window with Telegram topic
 func startSession(continueSession bool) error {
 	// Get current directory name as session name
@@ -203,7 +206,7 @@ func startSession(continueSession bool) error {
 	name := filepath.Base(cwd)
 
 	// Load config to check/create topic
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		// No config, just run claude directly with default provider
 		return runClaudeRaw(continueSession, "", "", "")
@@ -228,14 +231,14 @@ func startSession(continueSession bool) error {
 	// Create topic if it doesn't exist and we have a group configured
 	if config.GroupID != 0 {
 		if _, exists := config.Sessions[name]; !exists {
-			topicID, err := createForumTopic(config, name, providerName, "")
+			topicID, err := telegram.CreateForumTopic(config, name, providerName, "")
 			if err == nil {
 				config.Sessions[name] = &SessionInfo{
 					TopicID:      topicID,
 					Path:         cwd,
 					ProviderName: providerName,
 				}
-				saveConfig(config)
+				configpkg.Save(config)
 
 				// Ensure hooks are installed in the project directory
 				if err := ensureHooksForSession(config, name, config.Sessions[name]); err != nil {
@@ -266,19 +269,19 @@ func startSession(continueSession bool) error {
 		worktreeName = config.Sessions[name].WorktreeName
 	}
 
-	if err := switchSessionInWindow(name, workDir, providerName, resumeSessionID, worktreeName, continueSession, true); err != nil {
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, resumeSessionID, worktreeName, continueSession, true); err != nil {
 		return fmt.Errorf("failed to switch session: %w", err)
 	}
 
 	// Get the ccc window target for attaching
-	target, err := getCccWindowTarget(name)
+	target, err := tmux.GetWindowTarget(name)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
 	if os.Getenv("TMUX") != "" {
 		// Inside tmux: just select the window
-		cmd := exec.Command(tmuxPath, "select-window", "-t", target)
+		cmd := exec.Command(tmux.TmuxPath, "select-window", "-t", target)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -288,7 +291,7 @@ func startSession(continueSession bool) error {
 	// Outside tmux: need to attach to the session and select the window
 	// First attach to the session, then select the specific window
 	sessName := strings.SplitN(target, ":", 2)[0]
-	cmd := exec.Command(tmuxPath, "attach-session", "-t", sessName)
+	cmd := exec.Command(tmux.TmuxPath, "attach-session", "-t", sessName)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -300,7 +303,7 @@ func startSession(continueSession bool) error {
 
 	// Wait a moment for attach to complete, then select the window
 	time.Sleep(100 * time.Millisecond)
-	exec.Command(tmuxPath, "select-window", "-t", target).Run()
+	exec.Command(tmux.TmuxPath, "select-window", "-t", target).Run()
 
 	// Wait for attach command to complete
 	return cmd.Wait()
@@ -308,7 +311,7 @@ func startSession(continueSession bool) error {
 
 // startDetached creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach)
 func startDetached(name string, workDir string, prompt string) error {
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -325,13 +328,13 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Create Telegram topic
-	topicID, err := createForumTopic(config, name, providerName, "")
+	topicID, err := telegram.CreateForumTopic(config, name, providerName, "")
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
 	// Switch to the new session in the single ccc window
-	if err := switchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
@@ -341,7 +344,7 @@ func startDetached(name string, workDir string, prompt string) error {
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
@@ -351,13 +354,13 @@ func startDetached(name string, workDir string, prompt string) error {
 	}
 
 	// Get the ccc window target
-	target, err := getCccWindowTarget(name)
+	target, err := tmux.GetWindowTarget(name)
 	if err != nil {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
 	// Wait for Claude to be ready before sending prompt
-	if err := waitForClaude(target, 30*time.Second); err != nil {
+	if err := tmux.WaitForClaude(target, 30*time.Second); err != nil {
 		return fmt.Errorf("claude did not start in time: %w", err)
 	}
 
@@ -375,7 +378,7 @@ func startDetached(name string, workDir string, prompt string) error {
 // If not, it creates a new session with topic, hooks, and starts Claude.
 // This is the default behavior when running "ccc" from terminal.
 func startSessionInCurrentDir(message string) error {
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config. Run: ccc setup <bot_token>")
 	}

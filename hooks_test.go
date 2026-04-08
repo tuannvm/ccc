@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tuannvm/ccc/pkg/hooks"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // TestExtractRecentAssistantTexts tests parsing transcript JSONL files
@@ -436,9 +437,9 @@ func TestDetectConsentDialog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := detectConsentDialog(tt.content)
+			result := tmux.DetectConsentDialog(tt.content)
 			if result != tt.expected {
-				t.Errorf("detectConsentDialog() = %v, want %v\nContent: %q", result, tt.expected, tt.content)
+				t.Errorf("tmux.DetectConsentDialog() = %v, want %v\nContent: %q", result, tt.expected, tt.content)
 			}
 		})
 	}

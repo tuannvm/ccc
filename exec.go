@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // Command execution helpers.
@@ -71,17 +74,17 @@ func runClaude(prompt string) (string, error) {
 		}
 	}
 
-	if claudePath == "" {
+	if tmux.ClaudePath == "" {
 		return "Error: claude binary not found", fmt.Errorf("claude not found")
 	}
-	cmd := exec.CommandContext(ctx, claudePath, "--dangerously-skip-permissions", "-p", prompt)
+	cmd := exec.CommandContext(ctx, tmux.ClaudePath, "--dangerously-skip-permissions", "-p", prompt)
 	cmd.Dir = workDir
 
 	// Start with current environment
 	cmd.Env = os.Environ()
 
 	// Load config and apply provider settings
-	config, err := loadConfig()
+	config, err := config.Load()
 	if err == nil {
 		provider := getProvider(config, "")
 		cmd.Env = applyProviderEnv(cmd.Env, provider, config)

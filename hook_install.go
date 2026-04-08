@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 )
 
@@ -30,7 +31,7 @@ func uninstallSkill() {
 }
 
 func cleanupGlobalHooks() error {
-	return hooks.CleanupGlobalHooks(loadConfig)
+	return hooks.CleanupGlobalHooks(configpkg.Load)
 }
 
 func installHooksToCurrentDir() error {

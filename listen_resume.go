@@ -5,14 +5,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // handleResumeCommand handles the /resume command - manage Claude session IDs
 func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 	sessName := getSessionByTopic(config, threadID)
 	if sessName == "" {
-		sendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
+		telegram.SendMessage(config, chatID, threadID, "❌ No session mapped to this topic.")
 		return
 	}
 	sessionInfo := config.Sessions[sessName]
@@ -33,7 +37,7 @@ func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
 
 		transcriptDir := resolveTranscriptDir(config, sessionInfo, home, pathComponent)
 		if transcriptDir == "" {
-			sendMessage(config, chatID, threadID, "📋 No previous Claude sessions found for this project.")
+			telegram.SendMessage(config, chatID, threadID, "📋 No previous Claude sessions found for this project.")
 			return
 		}
 
@@ -47,7 +51,7 @@ func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
 		}
 
 		if len(sessions) == 0 {
-			sendMessage(config, chatID, threadID, "📋 No previous Claude sessions found for this project.")
+			telegram.SendMessage(config, chatID, threadID, "📋 No previous Claude sessions found for this project.")
 			return
 		}
 
@@ -64,7 +68,7 @@ func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
 			}
 		}
 		msg = append(msg, "", fmt.Sprintf("Usage: /resume <session_id> to switch sessions"))
-		sendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
+		telegram.SendMessage(config, chatID, threadID, strings.Join(msg, "\n"))
 		return
 	}
 
@@ -84,13 +88,13 @@ func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
 	transcriptPath := filepath.Join(transcriptDir, arg+".jsonl")
 
 	if _, err := os.Stat(transcriptPath); os.IsNotExist(err) {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Session not found: %s\n\nUse /resume to list available sessions.", arg))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Session not found: %s\n\nUse /resume to list available sessions.", arg))
 		return
 	}
 
 	oldID := sessionInfo.ClaudeSessionID
 	sessionInfo.ClaudeSessionID = arg
-	saveConfig(config)
+	configpkg.Save(config)
 
 	msg := fmt.Sprintf("✅ Switched to session: %s", arg)
 	if oldID != "" && oldID != arg {
@@ -101,7 +105,7 @@ func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
 		msg += fmt.Sprintf("\n\nPrevious: %s", shortOld)
 	}
 	msg += "\n\nRestarting session..."
-	sendMessage(config, chatID, threadID, msg)
+	telegram.SendMessage(config, chatID, threadID, msg)
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
@@ -111,11 +115,11 @@ func handleResumeCommand(config *Config, chatID, threadID int64, text string) {
 		worktreeName = sessionInfo.WorktreeName
 	}
 
-	if err := switchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, arg, worktreeName, false, false); err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
+	if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, arg, worktreeName, false, false); err != nil {
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 	} else {
 		sessionInfo.ClaudeSessionID = arg
-		saveConfig(config)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' resumed with Claude session %s", sessName, arg))
+		configpkg.Save(config)
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' resumed with Claude session %s", sessName, arg))
 	}
 }

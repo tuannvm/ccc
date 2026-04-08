@@ -1,7 +1,10 @@
 package main
 
 import (
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
+	"github.com/tuannvm/ccc/pkg/ledger"
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // deliverUnsentTexts scans transcript tail and sends any assistant text
@@ -15,31 +18,31 @@ func deliverUnsentTexts(cfg *Config, sessName string, topicID int64, transcriptP
 		InsertIntoToolMsg: insertIntoToolMsg,
 		ClaudeSessionID:   claudeSessionID,
 		// Callbacks from root-level functions
-		LoadToolState:                loadToolState,
-		AddTextToToolState:           addTextToToolState,
-		SaveToolState:                saveToolState,
-		FormatToolMessage:            formatToolMessage,
-		EditMessageHTML:              editMessageHTML,
-		SendMessageHTML:              sendAssistantMessage,
-		SendMessageGetID:             sendMessageGetID,
-		SendMessage:                  sendMessage,
-		IsDelivered:                  isDelivered,
-		AppendMessage: func(msg *MessageRecord) {
-			appendMessage(msg)
+		LoadToolState:      loadToolState,
+		AddTextToToolState: addTextToToolState,
+		SaveToolState:      saveToolState,
+		FormatToolMessage:  formatToolMessage,
+		EditMessageHTML:    telegram.EditMessageHTML,
+		SendMessageHTML:    sendAssistantMessage,
+		SendMessageGetID:   telegram.SendMessageGetID,
+		SendMessage:        telegram.SendMessage,
+		IsDelivered:        ledger.IsDelivered,
+		AppendMessage: func(msg *ledger.MessageRecord) {
+			ledger.AppendMessage(msg)
 		},
-		ClearToolState:               clearToolState,
-		InferRoleFromTranscriptPath:  inferRoleFromTranscriptPath,
+		ClearToolState:              clearToolState,
+		InferRoleFromTranscriptPath: inferRoleFromTranscriptPath,
 	})
 }
 
 // handleStopRetry retries transcript reading 3 times at 2-second intervals
 func handleStopRetry(sessName string, topicID int64, transcriptPath string) error {
 	return hooks.HandleStopRetry(&hooks.HandleStopRetryConfig{
-		SessionName:         sessName,
-		TopicID:             topicID,
-		TranscriptPath:      transcriptPath,
-		LoadConfig:          loadConfig,
-		DeliverUnsentTexts:  deliverUnsentTexts,
+		SessionName:        sessName,
+		TopicID:            topicID,
+		TranscriptPath:     transcriptPath,
+		LoadConfig:         configpkg.Load,
+		DeliverUnsentTexts: deliverUnsentTexts,
 	})
 }
 

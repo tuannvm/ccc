@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // Send notification (only if away mode is on).
 func send(message string) error {
-	config, err := loadConfig()
+	config, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("not configured. Run: ccc setup <bot_token>")
 	}
@@ -27,11 +30,11 @@ func send(message string) error {
 			}
 			// Match against saved path, subdirectories of saved path, or suffix
 			if cwd == info.Path || strings.HasPrefix(cwd, info.Path+"/") || strings.HasSuffix(cwd, "/"+name) {
-				return sendMessage(config, config.GroupID, info.TopicID, message)
+				return telegram.SendMessage(config, config.GroupID, info.TopicID, message)
 			}
 		}
 	}
 
 	// Fallback to private chat
-	return sendMessage(config, config.ChatID, 0, message)
+	return telegram.SendMessage(config, config.ChatID, 0, message)
 }

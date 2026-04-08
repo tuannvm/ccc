@@ -7,11 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // handleNewCommand handles the /new command - create/restart session
 func handleNewCommand(config *Config, chatID, threadID int64, text string) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/new"))
 
 	if arg != "" {
@@ -23,7 +27,7 @@ func handleNewCommand(config *Config, chatID, threadID int64, text string) {
 	if threadID > 0 {
 		sessionName := getSessionByTopic(config, threadID)
 		if sessionName == "" {
-			sendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
+			telegram.SendMessage(config, chatID, threadID, "❌ No session mapped to this topic. Use /new <name> to create one.")
 			return
 		}
 		sessionInfo := config.Sessions[sessionName]
@@ -41,13 +45,13 @@ func handleNewCommand(config *Config, chatID, threadID int64, text string) {
 			listenLog("[/new] Failed to verify/install hooks for %s: %v", sessionName, err)
 		}
 
-		if err := switchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
-			sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
+		if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 		} else {
-			sendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' restarted", sessionName))
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("🚀 Session '%s' restarted", sessionName))
 		}
 	} else {
-		sendMessage(config, chatID, threadID, "Usage: /new <name> to create a new session")
+		telegram.SendMessage(config, chatID, threadID, "Usage: /new <name> to create a new session")
 	}
 }
 
@@ -76,7 +80,7 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 		sessionName = extractRepoName(sessionInput)
 
 		if sessionName == "" {
-			sendMessage(config, chatID, threadID, "❌ Invalid git URL: could not extract repository name")
+			telegram.SendMessage(config, chatID, threadID, "❌ Invalid git URL: could not extract repository name")
 			return
 		}
 
@@ -86,24 +90,24 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 				available := getProviderNames(config)
 				msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 					providerName, strings.Join(available, ", "))
-				sendMessage(config, chatID, threadID, msg)
+				telegram.SendMessage(config, chatID, threadID, msg)
 				return
 			}
 		}
 
 		existing, exists := config.Sessions[sessionName]
 		if exists && existing != nil && existing.TopicID != 0 {
-			sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
 			return
 		}
 
-		workDir := filepath.Join(getProjectsDir(config), sessionName)
+		workDir := filepath.Join(configpkg.GetProjectsDir(config), sessionName)
 		if exists && existing != nil && existing.Path != "" {
 			workDir = existing.Path
 		}
 
 		displayURL := redactGitURL(gitURL)
-		sendMessage(config, chatID, threadID, fmt.Sprintf("📥 Cloning %s into session '%s'...", displayURL, sessionName))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("📥 Cloning %s into session '%s'...", displayURL, sessionName))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		result, err := cloneRepo(ctx, gitURL, workDir)
@@ -120,14 +124,14 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 			} else if strings.Contains(err.Error(), "context deadline exceeded") {
 				errMsg = fmt.Sprintf("⏱️ Cloning timed out after 5 minutes. The repository may be very large or the network may be slow.")
 			}
-			sendMessage(config, chatID, threadID, errMsg)
+			telegram.SendMessage(config, chatID, threadID, errMsg)
 			return
 		}
 
 		if result == CloneResultCloned {
-			sendMessage(config, chatID, threadID, "✅ Repository cloned")
+			telegram.SendMessage(config, chatID, threadID, "✅ Repository cloned")
 		} else if result == CloneResultAlreadyExists {
-			sendMessage(config, chatID, threadID, "✅ Repository ready (using existing clone)")
+			telegram.SendMessage(config, chatID, threadID, "✅ Repository ready (using existing clone)")
 		}
 
 		gitURLHandled = true
@@ -139,7 +143,7 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 			available := getProviderNames(config)
 			msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 				providerName, strings.Join(available, ", "))
-			sendMessage(config, chatID, threadID, msg)
+			telegram.SendMessage(config, chatID, threadID, msg)
 			return
 		}
 	}
@@ -147,7 +151,7 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 	if providerName == "" && !gitURLHandled {
 		existing, exists := config.Sessions[sessionName]
 		if exists && existing != nil && existing.TopicID != 0 {
-			sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
 			return
 		}
 
@@ -165,24 +169,24 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 		}
 
 		msg := fmt.Sprintf("🤖 Select provider for '%s':", sessionName)
-		sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
+		telegram.SendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
 		return
 	}
 
 	existing, exists := config.Sessions[sessionName]
 	if exists && existing != nil && existing.TopicID != 0 {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
 		return
 	}
 	if providerName == "" {
 		providerName = config.ActiveProvider
 	}
-	topicID, err := createForumTopic(config, sessionName, providerName, "")
+	topicID, err := telegram.CreateForumTopic(config, sessionName, providerName, "")
 	if err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 		return
 	}
-	workDir := resolveProjectPath(config, sessionName)
+	workDir := configpkg.ResolveProjectPath(config, sessionName)
 	if exists && existing != nil && existing.Path != "" {
 		workDir = existing.Path
 	}
@@ -191,7 +195,7 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	saveConfig(config)
+	configpkg.Save(config)
 
 	if err := ensureHooksForSession(config, sessionName, config.Sessions[sessionName]); err != nil {
 		listenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
@@ -204,9 +208,9 @@ func handleNewWithArg(config *Config, chatID, threadID int64, arg string) {
 	if providerName != "" {
 		providerMsg = fmt.Sprintf("\n🤖 Provider: %s", providerName)
 	}
-	if err := switchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
-		sendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+		telegram.SendMessage(config, config.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 	} else {
-		sendMessage(config, config.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
+		telegram.SendMessage(config, config.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
 	}
 }

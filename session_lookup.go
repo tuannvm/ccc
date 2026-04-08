@@ -3,14 +3,16 @@ package main
 import (
 	"os/exec"
 	"strings"
+
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // getCurrentTmuxWindowName returns the current tmux window name, or empty string if not in tmux
 func getCurrentTmuxWindowName() string {
-	if tmuxPath == "" {
+	if tmux.TmuxPath == "" {
 		return ""
 	}
-	cmd := exec.Command(tmuxPath, "display-message", "-p", "#{window_name}")
+	cmd := exec.Command(tmux.TmuxPath, "display-message", "-p", "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -55,7 +57,7 @@ func findSessionByWindowName(config *Config, windowName string) (string, int64) 
 		if name == "" || info == nil {
 			continue
 		}
-		if tmuxSafeName(name) == windowName {
+		if tmux.SafeName(name) == windowName {
 			// Found a match via sanitization
 			if sanitizedMatch != "" {
 				// Ambiguous! Multiple sessions sanitize to the same window name
@@ -74,7 +76,7 @@ func findSessionByWindowName(config *Config, windowName string) (string, int64) 
 			if info == nil {
 				continue
 			}
-			if tmuxSafeName(info.SessionName) == windowName {
+			if tmux.SafeName(info.SessionName) == windowName {
 				if sanitizedMatch != "" {
 					hookLog("WARNING: Ambiguous window name '%s' matches multiple sessions: %s, %s",
 						windowName, sanitizedMatch, info.SessionName)
@@ -146,7 +148,7 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 			if info == nil || info.ClaudeSessionID != claudeSessionID {
 				continue
 			}
-			if tmuxSafeName(name) == currentWindowName {
+			if tmux.SafeName(name) == currentWindowName {
 				if sanitizedMatch != "" {
 					// Ambiguous! Multiple sessions with same ID sanitize to the same window name
 					hookLog("WARNING: Ambiguous claude_session_id '%s' and window '%s' matches multiple sessions: %s, %s",
@@ -167,7 +169,7 @@ func findSessionByClaudeID(config *Config, claudeSessionID string) (string, int6
 				if info.Panes != nil {
 					for _, pane := range info.Panes {
 						if pane != nil && pane.ClaudeSessionID == claudeSessionID {
-							if tmuxSafeName(info.SessionName) == currentWindowName {
+							if tmux.SafeName(info.SessionName) == currentWindowName {
 								if sanitizedMatch != "" {
 									// Ambiguous! Multiple sessions with same ID sanitize to the same window name
 									hookLog("WARNING: Ambiguous claude_session_id '%s' and window '%s' matches multiple sessions: %s, %s",

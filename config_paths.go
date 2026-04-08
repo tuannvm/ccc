@@ -7,36 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/tuannvm/ccc/pkg/config"
 )
-
-// configDir returns ~/.config/ccc (created if needed)
-func configDir() string {
-	return config.ConfigDir()
-}
-
-// cacheDir returns ~/Library/Caches/ccc (created if needed)
-func cacheDir() string {
-	return config.CacheDir()
-}
-
-// getConfigPath returns the path to config.json, with migration from old location
-func getConfigPath() string {
-	return config.GetConfigPath()
-}
-
-// getProjectsDir returns the base directory for projects
-func getProjectsDir(c *Config) string {
-	return config.GetProjectsDir(c)
-}
-
-// resolveProjectPath resolves the full path for a project
-// If name starts with / or ~/, it's treated as absolute/home-relative path
-// Otherwise, it's relative to projects_dir
-func resolveProjectPath(c *Config, name string) string {
-	return config.ResolveProjectPath(c, name)
-}
 
 // expandPath expands ~ to home directory
 func expandPath(path string) string {
@@ -380,7 +351,7 @@ func cloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error)
 				slashIdx := strings.Index(afterAt, "/")
 				if colonIdx > 0 && (slashIdx == -1 || colonIdx < slashIdx) {
 					// SCP-style: user@host:path -> host/path
-					u = afterAt // Strip username@
+					u = afterAt                             // Strip username@
 					u = u[:colonIdx] + "/" + u[colonIdx+1:] // Replace colon with slash
 				} else {
 					// HTTPS-style or SSH-style with slash: user@host/path -> host/path

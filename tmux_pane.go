@@ -9,38 +9,6 @@ import (
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
-// detectConsentDialog checks if the content matches a consent/trust dialog pattern.
-func detectConsentDialog(content string) bool {
-	return tmux.DetectConsentDialog(content)
-}
-
-// captureVisiblePane captures only the visible portion of a tmux pane to avoid
-// matching stale dialog text from scrollback. Returns the captured content as string.
-func captureVisiblePane(target string) string {
-	return tmux.CaptureVisiblePane(target)
-}
-
-// autoAcceptTrustDialog checks if a workspace trust/consent dialog is visible
-// and auto-accepts it by sending Enter. Returns true if dialog was detected and accepted.
-// Uses generic pattern detection instead of exact strings to handle UI variations.
-// Uses bounded capture to avoid matching stale dialog text from scrollback.
-func autoAcceptTrustDialog(target string) bool {
-	return tmux.AutoAcceptTrustDialog(target)
-}
-
-// waitForClaude polls the tmux pane until Claude Code's input prompt appears.
-// It also handles the workspace trust dialog introduced in Claude Code 2.1.84+
-// by auto-accepting it when detected.
-// Note: Only -p (print) mode skips this dialog; --dangerously-skip-permissions does not.
-func waitForClaude(target string, timeout time.Duration) error {
-	return tmux.WaitForClaude(target, timeout)
-}
-
-// windowNameFromTarget extracts the window name from a "session:window" target
-func windowNameFromTarget(target string) string {
-	return tmux.WindowNameFromTarget(target)
-}
-
 // sendToTmuxFromTelegram sets the Telegram active flag before sending,
 // so the permission hook knows this input came from Telegram and requires OTP.
 func sendToTmuxFromTelegram(target string, windowName string, text string) error {
@@ -90,13 +58,13 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		pasteDelay = min(pasteDelay, 200*time.Millisecond)
 
 		// Send bracketed paste start sequence: ESC [ 2 0 0 ~
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", "\x1b[200~").Run(); err != nil {
+		if err := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "-l", "\x1b[200~").Run(); err != nil {
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)
 
 		// Send the actual text content
-		cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
+		cmd := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "-l", text)
 		if err := cmd.Run(); err != nil {
 			return err
 		}
@@ -104,7 +72,7 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 		time.Sleep(pasteDelay)
 
 		// Send bracketed paste end sequence: ESC [ 2 0 1 ~
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", "\x1b[201~").Run(); err != nil {
+		if err := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "-l", "\x1b[201~").Run(); err != nil {
 			return err
 		}
 		// Brief delay before checking buffer
@@ -112,7 +80,7 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 	} else {
 		// Single-line text: use original simple approach
 		listenLog("sendToTmuxWithDelay: single-line text (%d chars)", len(text))
-		cmd := exec.Command(tmuxPath, "send-keys", "-t", target, "-l", text)
+		cmd := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "-l", text)
 		if err := cmd.Run(); err != nil {
 			return err
 		}
@@ -135,18 +103,18 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 
 	// Dismiss autocomplete popup that bracketed paste may trigger
 	time.Sleep(100 * time.Millisecond)
-	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Escape").Run(); err != nil {
+	if err := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "Escape").Run(); err != nil {
 		listenLog("sendToTmuxWithDelay: failed to send Escape: %v", err)
 	}
 
 	// Send Enter to execute the prompt
 	// Claude Code 2.1.84+ requires double Enter to submit
 	time.Sleep(50 * time.Millisecond)
-	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+	if err := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
 		return err
 	}
 	time.Sleep(50 * time.Millisecond)
-	if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+	if err := exec.Command(tmux.TmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
 		return err
 	}
 
@@ -217,7 +185,7 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 	for time.Now().Before(deadline) {
 		// Use -e for escape sequences and -J to join wrapped lines
 		// Do NOT use -C as it escapes non-ASCII bytes, breaking Unicode prompt detection
-		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p", "-e", "-J")
+		cmd := exec.Command(tmux.TmuxPath, "capture-pane", "-t", target, "-p", "-e", "-J")
 		out, err := cmd.Output()
 		if err == nil {
 			content := string(out)
@@ -240,9 +208,4 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 	}
 
 	return false
-}
-
-// killTmuxSession kills an entire tmux session (used for temporary sessions like auth)
-func killTmuxSession(name string) error {
-	return tmux.KillSession(name)
 }

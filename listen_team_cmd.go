@@ -6,12 +6,15 @@ import (
 	"os/exec"
 	"strings"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/telegram"
+
 	"github.com/tuannvm/ccc/session"
 )
 
 // handleTeamCreateCommand handles the /team command - create team session
 func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string) {
-	config, _ = loadConfig()
+	config, _ = configpkg.Load()
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/team"))
 
 	// /team <name>[@provider] - create brand new team session + topic
@@ -24,7 +27,7 @@ func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string
 				available := getProviderNames(config)
 				msg := fmt.Sprintf("❌ Unknown provider '%s'\n\nAvailable providers: %s",
 					providerName, strings.Join(available, ", "))
-				sendMessage(config, chatID, threadID, msg)
+				telegram.SendMessage(config, chatID, threadID, msg)
 				return
 			}
 		}
@@ -35,7 +38,7 @@ func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string
 				if sessInfo != nil {
 					sessName := getSessionNameFromInfo(sessInfo)
 					if sessName == teamName {
-						sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
+						telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
 						return
 					}
 				}
@@ -55,7 +58,7 @@ func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string
 			}
 
 			msg := fmt.Sprintf("🤖 Select provider for team '%s':", teamName)
-			sendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
+			telegram.SendMessageWithKeyboard(config, chatID, threadID, msg, buttons)
 			return
 		}
 
@@ -67,26 +70,26 @@ func handleTeamCreateCommand(config *Config, chatID, threadID int64, text string
 	if config.IsTeamSession(threadID) {
 		sessInfo, exists := config.GetTeamSession(threadID)
 		if !exists || sessInfo == nil {
-			sendMessage(config, chatID, threadID, "❌ Team session not found. Use /team <name> to create one.")
+			telegram.SendMessage(config, chatID, threadID, "❌ Team session not found. Use /team <name> to create one.")
 			return
 		}
 
 		runtime := session.GetRuntime(session.SessionKindTeam)
 		if runtime == nil {
-			sendMessage(config, chatID, threadID, "❌ Team runtime not available.")
+			telegram.SendMessage(config, chatID, threadID, "❌ Team runtime not available.")
 			return
 		}
 
 		if err := runtime.StartClaude(sessInfo, sessInfo.Path); err != nil {
-			sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start Claude: %v", err))
+			telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to start Claude: %v", err))
 			return
 		}
 
-		sendMessage(config, chatID, threadID, "✅ Team session restarted!")
+		telegram.SendMessage(config, chatID, threadID, "✅ Team session restarted!")
 		return
 	}
 
-	sendMessage(config, chatID, threadID, "❌ No team session linked to this topic. Use /team <name> to create one.")
+	telegram.SendMessage(config, chatID, threadID, "❌ No team session linked to this topic. Use /team <name> to create one.")
 }
 
 // createTeamSession creates a new team session with the given provider
@@ -96,13 +99,13 @@ func createTeamSession(config *Config, chatID, threadID int64, teamName, provide
 		if sessInfo != nil {
 			sessName := getSessionNameFromInfo(sessInfo)
 			if sessName == teamName {
-				sendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
+				telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d). Use /team without args in that topic to restart.", teamName, topicID))
 				return
 			}
 		}
 	}
 
-	workDir := resolveProjectPath(config, teamName)
+	workDir := configpkg.ResolveProjectPath(config, teamName)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
 	}
@@ -121,28 +124,28 @@ func createTeamSession(config *Config, chatID, threadID int64, teamName, provide
 
 	runtime := session.GetRuntime(session.SessionKindTeam)
 	if runtime == nil {
-		sendMessage(config, chatID, threadID, "❌ Team runtime not available. Check your installation.")
+		telegram.SendMessage(config, chatID, threadID, "❌ Team runtime not available. Check your installation.")
 		return
 	}
 
 	if err := runtime.EnsureLayout(sessInfo, workDir); err != nil {
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create team layout: %v", err))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create team layout: %v", err))
 		return
 	}
 
-	topicID, err := createForumTopic(config, teamName, providerName, "")
+	topicID, err := telegram.CreateForumTopic(config, teamName, providerName, "")
 	if err != nil {
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 		return
 	}
 
 	sessInfo.TopicID = topicID
 	config.SetTeamSession(topicID, sessInfo)
-	if err := saveConfig(config); err != nil {
-		deleteForumTopic(config, topicID)
+	if err := configpkg.Save(config); err != nil {
+		telegram.DeleteForumTopic(config, topicID)
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
-		sendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
+		telegram.SendMessage(config, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
 		return
 	}
 
@@ -163,5 +166,5 @@ func createTeamSession(config *Config, chatID, threadID int64, teamName, provide
 	msg += "  /executor <msg>  - Send to executor\n"
 	msg += "  /reviewer <msg>  - Send to reviewer\n"
 	msg += "  <msg> (no cmd)   - Send to executor (default)"
-	sendMessage(config, chatID, threadID, msg)
+	telegram.SendMessage(config, chatID, threadID, msg)
 }

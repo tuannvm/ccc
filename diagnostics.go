@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // Diagnostics: system stats and doctor command.
@@ -105,8 +108,8 @@ func doctor() {
 
 	// Check tmux
 	fmt.Print("tmux.............. ")
-	if tmuxPath != "" {
-		fmt.Printf("✅ %s\n", tmuxPath)
+	if tmux.TmuxPath != "" {
+		fmt.Printf("✅ %s\n", tmux.TmuxPath)
 	} else {
 		fmt.Println("❌ not found")
 		fmt.Println("   Install: brew install tmux (macOS) or apt install tmux (Linux)")
@@ -115,8 +118,8 @@ func doctor() {
 
 	// Check claude
 	fmt.Print("claude............ ")
-	if claudePath != "" {
-		fmt.Printf("✅ %s\n", claudePath)
+	if tmux.ClaudePath != "" {
+		fmt.Printf("✅ %s\n", tmux.ClaudePath)
 	} else {
 		fmt.Println("❌ not found")
 		fmt.Println("   Install: npm install -g @anthropic-ai/claude-code")
@@ -147,13 +150,13 @@ func doctor() {
 
 	// Check config
 	fmt.Print("config............ ")
-	config, err := loadConfig()
+	config, err := configpkg.Load()
 	if err != nil {
 		fmt.Println("❌ not found")
 		fmt.Println("   Run: ccc setup <bot_token>")
 		allGood = false
 	} else {
-		fmt.Printf("✅ %s\n", getConfigPath())
+		fmt.Printf("✅ %s\n", configpkg.GetConfigPath())
 
 		// Check bot token
 		fmt.Print("  bot_token....... ")

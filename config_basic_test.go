@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 // TestConfigSaveLoad tests saving and loading config
@@ -33,7 +35,7 @@ func TestConfigSaveLoad(t *testing.T) {
 	}
 
 	// Save config
-	if err := saveConfig(config); err != nil {
+	if err := configpkg.Save(config); err != nil {
 		t.Fatalf("saveConfig failed: %v", err)
 	}
 
@@ -44,7 +46,7 @@ func TestConfigSaveLoad(t *testing.T) {
 	}
 
 	// Load config
-	loaded, err := loadConfig()
+	loaded, err := configpkg.Load()
 	if err != nil {
 		t.Fatalf("loadConfig failed: %v", err)
 	}
@@ -85,7 +87,7 @@ func TestConfigLoadNonExistent(t *testing.T) {
 	os.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
 
-	_, err = loadConfig()
+	_, err = configpkg.Load()
 	if err == nil {
 		t.Error("loadConfig should fail for non-existent file")
 	}
@@ -110,7 +112,7 @@ func TestConfigSessionsInitialized(t *testing.T) {
 		t.Fatalf("Failed to write test config: %v", err)
 	}
 
-	loaded, err := loadConfig()
+	loaded, err := configpkg.Load()
 	if err != nil {
 		t.Fatalf("loadConfig failed: %v", err)
 	}
