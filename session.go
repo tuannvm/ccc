@@ -25,13 +25,7 @@ type sessionMatch struct {
 	priority int
 }
 
-// tmuxSafeName converts a session name to a tmux-safe window name
-// (dots are interpreted as window/pane separators in tmux)
-// We replace dots with "__" (double underscore) to avoid name collisions
-// while keeping the name readable and avoiding conflicts with natural underscores
-func tmuxSafeName(name string) string {
-	return strings.ReplaceAll(name, ".", "__")
-}
+// tmuxSafeName is in tmux_session.go (wrapper for tmux.SafeName)
 
 // getWindowID safely looks up the tmux WindowID from config for a session name.
 // Returns empty string if the session or WindowID is not set.

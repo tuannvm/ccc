@@ -1,111 +1,23 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // detectConsentDialog checks if the content matches a consent/trust dialog pattern.
-// Uses generic pattern detection to handle UI variations across versions.
 func detectConsentDialog(content string) bool {
-	lowerContent := strings.ToLower(content)
-
-	// Generic consent dialog detection using multiple heuristics:
-	// 1. Has numbered options (1/2, [1]/[2], etc.) - characteristic of selection dialogs
-	// 2. Has trust/safety keywords AND exit/decline keywords - consent dialog structure
-	// 3. NOT showing Claude's active input prompt (indicated by "❯" with Claude context)
-
-	// Check for numbered options - looks for patterns like "1.", "2)", "[1]", etc.
-	optionPattern := regexp.MustCompile(`[1-9][\.\)\]]`)
-	lines := strings.Split(content, "\n")
-	foundDigits := make(map[int]bool)
-	for _, line := range lines {
-		matches := optionPattern.FindAllStringIndex(line, -1)
-		for _, match := range matches {
-			for i := match[0]; i < match[1]; i++ {
-				if line[i] >= '1' && line[i] <= '9' {
-					foundDigits[int(line[i]-'0')] = true
-					break
-				}
-			}
-		}
-	}
-	hasNumberedOptions := len(foundDigits) >= 2
-
-	trustKeywords := []string{"trust", "safety check", "confirm", "allow", "proceed", "project you created", "you trust"}
-	exitKeywords := []string{"exit", "decline", "cancel", "skip", "deny"}
-
-	hasTrustKeyword := false
-	hasExitKeyword := false
-	for _, kw := range trustKeywords {
-		if strings.Contains(lowerContent, strings.ToLower(kw)) {
-			hasTrustKeyword = true
-			break
-		}
-	}
-	for _, kw := range exitKeywords {
-		if strings.Contains(lowerContent, strings.ToLower(kw)) {
-			hasExitKeyword = true
-			break
-		}
-	}
-
-	// Active Claude context - more specific patterns that indicate real Claude session
-	hasActiveClaudeContext := strings.Contains(content, "How can I help") ||
-		strings.Contains(content, "I can help") ||
-		strings.Contains(content, "Bash:") ||
-		strings.Contains(content, "function:") ||
-		strings.Contains(content, "result:")
-
-	hasPrompt := strings.Contains(content, "❯")
-	isConsentDialog := hasNumberedOptions && hasTrustKeyword && hasExitKeyword &&
-		(!hasPrompt || !hasActiveClaudeContext)
-
-	return isConsentDialog
+	return tmux.DetectConsentDialog(content)
 }
 
 // captureVisiblePane captures only the visible portion of a tmux pane to avoid
 // matching stale dialog text from scrollback. Returns the captured content as string.
 func captureVisiblePane(target string) string {
-	// Get the pane height to limit capture to visible window only
-	heightCmd := exec.Command(tmuxPath, "display-message", "-p", "-t", target, "#{pane_height}")
-	heightOut, err := heightCmd.Output()
-	if err != nil {
-		// Fallback to unbounded capture if height query fails
-		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
-		out, err := cmd.Output()
-		if err != nil {
-			return ""
-		}
-		return string(out)
-	}
-
-	height, err := strconv.Atoi(strings.TrimSpace(string(heightOut)))
-	if err != nil || height <= 0 {
-		// Fallback to unbounded capture if height is invalid
-		cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p")
-		out, err := cmd.Output()
-		if err != nil {
-			return ""
-		}
-		return string(out)
-	}
-
-	// Capture only the visible window using -S -0 -E <height-1>
-	// -S -0: start from line 0 (top visible line, not scrollback)
-	// -E <height-1>: capture up to but not including the line after the visible pane
-	// (tmux line numbering is zero-based, -E bound is inclusive)
-	cmd := exec.Command(tmuxPath, "capture-pane", "-t", target, "-p", "-S", "-0", "-E", fmt.Sprintf("%d", height-1))
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
+	return tmux.CaptureVisiblePane(target)
 }
 
 // autoAcceptTrustDialog checks if a workspace trust/consent dialog is visible
@@ -113,20 +25,7 @@ func captureVisiblePane(target string) string {
 // Uses generic pattern detection instead of exact strings to handle UI variations.
 // Uses bounded capture to avoid matching stale dialog text from scrollback.
 func autoAcceptTrustDialog(target string) bool {
-	content := captureVisiblePane(target)
-	if content == "" {
-		return false
-	}
-
-	if detectConsentDialog(content) {
-		listenLog("autoAcceptTrustDialog[%s]: detected consent dialog (pattern match), auto-accepting", target)
-		if err := exec.Command(tmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
-			listenLog("autoAcceptTrustDialog[%s]: failed to send Enter: %v", target, err)
-			return false
-		}
-		return true
-	}
-	return false
+	return tmux.AutoAcceptTrustDialog(target)
 }
 
 // waitForClaude polls the tmux pane until Claude Code's input prompt appears.
@@ -134,44 +33,16 @@ func autoAcceptTrustDialog(target string) bool {
 // by auto-accepting it when detected.
 // Note: Only -p (print) mode skips this dialog; --dangerously-skip-permissions does not.
 func waitForClaude(target string, timeout time.Duration) error {
-	// Poll faster for short timeouts (message sending), slower for startup
-	interval := 100 * time.Millisecond
-	if timeout > 10*time.Second {
-		interval = 500 * time.Millisecond
-	}
-	const trustDialogDismissDelay = 1 * time.Second
-	trustDialogHandled := false
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		// Handle workspace trust/consent dialog (Claude Code 2.1.84+)
-		// Uses bounded capture to avoid matching stale dialog text
-		if !trustDialogHandled && autoAcceptTrustDialog(target) {
-			trustDialogHandled = true
-			time.Sleep(trustDialogDismissDelay)
-			continue
-		}
+	return tmux.WaitForClaude(target, timeout)
+}
 
-		// Check for Claude prompt using bounded capture
-		content := captureVisiblePane(target)
-		if strings.Contains(content, "❯") {
-			return nil
-		}
-
-		time.Sleep(interval)
-	}
-	return fmt.Errorf("timeout waiting for Claude to start")
+// windowNameFromTarget extracts the window name from a "session:window" target
+func windowNameFromTarget(target string) string {
+	return tmux.WindowNameFromTarget(target)
 }
 
 // sendToTmuxFromTelegram sets the Telegram active flag before sending,
 // so the permission hook knows this input came from Telegram and requires OTP.
-// windowNameFromTarget extracts the window name from a "session:window" target
-func windowNameFromTarget(target string) string {
-	if idx := strings.LastIndex(target, ":"); idx >= 0 {
-		return target[idx+1:]
-	}
-	return target
-}
-
 func sendToTmuxFromTelegram(target string, windowName string, text string) error {
 	os.WriteFile(telegramActiveFlag(windowName), []byte("1"), 0600)
 	return sendToTmux(target, text)
@@ -286,6 +157,7 @@ func sendToTmuxWithDelay(target string, text string, delay time.Duration) error 
 // Returns true if text appears within timeout, false otherwise
 // Checks for text AFTER the last prompt marker to avoid false positives on historical content
 // For multi-line text, uses the last non-empty line for more reliable detection
+// This function stays in root because it's not exported from pkg/tmux.
 func waitForTextInPane(target string, expectedText string, timeout time.Duration) bool {
 	// Poll the pane buffer to verify text appears
 	// This works for all text lengths and avoids timing races
@@ -372,6 +244,5 @@ func waitForTextInPane(target string, expectedText string, timeout time.Duration
 
 // killTmuxSession kills an entire tmux session (used for temporary sessions like auth)
 func killTmuxSession(name string) error {
-	cmd := exec.Command(tmuxPath, "kill-session", "-t", name)
-	return cmd.Run()
+	return tmux.KillSession(name)
 }

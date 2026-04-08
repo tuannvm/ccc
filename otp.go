@@ -21,14 +21,6 @@ var otpGrantPrefix = filepath.Join(cacheDir(), "otp-grant-")
 const otpGrantDuration = 5 * time.Minute
 const otpPermissionTimeout = 5 * time.Minute
 
-// OTPPermissionRequest is written by the hook to request OTP approval
-type OTPPermissionRequest struct {
-	SessionName string `json:"session_name"`
-	ToolName    string `json:"tool_name"`
-	ToolInput   string `json:"tool_input"`
-	Timestamp   int64  `json:"timestamp"`
-}
-
 // OTPPermissionResponse is written by the listener after OTP validation
 type OTPPermissionResponse struct {
 	Approved  bool  `json:"approved"`

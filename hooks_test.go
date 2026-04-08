@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tuannvm/ccc/pkg/hooks"
 )
 
 // TestExtractRecentAssistantTexts tests parsing transcript JSONL files
@@ -95,10 +97,10 @@ func TestExtractRecentAssistantTexts(t *testing.T) {
 			if tt.name == "tail count limits results" {
 				tailCount = 1 // only keep last entry
 			}
-			blocks := extractRecentAssistantTexts(filePath, tailCount)
+			blocks := hooks.ExtractRecentAssistantTexts(filePath, tailCount)
 			var result []string
 			for _, b := range blocks {
-				result = append(result, b.text)
+				result = append(result, b.Text)
 			}
 			if tt.expected == nil {
 				if result != nil {
@@ -121,7 +123,7 @@ func TestExtractRecentAssistantTexts(t *testing.T) {
 
 // TestExtractRecentNonExistent tests with non-existent file
 func TestExtractRecentNonExistent(t *testing.T) {
-	result := extractRecentAssistantTexts("/nonexistent/path/file.jsonl", 80)
+	result := hooks.ExtractRecentAssistantTexts("/nonexistent/path/file.jsonl", 80)
 	if result != nil {
 		t.Errorf("non-existent file = %v, want nil", result)
 	}
@@ -129,7 +131,7 @@ func TestExtractRecentNonExistent(t *testing.T) {
 
 // TestExtractRecentEmptyPath tests with empty path
 func TestExtractRecentEmptyPath(t *testing.T) {
-	result := extractRecentAssistantTexts("", 80)
+	result := hooks.ExtractRecentAssistantTexts("", 80)
 	if result != nil {
 		t.Errorf("empty path = %v, want nil", result)
 	}

@@ -9,7 +9,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tuannvm/ccc/pkg/hooks"
 )
+
+// ToolState is an alias for hooks.ToolState
+type ToolState = hooks.ToolState
+
+// ToolCall is an alias for hooks.ToolCall
+type ToolCall = hooks.ToolCall
 
 // telegramActiveFlag returns the path of the flag file that indicates
 // a Telegram message is being processed by a tmux session.
@@ -44,19 +52,6 @@ func writePromptAck(sessionName string) {
 // toolStatePath returns the path for tool call display state
 func toolStatePath(sessionName string) string {
 	return filepath.Join(cacheDir(), "tools-"+sessionName+".json")
-}
-
-// ToolState tracks tool calls and the Telegram message ID for live updates
-type ToolState struct {
-	MsgID int64      `json:"msg_id"`
-	Tools []ToolCall `json:"tools"`
-}
-
-type ToolCall struct {
-	Name   string `json:"name"`
-	Input  string `json:"input"`
-	IsText bool   `json:"is_text,omitempty"` // true for assistant text
-	Time   int64  `json:"time,omitempty"`    // unix ms for ordering
 }
 
 func loadToolState(sessionName string) *ToolState {
