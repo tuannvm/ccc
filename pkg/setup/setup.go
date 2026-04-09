@@ -10,16 +10,13 @@ import (
 	"github.com/charmbracelet/huh"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/auth"
+	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/service"
 	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
-// InstallSkillFunc is a function type for installing the Claude skill/hooks.
-// The root package wires this to hooks.InstallSkill().
-type InstallSkillFunc func() error
-
 // Setup runs the interactive setup wizard for ccc
-func Setup(botToken string, installSkill InstallSkillFunc) error {
+func Setup(botToken string) error {
 	fmt.Println("🚀 Claude Code Companion Setup")
 	fmt.Println("==============================")
 	fmt.Println()
@@ -144,7 +141,7 @@ step2:
 
 step3:
 	// Step 4: Install Claude hook and skill
-	if err := installSkill(); err != nil {
+	if err := hooks.InstallSkill(); err != nil {
 		fmt.Printf("⚠️  Skill installation failed: %v\n", err)
 	} else {
 		fmt.Println()
@@ -207,11 +204,11 @@ step3:
 }
 
 // SetupFromArgs validates CLI args and runs setup with the given installSkill callback.
-func SetupFromArgs(args []string, installSkill InstallSkillFunc) error {
+func SetupFromArgs(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("Usage: ccc setup <bot_token>")
 	}
-	return Setup(args[0], installSkill)
+	return Setup(args[0])
 }
 
 // SetGroupAuto loads the config and configures the Telegram group

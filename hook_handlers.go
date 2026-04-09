@@ -8,7 +8,7 @@ import (
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/auth"
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 func newHandlerCallbacks() *hooks.HandlerCallbacks {
@@ -52,27 +52,12 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 	}
 }
 
-func handleStopHook() error {
-	return hooks.HandleStopHook(newHandlerCallbacks())
-}
 
-func handlePermissionHook() error {
-	return hooks.HandlePermissionHook(newHandlerCallbacks())
-}
 
-func handleUserPromptHook() error {
-	return hooks.HandleUserPromptHook(newHandlerCallbacks())
-}
 
-func handlePostToolHook() error {
-	return hooks.HandlePostToolHook(newHandlerCallbacks())
-}
 
-func handleNotificationHook() error {
-	return hooks.HandleNotificationHook(newHandlerCallbacks())
-}
 
-func deliverUnsentTexts(cfg *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, claudeSessionID string) int {
+func deliverUnsentTexts(cfg *configpkg.Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, claudeSessionID string) int {
 	return hooks.DeliverUnsentTexts(&hooks.DeliverUnsentTextsConfig{
 		Config:            cfg,
 		SessionName:       sessName,
@@ -111,7 +96,7 @@ func installHooksToCurrentDir() error {
 	return hooks.InstallHooksToCurrentDir()
 }
 
-func ensureHooksForSession(config *Config, sessionName string, sessionInfo *SessionInfo) error {
+func ensureHooksForSession(config *configpkg.Config, sessionName string, sessionInfo *configpkg.SessionInfo) error {
 	return hooks.EnsureHooksForSession(&hooks.EnsureHooksForSessionConfig{
 		Config:            config,
 		SessionName:       sessionName,

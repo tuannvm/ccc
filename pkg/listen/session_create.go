@@ -13,7 +13,7 @@ import (
 )
 
 // AttachToExistingSession attaches to an existing session and sends a message if provided.
-func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionInfo *configpkg.SessionInfo, message string, attachFunc func(string) error) error {
+func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionInfo *configpkg.SessionInfo, message string, ) error {
 	workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 	worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
@@ -46,11 +46,11 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 	}
 
 	fmt.Printf("Attached to existing session '%s'\n", sessionName)
-	return attachFunc(sessionName)
+	return tmux.AttachToSession(sessionName)
 }
 
 // StartLocalSession starts a session without Telegram integration (local-only mode).
-func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message string, attachFunc func(string) error) error {
+func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message string, ) error {
 	providerName := cfg.ActiveProvider
 
 	if cfg.Sessions == nil {
@@ -83,11 +83,11 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 	}
 
 	fmt.Printf("Started local session '%s' (no Telegram integration)\n", sessionName)
-	return attachFunc(sessionName)
+	return tmux.AttachToSession(sessionName)
 }
 
 // StartTelegramSession starts a session with Telegram integration.
-func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message string, attachFunc func(string) error) error {
+func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message string, ) error {
 	provider := providerpkg.GetActiveProvider(cfg)
 	providerName := ""
 	if provider != nil && cfg.ActiveProvider != "" {
@@ -131,11 +131,11 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 		}
 	}
 
-	return attachFunc(sessionName)
+	return tmux.AttachToSession(sessionName)
 }
 
 // StartSession creates/attaches to a tmux window with Telegram topic.
-func StartSession(continueSession bool, attachFunc func(string) error) error {
+func StartSession(continueSession bool, ) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -200,7 +200,7 @@ func StartSession(continueSession bool, attachFunc func(string) error) error {
 		return fmt.Errorf("failed to switch session: %w", err)
 	}
 
-	return attachFunc(name)
+	return tmux.AttachToSession(name)
 }
 
 // StartDetachedFromArgs validates CLI args and starts a detached session.
@@ -269,39 +269,35 @@ func StartDetached(name string, workDir string, prompt string) error {
 
 // StartSessionInCurrentDir starts a session for the current working directory.
 func StartSessionInCurrentDir(config *configpkg.Config, message string,
-	attachFunc func(string) error,
-	findSessionForPath func(*configpkg.Config, string) (string, *configpkg.SessionInfo),
-	generateUniqueSessionName func(*configpkg.Config, string, string) string) error {
+) error {
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	existingSession, existingInfo := findSessionForPath(config, cwd)
+	existingSession, existingInfo := lookup.FindSessionForPath(config, cwd)
 	if existingSession != "" && existingInfo != nil {
-		return AttachToExistingSession(config, existingSession, existingInfo, message, attachFunc)
+		return AttachToExistingSession(config, existingSession, existingInfo, message)
 	}
 
 	basename := filepath.Base(cwd)
-	sessionName := generateUniqueSessionName(config, cwd, basename)
+	sessionName := lookup.GenerateUniqueSessionName(config, cwd, basename)
 
 	if config.GroupID == 0 {
-		return StartLocalSession(config, sessionName, cwd, message, attachFunc)
+		return StartLocalSession(config, sessionName, cwd, message)
 	}
 
-	return StartTelegramSession(config, sessionName, cwd, message, attachFunc)
+	return StartTelegramSession(config, sessionName, cwd, message)
 }
 
 // StartSessionInCurrentDirAuto loads config and starts a session for the current working directory.
 func StartSessionInCurrentDirAuto(message string,
-	attachFunc func(string) error,
-	findSessionForPath func(*configpkg.Config, string) (string, *configpkg.SessionInfo),
-	generateUniqueSessionName func(*configpkg.Config, string, string) string) error {
+) error {
 
 	config, err := configpkg.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config. Run: ccc setup <bot_token>")
 	}
-	return StartSessionInCurrentDir(config, message, attachFunc, findSessionForPath, generateUniqueSessionName)
+	return StartSessionInCurrentDir(config, message)
 }

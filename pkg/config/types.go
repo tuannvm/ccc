@@ -3,7 +3,7 @@ package config
 import (
 	"strings"
 
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // ========== Session Types ==========

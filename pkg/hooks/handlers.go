@@ -11,7 +11,7 @@ import (
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/ledger"
 	"github.com/tuannvm/ccc/pkg/telegram"
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // HandlerCallbacks provides callbacks for root-level dependencies

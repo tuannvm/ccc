@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // GetTeamRoleTarget returns the tmux target for a specific role in a team session.

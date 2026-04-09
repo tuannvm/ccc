@@ -15,7 +15,7 @@ import (
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/auth"
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // HandleCallbackQuery processes callback queries from inline keyboard button presses

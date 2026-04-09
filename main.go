@@ -39,7 +39,7 @@ func main() {
 
 	if len(os.Args) < 2 {
 		// No args: start/attach tmux session with topic
-		if err := startSession(false); err != nil {
+		if err := listenpkg.StartSession(false); err != nil {
 			os.Exit(1)
 		}
 		return
@@ -47,11 +47,13 @@ func main() {
 
 	// Check for -c flag (continue) as first arg
 	if os.Args[1] == "-c" {
-		if err := startSession(true); err != nil {
+		if err := listenpkg.StartSession(true); err != nil {
 			os.Exit(1)
 		}
 		return
 	}
+
+	cb := newHandlerCallbacks()
 
 	switch os.Args[1] {
 	case "run":
@@ -60,7 +62,7 @@ func main() {
 		}
 		return
 	case "setup":
-		if err := setupFromArgs(os.Args[2:]); err != nil {
+		if err := setuppkg.SetupFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -78,26 +80,25 @@ func main() {
 		}
 
 	case "listen":
-		if err := listen(); err != nil {
+		if err := listenpkg.Run(version); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "hook-permission":
-		if err := handlePermissionHook(); err != nil {
+		if err := hooks.HandlePermissionHook(cb); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "hook-question":
-		// Legacy: redirect to permission hook
-		if err := handlePermissionHook(); err != nil {
+		if err := hooks.HandlePermissionHook(cb); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "hook-stop":
-		if err := handleStopHook(); err != nil {
+		if err := hooks.HandleStopHook(cb); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -106,19 +107,19 @@ func main() {
 		hooks.HandleStopRetryFromArgs(os.Args[2:], handleStopRetry)
 
 	case "hook-post-tool":
-		if err := handlePostToolHook(); err != nil {
+		if err := hooks.HandlePostToolHook(cb); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "hook-user-prompt":
-		if err := handleUserPromptHook(); err != nil {
+		if err := hooks.HandleUserPromptHook(cb); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "hook-notification":
-		if err := handleNotificationHook(); err != nil {
+		if err := hooks.HandleNotificationHook(cb); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -154,7 +155,7 @@ func main() {
 		relay.RunRelayServerFromArgs(os.Args[2:])
 
 	default:
-		if err := notifypkg.HandleDefaultCommand(os.Args[1:], startSessionInCurrentDir); err != nil {
+		if err := notifypkg.HandleDefaultCommand(os.Args[1:], listenpkg.StartSessionInCurrentDirAuto); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

@@ -13,8 +13,8 @@ import (
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 
-	"github.com/tuannvm/ccc/routing"
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/routing"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // HandleTeamCreateCommand handles the /team command - create team session

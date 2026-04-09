@@ -12,7 +12,7 @@ import (
 	"github.com/tuannvm/ccc/pkg/hooks"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
 	"github.com/tuannvm/ccc/pkg/tmux"
-	"github.com/tuannvm/ccc/session"
+	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // Session matching priority constants
