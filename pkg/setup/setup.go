@@ -206,6 +206,14 @@ step3:
 	return nil
 }
 
+// SetupFromArgs validates CLI args and runs setup with the given installSkill callback.
+func SetupFromArgs(args []string, installSkill InstallSkillFunc) error {
+	if len(args) < 1 {
+		return fmt.Errorf("Usage: ccc setup <bot_token>")
+	}
+	return Setup(args[0], installSkill)
+}
+
 // SetGroupAuto loads the config and configures the Telegram group
 func SetGroupAuto() error {
 	config, err := configpkg.Load()

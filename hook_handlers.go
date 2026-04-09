@@ -1,9 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"os"
-
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
@@ -108,19 +105,6 @@ func handleStopRetry(sessName string, topicID int64, transcriptPath string) erro
 		LoadConfig:         configpkg.Load,
 		DeliverUnsentTexts: deliverUnsentTexts,
 	})
-}
-
-func handleStopRetryFromArgs(args []string) {
-	if len(args) < 3 {
-		os.Exit(1)
-	}
-	var tid int64
-	fmt.Sscan(args[1], &tid)
-	handleStopRetry(args[0], tid, args[2])
-}
-
-func installSkill() error {
-	return hooks.InstallSkill()
 }
 
 func installHooksToCurrentDir() error {

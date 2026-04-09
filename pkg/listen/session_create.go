@@ -203,6 +203,14 @@ func StartSession(continueSession bool, attachFunc func(string) error) error {
 	return attachFunc(name)
 }
 
+// StartDetachedFromArgs validates CLI args and starts a detached session.
+func StartDetachedFromArgs(args []string) error {
+	if len(args) < 3 {
+		return fmt.Errorf("Usage: ccc start <session-name> <work-dir> <prompt>")
+	}
+	return StartDetached(args[0], args[1], args[2])
+}
+
 // StartDetached creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach).
 func StartDetached(name string, workDir string, prompt string) error {
 	config, err := configpkg.Load()

@@ -5,6 +5,6 @@ import (
 	"github.com/tuannvm/ccc/pkg/hooks"
 )
 
-func setup(botToken string) error {
-	return setuppkg.Setup(botToken, hooks.InstallSkill)
+func setupFromArgs(args []string) error {
+	return setuppkg.SetupFromArgs(args, hooks.InstallSkill)
 }

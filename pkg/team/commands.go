@@ -41,6 +41,15 @@ func ensureHooks(cfg *configpkg.Config, sessionName string, info *configpkg.Sess
 	})
 }
 
+// RunFromArgs validates CLI args and runs the team subcommand.
+func RunFromArgs(args []string) error {
+	if len(args) == 0 {
+		PrintUsage()
+		return fmt.Errorf("Usage: ccc team <subcommand>")
+	}
+	return NewCommands().Run(args)
+}
+
 // Run executes the team subcommand
 func (tc *Commands) Run(args []string) error {
 	if len(args) == 0 {

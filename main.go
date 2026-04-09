@@ -8,6 +8,8 @@ import (
 	"github.com/tuannvm/ccc/pkg/cli"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/diagnostics"
+	"github.com/tuannvm/ccc/pkg/hooks"
+	listenpkg "github.com/tuannvm/ccc/pkg/listen"
 	notifypkg "github.com/tuannvm/ccc/pkg/notify"
 	"github.com/tuannvm/ccc/pkg/relay"
 	"github.com/tuannvm/ccc/pkg/service"
@@ -58,11 +60,7 @@ func main() {
 		}
 		return
 	case "setup":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: ccc setup <bot_token>")
-			os.Exit(1)
-		}
-		if err := setup(os.Args[2]); err != nil {
+		if err := setupFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -105,7 +103,7 @@ func main() {
 		}
 
 	case "hook-stop-retry":
-		handleStopRetryFromArgs(os.Args[2:])
+		hooks.HandleStopRetryFromArgs(os.Args[2:], handleStopRetry)
 
 	case "hook-post-tool":
 		if err := handlePostToolHook(); err != nil {
@@ -126,7 +124,7 @@ func main() {
 		}
 
 	case "install":
-		installAll()
+		service.InstallAll()
 
 	case "install-hooks":
 		if err := installHooksToCurrentDir(); err != nil {
@@ -135,34 +133,19 @@ func main() {
 		}
 
 	case "send":
-		if len(os.Args) < 3 {
-			fmt.Fprintf(os.Stderr, "Usage: ccc send <file>\n")
-			os.Exit(1)
-		}
-		if err := relay.HandleSendFile(os.Args[2]); err != nil {
+		if err := relay.HandleSendFileFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "team":
-		if len(os.Args) < 3 {
-			teampkg.PrintUsage()
-			os.Exit(1)
-		}
-		teamCmd := NewTeamCommands()
-		if err := teamCmd.Run(os.Args[2:]); err != nil {
+		if err := teampkg.RunFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "start":
-		// start <name> <work-dir> <prompt>
-		// Creates a Telegram topic, tmux session with Claude, and sends the prompt (detached)
-		if len(os.Args) < 5 {
-			fmt.Fprintf(os.Stderr, "Usage: ccc start <session-name> <work-dir> <prompt>\n")
-			os.Exit(1)
-		}
-		if err := startDetached(os.Args[2], os.Args[3], os.Args[4]); err != nil {
+		if err := listenpkg.StartDetachedFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -180,13 +163,4 @@ func main() {
 
 func printHelp() {
 	cli.PrintHelp(version)
-}
-
-func installAll() {
-	if err := installSkill(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	}
-	if err := service.InstallService(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	}
 }

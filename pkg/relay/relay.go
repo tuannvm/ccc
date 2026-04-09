@@ -40,6 +40,14 @@ var relayTransfers = struct {
 	transfers map[string]*relayTransfer
 }{transfers: make(map[string]*relayTransfer)}
 
+// HandleSendFileFromArgs validates CLI args and sends a file.
+func HandleSendFileFromArgs(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("Usage: ccc send <file>")
+	}
+	return HandleSendFile(args[0])
+}
+
 // HandleSendFile sends a file to the current session's Telegram topic
 func HandleSendFile(filePath string) error {
 	cfg, err := config.Load()

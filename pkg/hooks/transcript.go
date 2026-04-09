@@ -377,6 +377,16 @@ func HandleStopRetry(cfg *HandleStopRetryConfig) error {
 	return nil
 }
 
+// HandleStopRetryFromArgs parses CLI args for the hook-stop-retry command.
+func HandleStopRetryFromArgs(args []string, handleRetry func(string, int64, string) error) {
+	if len(args) < 3 {
+		os.Exit(1)
+	}
+	var tid int64
+	fmt.Sscan(args[1], &tid)
+	handleRetry(args[0], tid, args[2])
+}
+
 // ToolState tracks tool calls and the Telegram message ID for live updates
 type ToolState struct {
 	MsgID int64     `json:"msg_id"`
