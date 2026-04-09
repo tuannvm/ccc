@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	lookuppkg "github.com/tuannvm/ccc/pkg/lookup"
 	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
@@ -34,9 +35,9 @@ func TestGetSessionByTopic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getSessionByTopic(config, tt.topicID)
+			result := lookuppkg.GetSessionByTopic(config, tt.topicID)
 			if result != tt.expected {
-				t.Errorf("getSessionByTopic(config, %d) = %q, want %q", tt.topicID, result, tt.expected)
+				t.Errorf("lookuppkg.GetSessionByTopic(config, %d) = %q, want %q", tt.topicID, result, tt.expected)
 			}
 		})
 	}
@@ -47,7 +48,7 @@ func TestGetSessionByTopicNilSessions(t *testing.T) {
 	config := &Config{
 		Sessions: nil,
 	}
-	result := getSessionByTopic(config, 100)
+	result := lookuppkg.GetSessionByTopic(config, 100)
 	if result != "" {
 		t.Errorf("getSessionByTopic with nil sessions = %q, want empty string", result)
 	}
@@ -59,7 +60,7 @@ func TestEmptySessionsMap(t *testing.T) {
 		Sessions: make(map[string]*SessionInfo),
 	}
 
-	result := getSessionByTopic(config, 100)
+	result := lookuppkg.GetSessionByTopic(config, 100)
 	if result != "" {
 		t.Errorf("getSessionByTopic with empty sessions = %q, want empty", result)
 	}
@@ -157,18 +158,18 @@ func TestBaselineSessionLookup(t *testing.T) {
 	}
 
 	// Test getSessionByTopic
-	sessName := getSessionByTopic(config, 1001)
+	sessName := lookuppkg.GetSessionByTopic(config, 1001)
 	if sessName != "project1" {
 		t.Errorf("getSessionByTopic(1001): got %q, want 'project1'", sessName)
 	}
 
-	sessName = getSessionByTopic(config, 9999)
+	sessName = lookuppkg.GetSessionByTopic(config, 9999)
 	if sessName != "" {
 		t.Errorf("getSessionByTopic(9999): got %q, want empty", sessName)
 	}
 
 	// Test findSessionByClaudeID
-	sessName, topicID := findSessionByClaudeID(config, "claude-session-1")
+	sessName, topicID := lookuppkg.FindSessionByClaudeID(config, "claude-session-1")
 	if sessName != "project1" {
 		t.Errorf("findSessionByClaudeID('claude-session-1'): got %q, want 'project1'", sessName)
 	}
@@ -177,24 +178,24 @@ func TestBaselineSessionLookup(t *testing.T) {
 	}
 
 	// Test findSessionByCwd
-	sessName, topicID = findSessionByCwd(config, "/home/user/project1")
+	sessName, topicID = lookuppkg.FindSessionByCwd(config, "/home/user/project1")
 	if sessName != "project1" {
 		t.Errorf("findSessionByCwd('/home/user/project1'): got %q, want 'project1'", sessName)
 	}
 
 	// Test non-existent path
-	sessName, topicID = findSessionByCwd(config, "/nonexistent")
+	sessName, topicID = lookuppkg.FindSessionByCwd(config, "/nonexistent")
 	if sessName != "" {
 		t.Errorf("findSessionByCwd('/nonexistent'): got %q, want empty", sessName)
 	}
 
 	// Test findSession (combined lookup)
-	sessName, topicID = findSession(config, "/home/user/project1", "")
+	sessName, topicID = lookuppkg.FindSession(config, "/home/user/project1", "")
 	if sessName != "project1" {
 		t.Errorf("findSession with claudeID='': got %q, want 'project1'", sessName)
 	}
 
-	sessName, topicID = findSession(config, "", "claude-session-2")
+	sessName, topicID = lookuppkg.FindSession(config, "", "claude-session-2")
 	if sessName != "project2" {
 		t.Errorf("findSession with cwd='': got %q, want 'project2'", sessName)
 	}

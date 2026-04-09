@@ -16,6 +16,13 @@ import (
 // This avoids import cycles (pkg/hooks imports pkg/tmux, so pkg/tmux can't import pkg/hooks).
 type EnsureHooksFunc func(cfg *configpkg.Config, sessionName string, info *configpkg.SessionInfo) error
 
+// RunWithArgs parses args and runs claude in a tmux session.
+// Convenience wrapper combining ParseRunArgs + RunClaudeRaw.
+func RunWithArgs(args []string, autoGen string, ensureHooks EnsureHooksFunc) error {
+	ra := ParseRunArgs(args, autoGen)
+	return RunClaudeRaw(ra.ContinueSession, ra.ResumeSessionID, ra.ProviderOverride, ra.WorktreeName, autoGen, ensureHooks)
+}
+
 // RunClaudeRaw runs claude directly (used inside tmux sessions).
 // providerOverride: if non-empty, specifies which provider to use instead of active_provider
 // resumeSessionID: if non-empty, resumes a specific session by ID

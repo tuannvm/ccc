@@ -8,6 +8,16 @@ import (
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
+// HandleDefaultCommand implements the default CLI case: try notification first,
+// then fall through to session creation. Returns nil if notification was sent.
+func HandleDefaultCommand(args []string, startSessionFn func(string) error) error {
+	message := strings.Join(args, " ")
+	if message != "" && TryNotifyIfAway(message) {
+		return nil
+	}
+	return startSessionFn(message)
+}
+
 // TryNotifyIfAway attempts to send a notification if away mode is on.
 // Returns true if the message was sent successfully (caller should return).
 // Returns false if the caller should fall through to session creation.

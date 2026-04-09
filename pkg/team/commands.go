@@ -44,7 +44,8 @@ func ensureHooks(cfg *configpkg.Config, sessionName string, info *configpkg.Sess
 // Run executes the team subcommand
 func (tc *Commands) Run(args []string) error {
 	if len(args) == 0 {
-		return tc.printUsage()
+		PrintUsage()
+		return nil
 	}
 
 	subcommand := args[0]
@@ -65,12 +66,13 @@ func (tc *Commands) Run(args []string) error {
 		return tc.DeleteTeam(subargs)
 	default:
 		fmt.Printf("Unknown team subcommand: %s\n", subcommand)
-		return tc.printUsage()
+		PrintUsage()
+		return nil
 	}
 }
 
-// printUsage prints the usage information
-func (tc *Commands) printUsage() error {
+// PrintUsage prints the usage information
+func PrintUsage() {
 	fmt.Println("ccc team - Multi-pane team session management")
 	fmt.Println()
 	fmt.Println("Usage:")
@@ -97,7 +99,6 @@ func (tc *Commands) printUsage() error {
 	fmt.Println("  ccc team new feature-api")
 	fmt.Println("  ccc team attach feature-api --role planner")
 	fmt.Println("  ccc team list")
-	return nil
 }
 
 // NewTeam creates a new team session with 3 panes

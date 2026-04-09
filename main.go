@@ -3,25 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
-	configpkg "github.com/tuannvm/ccc/pkg/config"
-	"github.com/tuannvm/ccc/pkg/relay"
-	notifypkg "github.com/tuannvm/ccc/pkg/notify"
-	"github.com/tuannvm/ccc/pkg/tmux"
-	
 	"github.com/tuannvm/ccc/pkg/auth"
 	"github.com/tuannvm/ccc/pkg/cli"
-	
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/diagnostics"
-	
+	notifypkg "github.com/tuannvm/ccc/pkg/notify"
+	"github.com/tuannvm/ccc/pkg/relay"
 	"github.com/tuannvm/ccc/pkg/service"
-	
+	setuppkg "github.com/tuannvm/ccc/pkg/setup"
+	"github.com/tuannvm/ccc/pkg/tmux"
+	teampkg "github.com/tuannvm/ccc/pkg/team"
 )
 
 const version = "1.7.0"
-
-const WorktreeAutoGenerate = "AUTO" // Special value for auto-generating worktree names
 
 func init() {
 	tmux.InitPaths()
@@ -58,8 +53,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "run":
-		ra := tmux.ParseRunArgs(os.Args[2:], WorktreeAutoGenerate)
-		if err := runClaudeRaw(ra.ContinueSession, ra.ResumeSessionID, ra.ProviderOverride, ra.WorktreeName); err != nil {
+		if err := tmux.RunWithArgs(os.Args[2:], tmux.WorktreeAutoGenerate, ensureHooksForSession); err != nil {
 			os.Exit(1)
 		}
 		return
@@ -80,12 +74,7 @@ func main() {
 		configpkg.HandleConfigCommand(os.Args[2:], auth.IsOTPEnabled)
 
 	case "setgroup":
-		config, err := configpkg.Load()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if err := setGroup(config); err != nil {
+		if err := setuppkg.SetGroupAuto(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -116,14 +105,7 @@ func main() {
 		}
 
 	case "hook-stop-retry":
-		// Background process: retry transcript read 3x at 2s intervals
-		// Args: sessName topicID transcriptPath
-		if len(os.Args) < 5 {
-			os.Exit(1)
-		}
-		var tid int64
-		fmt.Sscan(os.Args[3], &tid)
-		handleStopRetry(os.Args[2], tid, os.Args[4])
+		handleStopRetryFromArgs(os.Args[2:])
 
 	case "hook-post-tool":
 		if err := handlePostToolHook(); err != nil {
@@ -144,12 +126,7 @@ func main() {
 		}
 
 	case "install":
-		if err := installSkill(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-		if err := service.InstallService(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
+		installAll()
 
 	case "install-hooks":
 		if err := installHooksToCurrentDir(); err != nil {
@@ -168,16 +145,8 @@ func main() {
 		}
 
 	case "team":
-		// Team session commands: ccc team new|list|attach|start|stop|delete
 		if len(os.Args) < 3 {
-			fmt.Fprintf(os.Stderr, "Usage: ccc team <command> [args...]\n")
-			fmt.Fprintf(os.Stderr, "\nCommands:\n")
-			fmt.Fprintf(os.Stderr, "  new <name> --topic <id>     Create a new team session (3 panes)\n")
-			fmt.Fprintf(os.Stderr, "  list                        List all team sessions\n")
-			fmt.Fprintf(os.Stderr, "  attach <name> [--role <r>]  Attach to a team session\n")
-			fmt.Fprintf(os.Stderr, "  start <name>                Start Claude in a team session\n")
-			fmt.Fprintf(os.Stderr, "  stop <name>                 Stop a team session\n")
-			fmt.Fprintf(os.Stderr, "  delete <name>               Delete a team session\n")
+			teampkg.PrintUsage()
 			os.Exit(1)
 		}
 		teamCmd := NewTeamCommands()
@@ -199,22 +168,10 @@ func main() {
 		}
 
 	case "relay":
-		port := "8080"
-		if len(os.Args) >= 3 {
-			port = os.Args[2]
-		}
-		relay.RunRelayServer(port)
+		relay.RunRelayServerFromArgs(os.Args[2:])
 
 	default:
-		message := strings.Join(os.Args[1:], " ")
-
-		// If a message is provided, try to send it as a notification first
-		if message != "" && notifypkg.TryNotifyIfAway(message) {
-			return
-		}
-
-		// Default behavior: start/attach to session in current directory
-		if err := startSessionInCurrentDir(message); err != nil {
+		if err := notifypkg.HandleDefaultCommand(os.Args[1:], startSessionInCurrentDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -223,4 +180,13 @@ func main() {
 
 func printHelp() {
 	cli.PrintHelp(version)
+}
+
+func installAll() {
+	if err := installSkill(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+	if err := service.InstallService(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
 }

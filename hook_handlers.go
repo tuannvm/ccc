@@ -1,22 +1,26 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/auth"
+	"github.com/tuannvm/ccc/session"
 )
 
-// newHandlerCallbacks builds the standard callback struct for hook handlers.
 func newHandlerCallbacks() *hooks.HandlerCallbacks {
 	return &hooks.HandlerCallbacks{
 		LoadConfig:              configpkg.Load,
 		SaveConfig:              configpkg.Save,
-		FindSession:             findSession,
-		PersistClaudeSessionID:  persistClaudeSessionID,
-		GetSessionWorkDir:       getSessionWorkDir,
+		FindSession:             lookup.FindSession,
+		PersistClaudeSessionID:  lookup.PersistClaudeSessionID,
+		GetSessionWorkDir:       lookup.GetSessionWorkDir,
 		LoadToolState:           hooks.LoadToolState,
 		SaveToolState:           hooks.SaveToolState,
 		ClearToolState:          hooks.ClearToolState,
@@ -43,7 +47,7 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 		TmuxSafeName:       tmux.SafeName,
 		WritePromptAck:     hooks.WritePromptAck,
 		InferRoleFromTranscriptPath: func(transcriptPath string) string {
-			return string(inferRoleFromTranscriptPath(transcriptPath))
+			return string(session.InferRoleFromTranscriptPath(transcriptPath))
 		},
 		ToolInputSummary: hooks.ToolInputSummary,
 		ReadHookStdin:    hooks.ReadHookStdin,
@@ -71,8 +75,6 @@ func handleNotificationHook() error {
 	return hooks.HandleNotificationHook(newHandlerCallbacks())
 }
 
-// deliverUnsentTexts scans transcript tail and sends any assistant text
-// blocks not yet delivered to Telegram (using ledger dedup).
 func deliverUnsentTexts(cfg *Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, claudeSessionID string) int {
 	return hooks.DeliverUnsentTexts(&hooks.DeliverUnsentTextsConfig{
 		Config:            cfg,
@@ -94,11 +96,10 @@ func deliverUnsentTexts(cfg *Config, sessName string, topicID int64, transcriptP
 			ledger.AppendMessage(msg)
 		},
 		ClearToolState:              hooks.ClearToolState,
-		InferRoleFromTranscriptPath: inferRoleFromTranscriptPath,
+		InferRoleFromTranscriptPath: session.InferRoleFromTranscriptPath,
 	})
 }
 
-// handleStopRetry retries transcript reading 3 times at 2-second intervals
 func handleStopRetry(sessName string, topicID int64, transcriptPath string) error {
 	return hooks.HandleStopRetry(&hooks.HandleStopRetryConfig{
 		SessionName:        sessName,
@@ -109,7 +110,14 @@ func handleStopRetry(sessName string, topicID int64, transcriptPath string) erro
 	})
 }
 
-// --- Hook install delegates (merged from hook_install.go) ---
+func handleStopRetryFromArgs(args []string) {
+	if len(args) < 3 {
+		os.Exit(1)
+	}
+	var tid int64
+	fmt.Sscan(args[1], &tid)
+	handleStopRetry(args[0], tid, args[2])
+}
 
 func installSkill() error {
 	return hooks.InstallSkill()
@@ -124,6 +132,6 @@ func ensureHooksForSession(config *Config, sessionName string, sessionInfo *Sess
 		Config:            config,
 		SessionName:       sessionName,
 		SessionInfo:       sessionInfo,
-		GetSessionWorkDir: getSessionWorkDir,
+		GetSessionWorkDir: lookup.GetSessionWorkDir,
 	})
 }

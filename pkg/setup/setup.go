@@ -206,6 +206,15 @@ step3:
 	return nil
 }
 
+// SetGroupAuto loads the config and configures the Telegram group
+func SetGroupAuto() error {
+	config, err := configpkg.Load()
+	if err != nil {
+		return err
+	}
+	return SetGroup(config)
+}
+
 // SetGroup configures the Telegram group for session topics
 func SetGroup(config *configpkg.Config) error {
 	fmt.Println("Send a message in the group where you want to use topics...")

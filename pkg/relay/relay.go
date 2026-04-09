@@ -193,6 +193,15 @@ func StreamFileToRelay(relayURL, token, filePath, fileName string, fileSize int6
 	}
 }
 
+// RunRelayServerFromArgs starts the relay server using CLI args for port (default "8080")
+func RunRelayServerFromArgs(args []string) {
+	port := "8080"
+	if len(args) >= 1 {
+		port = args[0]
+	}
+	RunRelayServer(port)
+}
+
 // RunRelayServer starts the relay server that streams files from sender to receiver
 func RunRelayServer(port string) {
 	// Clean up old transfers periodically
