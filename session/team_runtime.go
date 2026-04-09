@@ -6,15 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/tuannvm/ccc/pkg/shell"
 	"sync"
 	"time"
 )
 
-// shellQuote safely quotes a string for shell command arguments
-func shellQuote(s string) string {
-	// Replace single quotes with '\'' and wrap in single quotes
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
 
 // TeamRuntime implements SessionRuntime for 3-pane team sessions
 // Creates a tmux window with 3 panes: Planner (left) | Executor (middle) | Reviewer (right)
@@ -93,7 +90,7 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 		// Export CCC_ROLE separately to ensure it's available to ccc run
 		// Use bash explicitly to avoid shell compatibility issues
 		// NOTE: We use double quotes for the bash -c string to allow single quotes in workDir
-		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run --provider %s\"", role, shellQuote(workDir), sess.GetProviderName())
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run --provider %s\"", role, shell.Quote(workDir), sess.GetProviderName())
 
 		// Clear any existing content in the pane
 		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()

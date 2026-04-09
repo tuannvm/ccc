@@ -3,69 +3,14 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// detectConsentDialog checks if the content matches a consent/trust dialog pattern.
-// Uses generic pattern detection to handle UI variations across versions.
+// detectConsentDialog delegates to the exported DetectConsentDialog in pane.go
 func detectConsentDialog(content string) bool {
-	lowerContent := strings.ToLower(content)
-
-	// Generic consent dialog detection using multiple heuristics:
-	// 1. Has numbered options (1/2, [1]/[2], etc.) - characteristic of selection dialogs
-	// 2. Has trust/safety keywords AND exit/decline keywords - consent dialog structure
-	// 3. NOT showing Claude's active input prompt (indicated by "❯" with Claude context)
-
-	// Check for numbered options - looks for patterns like "1.", "2)", "[1]", etc.
-	optionPattern := regexp.MustCompile(`[1-9][\.\)\]]`)
-	lines := strings.Split(content, "\n")
-	foundDigits := make(map[int]bool)
-	for _, line := range lines {
-		matches := optionPattern.FindAllStringIndex(line, -1)
-		for _, match := range matches {
-			for i := match[0]; i < match[1]; i++ {
-				if line[i] >= '1' && line[i] <= '9' {
-					foundDigits[int(line[i]-'0')] = true
-					break
-				}
-			}
-		}
-	}
-	hasNumberedOptions := len(foundDigits) >= 2
-
-	trustKeywords := []string{"trust", "safety check", "confirm", "allow", "proceed", "project you created", "you trust"}
-	exitKeywords := []string{"exit", "decline", "cancel", "skip", "deny"}
-
-	hasTrustKeyword := false
-	hasExitKeyword := false
-	for _, kw := range trustKeywords {
-		if strings.Contains(lowerContent, strings.ToLower(kw)) {
-			hasTrustKeyword = true
-			break
-		}
-	}
-	for _, kw := range exitKeywords {
-		if strings.Contains(lowerContent, strings.ToLower(kw)) {
-			hasExitKeyword = true
-			break
-		}
-	}
-
-	// Active Claude context - more specific patterns that indicate real Claude session
-	hasActiveClaudeContext := strings.Contains(content, "How can I help") ||
-		strings.Contains(content, "I can help") ||
-		strings.Contains(content, "Bash:") ||
-		strings.Contains(content, "function:") ||
-		strings.Contains(content, "result:")
-
-	hasPrompt := strings.Contains(content, "❯")
-	isConsentDialog := hasNumberedOptions && hasTrustKeyword && hasExitKeyword &&
-		(!hasPrompt || !hasActiveClaudeContext)
-
-	return isConsentDialog
+	return DetectConsentDialog(content)
 }
 
 // CaptureVisiblePane captures only the visible portion of a tmux pane to avoid

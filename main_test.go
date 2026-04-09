@@ -2,9 +2,11 @@ package main
 
 import (
 	"testing"
+
+	execpkg "github.com/tuannvm/ccc/pkg/exec"
 )
 
-// TestExecuteCommand tests the executeCommand function
+// TestExecuteCommand tests the RunShell function
 func TestExecuteCommand(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -21,12 +23,12 @@ func TestExecuteCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			output, err := executeCommand(tt.cmd)
+			output, err := execpkg.RunShell(tt.cmd)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("executeCommand(%q) error = %v, wantErr %v", tt.cmd, err, tt.wantErr)
+				t.Errorf("RunShell(%q) error = %v, wantErr %v", tt.cmd, err, tt.wantErr)
 			}
 			if tt.wantContain != "" && !contains(output, tt.wantContain) {
-				t.Errorf("executeCommand(%q) output = %q, want to contain %q", tt.cmd, output, tt.wantContain)
+				t.Errorf("RunShell(%q) output = %q, want to contain %q", tt.cmd, output, tt.wantContain)
 			}
 		})
 	}

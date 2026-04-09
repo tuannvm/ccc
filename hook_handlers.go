@@ -121,3 +121,22 @@ func sendAssistantMessage(cfg *Config, chatID int64, threadID int64, text string
 
 // Ensure session.PaneRole string conversion compiles
 var _ = string(inferRoleFromTranscriptPath(""))
+
+// --- Hook install delegates (merged from hook_install.go) ---
+
+func installSkill() error {
+	return hooks.InstallSkill()
+}
+
+func installHooksToCurrentDir() error {
+	return hooks.InstallHooksToCurrentDir()
+}
+
+func ensureHooksForSession(config *Config, sessionName string, sessionInfo *SessionInfo) error {
+	return hooks.EnsureHooksForSession(&hooks.EnsureHooksForSessionConfig{
+		Config:            config,
+		SessionName:       sessionName,
+		SessionInfo:       sessionInfo,
+		GetSessionWorkDir: getSessionWorkDir,
+	})
+}

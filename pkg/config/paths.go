@@ -499,3 +499,43 @@ func Validate(config *Config) error {
 
 	return nil
 }
+
+// ParseNameAndProvider parses "name@provider" or "name --provider provider" syntax.
+// Returns the name and provider (which may be empty).
+func ParseNameAndProvider(arg string) (name, provider string) {
+	if strings.Contains(arg, " --provider ") {
+		parts := strings.SplitN(arg, " --provider ", 2)
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	}
+	if !IsGitURL(arg) {
+		if idx := strings.Index(arg, "@"); idx > 0 {
+			return arg[:idx], strings.TrimSpace(arg[idx+1:])
+		}
+	}
+	return arg, ""
+}
+
+// ResolveTranscriptDir finds the transcript directory for a session.
+// Uses the provider's ConfigDir if set, otherwise falls back to ~/.claude/projects.
+func ResolveTranscriptDir(cfg *Config, sessionInfo *SessionInfo, home string, pathComponent string) string {
+	providerName := sessionInfo.ProviderName
+	if providerName == "" {
+		providerName = cfg.ActiveProvider
+	}
+	var transcriptDir string
+	if providerName != "" && cfg.Providers != nil {
+		if p := cfg.Providers[providerName]; p != nil && p.ConfigDir != "" {
+			configDir := p.ConfigDir
+			if strings.HasPrefix(configDir, "~/") {
+				configDir = filepath.Join(home, configDir[2:])
+			} else if configDir == "~" {
+				configDir = home
+			}
+			transcriptDir = filepath.Join(configDir, "projects", pathComponent)
+		}
+	}
+	if transcriptDir == "" {
+		transcriptDir = filepath.Join(home, ".claude", "projects", pathComponent)
+	}
+	return transcriptDir
+}

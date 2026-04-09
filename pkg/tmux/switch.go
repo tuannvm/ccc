@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/tuannvm/ccc/pkg/shell"
 	"time"
 )
 
@@ -50,7 +52,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	// This prevents "No conversation found to continue" errors on new sessions
 	if sessionID != "" {
 		// Explicit session ID to resume - use --resume flag
-		runCmd += " --resume " + shellQuote(sessionID)
+		runCmd += " --resume " + shell.Quote(sessionID)
 	} else if continueSession {
 		// Check if Claude is actually running before adding -c flag
 		if WindowHasClaudeRunning(target, "") {
@@ -65,7 +67,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	// Always pass provider flag if specified
 	// This ensures provider-agnostic behavior - no special case for "anthropic"
 	if providerName != "" {
-		runCmd += " --provider " + shellQuote(providerName)
+		runCmd += " --provider " + shell.Quote(providerName)
 	}
 	// worktreeName is WorktreeAutoGenerate for auto-generation, or a specific name
 	// ccc run passes --worktree with optional value
@@ -74,7 +76,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 			// Auto-generate: pass --worktree without a value
 			runCmd += " --worktree"
 		} else {
-			runCmd += " --worktree " + shellQuote(worktreeName)
+			runCmd += " --worktree " + shell.Quote(worktreeName)
 		}
 	}
 
@@ -113,7 +115,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		}
 
 		// Change to work directory and start claude via ccc run (as one command)
-		fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+		fullCmd := "cd " + shell.Quote(workDir) + " && " + runCmd
 		if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 			return fmt.Errorf("failed to send command: %w", err)
 		}
@@ -132,7 +134,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 				fmt.Printf("Shell detected with skipRestart=true - not sending restart command to preserve session state\n")
 			} else {
 				// Shell is running but no Claude - start Claude
-				fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+				fullCmd := "cd " + shell.Quote(workDir) + " && " + runCmd
 				if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 					return fmt.Errorf("failed to send command: %w", err)
 				}
@@ -152,7 +154,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 
 				// Wait for respawn and send command
 				time.Sleep(500 * time.Millisecond)
-				fullCmd := "cd " + shellQuote(workDir) + " && " + runCmd
+				fullCmd := "cd " + shell.Quote(workDir) + " && " + runCmd
 				if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 					return fmt.Errorf("failed to send command: %w", err)
 				}
@@ -233,8 +235,3 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	return nil
 }
 
-// shellQuote safely quotes a string for shell command arguments
-func shellQuote(s string) string {
-	// Replace single quotes with '\'' and wrap in single quotes
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}

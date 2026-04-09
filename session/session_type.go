@@ -1,5 +1,10 @@
 package session
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 // SessionKind represents the type of session (single-pane or multi-pane team)
 type SessionKind string
 
@@ -37,4 +42,47 @@ type PaneSpec struct {
 type LayoutSpec struct {
 	Name  string     // Layout name (e.g., "single", "team-3pane")
 	Panes []PaneSpec // Pane definitions
+}
+
+// InferRoleFromTranscriptPath extracts the role from a transcript file path.
+// Returns empty string if no role is found.
+//
+// Handles multiple transcript naming patterns:
+//   - session-planner.jsonl, session_planner.jsonl
+//   - planner.jsonl, planner-session.jsonl
+//   - session.planner.jsonl (with dot separator)
+func InferRoleFromTranscriptPath(transcriptPath string) PaneRole {
+	if transcriptPath == "" {
+		return ""
+	}
+	base := filepath.Base(transcriptPath)
+	// Remove extensions - handle multiple extensions safely
+	for {
+		newBase := strings.TrimSuffix(base, ".jsonl")
+		if newBase == base {
+			newBase = strings.TrimSuffix(base, ".json")
+		}
+		if newBase == base {
+			break // No more extensions to remove
+		}
+		base = newBase
+	}
+
+	// Convert to lowercase for case-insensitive matching
+	baseLower := strings.ToLower(base)
+
+	// Check for role keywords anywhere in the filename
+	// Order matters: check for longer substrings first to avoid false matches
+	if strings.Contains(baseLower, "planner") {
+		return RolePlanner
+	}
+	if strings.Contains(baseLower, "executor") {
+		return RoleExecutor
+	}
+	if strings.Contains(baseLower, "reviewer") {
+		return RoleReviewer
+	}
+
+	// No role found in path
+	return ""
 }

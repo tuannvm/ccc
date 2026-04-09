@@ -7,10 +7,16 @@ import (
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/relay"
+	notifypkg "github.com/tuannvm/ccc/pkg/notify"
 	"github.com/tuannvm/ccc/pkg/tmux"
+	
 	"github.com/tuannvm/ccc/pkg/auth"
+	"github.com/tuannvm/ccc/pkg/cli"
+	
 	"github.com/tuannvm/ccc/pkg/diagnostics"
+	
 	"github.com/tuannvm/ccc/pkg/service"
+	
 )
 
 const version = "1.7.0"
@@ -52,35 +58,8 @@ func main() {
 
 	switch os.Args[1] {
 	case "run":
-		// Run claude directly (used inside tmux sessions)
-		// Flags: -c (continue), --resume <session-id>, --provider <name>, --worktree [name]
-		continueSession := false
-		var resumeSessionID string
-		var providerOverride string
-		var worktreeName string
-		args := os.Args[2:]
-		for i := 0; i < len(args); i++ {
-			if args[i] == "-c" {
-				continueSession = true
-			} else if args[i] == "--resume" && i+1 < len(args) {
-				resumeSessionID = args[i+1]
-				i++
-			} else if args[i] == "--provider" && i+1 < len(args) {
-				providerOverride = args[i+1]
-				i++
-			} else if args[i] == "--worktree" {
-				// --worktree with optional value
-				// If next arg exists and doesn't start with "-", use it as name
-				// Otherwise, use WorktreeAutoGenerate for auto-generation
-				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-					worktreeName = args[i+1]
-					i++
-				} else {
-					worktreeName = WorktreeAutoGenerate
-				}
-			}
-		}
-		if err := runClaudeRaw(continueSession, resumeSessionID, providerOverride, worktreeName); err != nil {
+		ra := tmux.ParseRunArgs(os.Args[2:], WorktreeAutoGenerate)
+		if err := runClaudeRaw(ra.ContinueSession, ra.ResumeSessionID, ra.ProviderOverride, ra.WorktreeName); err != nil {
 			os.Exit(1)
 		}
 		return
@@ -98,108 +77,7 @@ func main() {
 		diagnostics.Doctor()
 
 	case "config":
-		config, err := configpkg.Load()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if len(os.Args) < 3 {
-			// Show current config
-			fmt.Printf("projects_dir: %s\n", configpkg.GetProjectsDir(config))
-			if config.OAuthToken != "" {
-				fmt.Println("oauth_token: configured")
-			} else {
-				fmt.Println("oauth_token: not set")
-			}
-			if config.TranscriptionLang != "" {
-				fmt.Printf("transcription_lang: %s\n", config.TranscriptionLang)
-			} else {
-				fmt.Println("transcription_lang: not set (auto-detect)")
-			}
-			if auth.IsOTPEnabled(config) {
-				fmt.Println("otp: enabled")
-			} else {
-				fmt.Println("otp: disabled (enable with: ccc setup <bot_token>)")
-			}
-			fmt.Println("\nUsage: ccc config <key> <value>")
-			fmt.Println("  ccc config projects-dir ~/Projects")
-			fmt.Println("  ccc config oauth-token <token>")
-			fmt.Println("  ccc config transcription-lang es")
-			os.Exit(0)
-		}
-		key := os.Args[2]
-		if len(os.Args) < 4 {
-			// Show specific key
-			switch key {
-			case "projects-dir":
-				fmt.Println(configpkg.GetProjectsDir(config))
-			case "oauth-token":
-				if config.OAuthToken != "" {
-					fmt.Println("configured")
-				} else {
-					fmt.Println("not set")
-				}
-			case "bot-token":
-				if config.BotToken != "" {
-					fmt.Println("configured")
-				} else {
-					fmt.Println("not set")
-				}
-			case "transcription-lang":
-				if config.TranscriptionLang != "" {
-					fmt.Println(config.TranscriptionLang)
-				} else {
-					fmt.Println("not set (auto-detect)")
-				}
-			case "otp":
-				if auth.IsOTPEnabled(config) {
-					fmt.Println("enabled")
-				} else {
-					fmt.Println("disabled")
-				}
-			default:
-				fmt.Fprintf(os.Stderr, "Unknown config key: %s\n", key)
-				os.Exit(1)
-			}
-			os.Exit(0)
-		}
-		value := os.Args[3]
-		switch key {
-		case "projects-dir":
-			config.ProjectsDir = value
-			if err := configpkg.Save(config); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("✅ projects_dir set to: %s\n", configpkg.GetProjectsDir(config))
-		case "oauth-token":
-			config.OAuthToken = value
-			if err := configpkg.Save(config); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println("✅ OAuth token saved")
-		case "bot-token":
-			config.BotToken = value
-			if err := configpkg.Save(config); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println("✅ Bot token saved")
-		case "transcription-lang":
-			config.TranscriptionLang = value
-			if err := configpkg.Save(config); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("✅ Transcription language set to: %s\n", value)
-		case "otp":
-			fmt.Fprintf(os.Stderr, "Permission mode can only be changed via: ccc setup <bot_token>\n")
-			os.Exit(1)
-		default:
-			fmt.Fprintf(os.Stderr, "Unknown config key: %s\n", key)
-			os.Exit(1)
-		}
+		configpkg.HandleConfigCommand(os.Args[2:], auth.IsOTPEnabled)
 
 	case "setgroup":
 		config, err := configpkg.Load()
@@ -330,35 +208,9 @@ func main() {
 	default:
 		message := strings.Join(os.Args[1:], " ")
 
-		// If a message is provided, try to send it as a notification first (preserves old behavior)
-		if message != "" {
-			config, err := configpkg.Load()
-			if err == nil && config.Away {
-				// Away mode is on: send as notification to existing session
-				sendErr := send(message)
-				if sendErr == nil {
-					// Message sent successfully (to topic, private chat, or skipped because Away mode off)
-					return
-				}
-				// Send failed - determine if this is a config/setup error or transient error
-				// Config/setup errors should fall through to session creation
-				// Transient errors should exit immediately
-				errMsg := strings.ToLower(sendErr.Error())
-				isConfigError := strings.Contains(errMsg, "not configured") ||
-					strings.Contains(errMsg, "chat not found") ||
-					strings.Contains(errMsg, "unauthorized") ||
-					strings.Contains(errMsg, "forbidden") ||
-					strings.Contains(errMsg, "bad request")
-
-				if isConfigError {
-					// Config/setup error - fall through to session creation with helpful message
-					fmt.Fprintf(os.Stderr, "Note: %v\n", sendErr)
-				} else {
-					// Transient error (network, rate limit, etc.) - report it and don't fall through
-					fmt.Fprintf(os.Stderr, "Error: %v\n", sendErr)
-					os.Exit(1)
-				}
-			}
+		// If a message is provided, try to send it as a notification first
+		if message != "" && notifypkg.TryNotifyIfAway(message) {
+			return
 		}
 
 		// Default behavior: start/attach to session in current directory
@@ -370,52 +222,5 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Printf(`ccc - Claude Code Companion v%s
-
-Your companion for Claude Code - control sessions remotely via Telegram and tmux.
-
-USAGE:
-    ccc                     Start/attach tmux session in current directory
-    ccc -c                  Continue previous session
-    ccc <message>           Send notification (if away mode is on)
-
-COMMANDS:
-    setup <token>           Complete setup (bot, hook, service - all in one!)
-    doctor                  Check all dependencies and configuration
-    config                  Show/set configuration values
-    config projects-dir <path>  Set base directory for projects
-    config oauth-token <token>  Set OAuth token
-    setgroup                Configure Telegram group for topics (if skipped during setup)
-    listen                  Start the Telegram bot listener manually
-    install                 Install skill and background service
-    install-hooks           Install hooks in current project directory
-    send <file>             Send file to current session's Telegram topic
-    relay [port]            Start relay server for large files (default: 8080)
-    run                     Run Claude directly (used by tmux sessions)
-
-TELEGRAM COMMANDS:
-    /new <name>             Create new session (tap to select provider)
-    /new <name>@provider    Create session with specific provider
-    /new ~/path/name        Create session with custom path
-    /new                    Restart session in current topic
-    /team <name>            Create team session (3-pane: planner|executor|reviewer)
-    /team <name>@provider   Create team session with specific provider
-    /worktree <base> <name> Create worktree session from existing session
-    /continue               Restart session keeping conversation history
-    /providers              List available AI providers
-    /provider [name]        Show or change provider for current session
-    /c <cmd>                Execute shell command
-    /update                 Update ccc binary from GitHub
-    /restart                Restart ccc service
-
-OTP (permission approval):
-    When OTP is enabled (via 'ccc setup'), Claude's permission requests
-    are forwarded to Telegram. Reply with your OTP code to approve.
-
-FLAGS:
-    -h, --help              Show this help
-    -v, --version           Show version
-
-For more info: https://github.com/tuannvm/ccc
-`, version)
+	cli.PrintHelp(version)
 }
