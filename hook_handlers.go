@@ -86,7 +86,7 @@ func deliverUnsentTexts(cfg *Config, sessName string, topicID int64, transcriptP
 		SaveToolState:      hooks.SaveToolState,
 		FormatToolMessage:  hooks.FormatToolMessage,
 		EditMessageHTML:    telegram.EditMessageHTML,
-		SendMessageHTML:    sendAssistantMessage,
+		SendMessageHTML:    hooks.SendAssistantMessage,
 		SendMessageGetID:   telegram.SendMessageGetID,
 		SendMessage:        telegram.SendMessage,
 		IsDelivered:        ledger.IsDelivered,
@@ -108,19 +108,6 @@ func handleStopRetry(sessName string, topicID int64, transcriptPath string) erro
 		DeliverUnsentTexts: deliverUnsentTexts,
 	})
 }
-
-// hookLog writes debug log entries
-func hookLog(format string, args ...any) {
-	hooks.HookLog(format, args...)
-}
-
-// sendAssistantMessage sends an assistant text message with optional streaming
-func sendAssistantMessage(cfg *Config, chatID int64, threadID int64, text string) (int64, error) {
-	return hooks.SendAssistantMessage(cfg, chatID, threadID, text)
-}
-
-// Ensure session.PaneRole string conversion compiles
-var _ = string(inferRoleFromTranscriptPath(""))
 
 // --- Hook install delegates (merged from hook_install.go) ---
 
