@@ -21,10 +21,10 @@
 ## Testing Gaps (P3 - Recommended)
 
 ### Unit Tests
-1. **routing/message.go** - Test prefix parsing and routing
-2. **routing/hook.go** - Test role inference from paths
-3. **session/team_runtime.go** - Test tmux commands (with mock)
-4. **session_lookup.go** - Test session finding logic
+1. **pkg/routing/message.go** - Test prefix parsing and routing
+2. **pkg/routing/hook.go** - Test role inference from paths
+3. **pkg/session/team_runtime.go** - Test tmux commands (with mock)
+4. **pkg/lookup/session.go** - Test session finding logic
 
 ### Integration Tests
 1. Team session creation flow
@@ -49,7 +49,7 @@
 
 ## Code TODOs (Low Priority)
 
-### session/runtime.go
+### pkg/session/runtime.go
 ```go
 // Line 92, 97, 102
 // TODO: Call main.ensureProjectWindow + main.switchSessionInWindow
@@ -86,7 +86,7 @@ See `docs/tmux-architecture.md` Phase 6 for details:
 
 | Priority | Item | Type |
 |----------|------|------|
-| P2 | Unit tests for routing/session | Testing |
+| P2 | Unit tests for routing/session (pkg/) | Testing |
 | P3 | Integration tests | Testing |
 | P3 | Documentation updates | Docs |
 | P3 | Code TODOs (window management) | Code |

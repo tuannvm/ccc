@@ -4,6 +4,15 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 
 ## [Unreleased]
 
+### Changed
+- **Idiomatic Go package structure**: Restructured from monolithic root package (~4600 lines) to idiomatic `pkg/` layout
+  - All business logic extracted to focused packages: `pkg/config/`, `pkg/hooks/`, `pkg/tmux/`, `pkg/telegram/`, `pkg/listen/`, `pkg/lookup/`, `pkg/provider/`, `pkg/ledger/`, `pkg/lock/`, `pkg/auth/`, `pkg/exec/`, `pkg/routing/`, `pkg/session/`, `pkg/setup/`, `pkg/team/`, etc.
+  - Root package reduced to 2 files (273 lines): `main.go` (CLI dispatch) + `hook_handlers.go` (DI composition root)
+  - All test files moved to corresponding `pkg/` directories
+  - Type aliases eliminated — all types referenced by full package path
+  - `session/` and `routing/` moved to `pkg/session/` and `pkg/routing/`
+  - 94% reduction in root package size
+
 ### Fixed
 - **Workspace trust dialog handling**: Fixed compatibility with Claude Code 2.1.84+ which shows a workspace trust dialog on startup
   - The dialog "Yes, I trust this folder" / "No, exit" is now automatically accepted

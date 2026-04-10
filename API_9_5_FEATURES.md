@@ -13,7 +13,7 @@ Telegram Bot API 9.5 (released March 1, 2026) introduced several new features th
 
 ## Implementation
 
-All API 9.5 features are implemented in `telegram.go` (lines 550-896).
+All API 9.5 features are implemented in `pkg/telegram/` (api.go, types.go).
 
 ## date_time MessageEntity
 
@@ -148,7 +148,7 @@ sendMessageWithTimestamp(config, chatID, threadID, "Session started", time.Now()
 
 ## API Reference
 
-### telegram.go (API 9.5 section)
+### pkg/telegram/ (API 9.5 functions)
 
 ```go
 // DateTimeEntity represents a date_time MessageEntity
@@ -268,4 +268,4 @@ finalizeStream(config, chatID, threadID, finalText, "Markdown")
 - Added `sendDraftMessage()`, `streamResponse()`, `finalizeStream()`, `streamAndFinalize()` helper functions
 - Added helper functions for timestamp formatting
 - Added emoji ID mappings for common providers
-- All API 9.5 features consolidated in `telegram.go`
+- All API 9.5 features consolidated in `pkg/telegram/`

@@ -80,7 +80,7 @@ Based on architectural review (Opus, Codex 5.3, Gemini), the following principle
 #### 1. Session Type System
 
 ```go
-// session_type.go - NEW FILE
+// pkg/session/session_type.go - NEW FILE
 
 type SessionKind string
 const (
@@ -118,7 +118,7 @@ type PaneSpec struct {
 #### 2. Session Runtime Interface
 
 ```go
-// runtime.go - NEW FILE
+// pkg/session/runtime.go - NEW FILE
 
 type SessionRuntime interface {
     // Create the tmux layout for this session type
@@ -156,7 +156,7 @@ func (r *TeamRuntime) EnsureLayout(session *SessionInfo) error {
 #### 3. Message Routing Strategy
 
 ```go
-// router.go - NEW FILE
+// pkg/routing/message.go - NEW FILE
 
 // MessageRouter - inbound Telegram messages
 type MessageRouter interface {
@@ -183,7 +183,7 @@ func (r *TeamRouter) RouteMessage(text string, layout LayoutSpec) (PaneRole, str
 #### 4. Hook Routing Strategy
 
 ```go
-// hook_router.go - NEW FILE
+// pkg/routing/hook.go - NEW FILE
 
 type HookRouter interface {
     RouteHook(hookData HookData, session *SessionInfo) (PaneRole, error)
@@ -211,7 +211,7 @@ func (r *TeamHookRouter) RouteHook(hookData HookData, session *SessionInfo) (Pan
 #### 5. Layout Registry
 
 ```go
-// layout_registry.go - NEW FILE
+// pkg/session/layout_registry.go - NEW FILE
 
 var BuiltinLayouts = map[string]LayoutSpec{
     "single": {
@@ -240,7 +240,7 @@ var BuiltinLayouts = map[string]LayoutSpec{
 ### Extended SessionInfo Structure
 
 ```go
-// types.go - MODIFIED
+// pkg/session/types.go - MODIFIED
 
 type SessionInfo struct {
     TopicID         int64                 `json:"topic_id"`
@@ -275,22 +275,22 @@ type SessionInfo struct {
 ### File Organization
 
 ```
-session/
-├── types.go          # SessionKind, PaneRole, PaneInfo, LayoutSpec
+pkg/session/
+├── session_type.go   # SessionKind, PaneRole, PaneInfo, LayoutSpec
 ├── runtime.go        # SessionRuntime interface + implementations
 ├── layout.go          # LayoutSpec registry
 └── single.go         # SinglePaneRuntime (wraps existing logic)
 
-routing/
+pkg/routing/
 ├── message.go         # MessageRouter interface + strategies
 └── hook.go           # HookRouter interface + strategies
 
 [existing files - REUSE DIRECTLY]
-├── tmux.go           # Tmux primitives (sendToTmux, ensureCccSession)
-├── telegram.go        # Telegram API (sendMessage, createForumTopic)
-├── ledger.go         # Message delivery tracking
-├── config_load.go    # Config persistence
-└── hooks.go          # Hook infrastructure (install, verify)
+├── pkg/tmux/tmux.go           # Tmux primitives (sendToTmux, ensureCccSession)
+├── pkg/telegram/telegram.go        # Telegram API (sendMessage, createForumTopic)
+├── pkg/ledger/ledger.go         # Message delivery tracking
+├── pkg/config/config_load.go    # Config persistence
+└── pkg/hooks/hooks.go          # Hook infrastructure (install, verify)
 ```
 
 ### Migration Path
@@ -533,7 +533,7 @@ After architectural review (Codex 5.3, Gemini 2.5, Opus 4.6), the consensus is:
 Use the **existing `Stop` hook** (already supported by Claude Code) — not a fictional `PostResponse` hook.
 
 ```go
-// In hooks.go — extend handleStopHook()
+// In pkg/hooks/hooks.go — extend handleStopHook()
 
 func handleStopHook() error {
     // Read transcript to get Claude's last response
@@ -952,7 +952,7 @@ The routing commands (`/planner`, `/executor`, `/reviewer`) **only apply to team
 ### Listen Loop Integration
 
 ```go
-// In commands.go - listen() function
+// In pkg/listen/ - listen dispatch
 
 // Parse incoming Telegram message
 text := update.Message.Text
@@ -1055,10 +1055,10 @@ MSG <msgid> <from_role> <to_role> <timestamp>
 ## Implementation Phases
 
 ### Phase 0: Code Reorganization (NEW)
-- [ ] Create `session/` package directory
-- [ ] Create `routing/` package directory
-- [ ] Move `SessionInfo` from `types.go` to `session/types.go`
-- [ ] Move tmux utilities to `session/tmux.go` (reuse existing, no logic changes)
+- [ ] Create `pkg/session/` package directory
+- [ ] Create `pkg/routing/` package directory
+- [ ] Move `SessionInfo` from `types.go` to `pkg/session/session_type.go`
+- [ ] Move tmux utilities to `pkg/session/tmux.go` (reuse existing, no logic changes)
 - [ ] Create placeholder files for new abstractions (leave empty/TODO)
 - [ ] Verify all existing imports still work
 - [ ] Run `ccc new` and `ccc list` to confirm single-pane sessions unchanged
