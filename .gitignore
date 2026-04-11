@@ -21,3 +21,5 @@ telegram_*.jpg
 ccc-linux
 trash/
 .claude/
+.claude/harness/
+.entire/

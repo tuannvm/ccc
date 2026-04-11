@@ -3,7 +3,7 @@
 
 **Date**: 2026-03-21
 **Reviewer**: Claude Code (Ralph Loop)
-**Scope**: session/, routing/, types.go, team_routing.go, team_commands.go, hooks.go, session_lookup.go, session_persist.go
+**Scope**: pkg/session/, pkg/routing/, pkg/config/types.go, pkg/listen/team.go, pkg/team/commands.go, pkg/hooks/transcript.go, pkg/hooks/handlers.go, pkg/lookup/session.go, pkg/lookup/persist.go
 
 **Status**: ✅ **ALL ISSUES RESOLVED** (P2 fixed in commit 2026-03-21, critical bugs fixed: provider selection (e4e3c94), role name display (2026-03-21))
 
@@ -15,7 +15,7 @@
 
 **Issue**: Team session panes didn't honor provider selection - all 3 panes used default provider instead of selected provider.
 
-**Root Cause**: `session/team_runtime.go` wasn't passing `--provider` flag to `ccc run` command.
+**Root Cause**: `pkg/session/team_runtime.go` wasn't passing `--provider` flag to `ccc run` command.
 
 **Fix** (commit e4e3c94):
 ```diff
@@ -47,7 +47,7 @@ func inferRoleFromTmuxPane(sessionName string) session.PaneRole {
 }
 ```
 
-Also added pane naming in `session/team_runtime.go`:
+Also added pane naming in `pkg/session/team_runtime.go`:
 - Pane 1 → "Planner"
 - Pane 2 → "Executor" 
 - Pane 3 → "Reviewer"
@@ -79,7 +79,7 @@ The multi-pane team session implementation (Phases 0-5) demonstrates **high code
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| Code Organization | ✅ PASS | Clear separation between session/, routing/, and main packages |
+| Code Organization | ✅ PASS | Clear separation between pkg/session/, pkg/routing/, and main packages |
 | Type Safety | ✅ PASS | Proper use of typed enums (SessionKind, PaneRole) - no string abuse |
 | Error Handling | ✅ PASS | Graceful degradation with clear error messages |
 | Nil Safety | ✅ PASS | All map/slice access checked for nil |
@@ -99,14 +99,14 @@ The multi-pane team session implementation (Phases 0-5) demonstrates **high code
 #### ~~P2-1: Code Duplication - Role Inference Function~~ ✅ FIXED (2026-03-21)
 
 **Was Located In**:
-- `session_persist.go:17-51` - `inferRoleFromTranscriptPath()`
-- ~~`hooks.go:104-146`~~ - ~~`inferRoleFromTranscriptPathForPrefix()`~~ **REMOVED**
+- `pkg/lookup/persist.go:17-51` - `inferRoleFromTranscriptPath()`
+- ~~`pkg/hooks/transcript.go:104-146`~~ - ~~`inferRoleFromTranscriptPathForPrefix()`~~ **REMOVED**
 
 **Issue Was**: Identical logic duplicated (43 lines).
 
 **Resolution**:
-- Removed duplicate function from `hooks.go`
-- Updated `hooks.go:319` to call `inferRoleFromTranscriptPath()` from `session_persist.go`
+- Removed duplicate function from `pkg/hooks/transcript.go`
+- Updated `pkg/hooks/transcript.go:319` to call `inferRoleFromTranscriptPath()` from `pkg/lookup/persist.go`
 - Both files are in `main` package - no circular dependency issue existed
 - **Result**: 43 lines of duplicate code eliminated
 
@@ -117,7 +117,7 @@ The multi-pane team session implementation (Phases 0-5) demonstrates **high code
 #### ~~P3-2~~: SinglePaneRuntime Stub Implementations (P3-1 after renumbering)
 
 #### P3-1: SinglePaneRuntime Stub Implementations
-**Location**: `session/runtime.go:91-104`
+**Location**: `pkg/session/runtime.go:91-104`
 
 **Issue**: Three stub functions return "not implemented" errors.
 
@@ -150,7 +150,7 @@ func startClaudeInPane(session Session, workDir string) error {
 ## Positive Findings
 
 ### ✅ Clean Type System
-**Files**: `session/session_type.go`, `types.go`
+**Files**: `pkg/session/session_type.go`, `pkg/config/types.go`
 
 - Proper typed enums: `SessionKind` and `PaneRole`
 - No `interface{}` abuse
@@ -175,12 +175,12 @@ const (
 ---
 
 ### ✅ Proper Nil Safety
-**Files**: `session_lookup.go`, `types.go`, `config_load.go`
+**Files**: `pkg/lookup/session.go`, `pkg/config/types.go`, `pkg/config/load.go`
 
 All TeamSessions access is properly protected:
 
 ```go
-// session_lookup.go - consistent pattern throughout
+// pkg/lookup/session.go - consistent pattern throughout
 if config.TeamSessions != nil {
     for tid, info := range config.TeamSessions {
         if info != nil {
@@ -189,7 +189,7 @@ if config.TeamSessions != nil {
     }
 }
 
-// types.go - helper methods also check nil
+// pkg/config/types.go - helper methods also check nil
 func (c *Config) IsTeamSession(topicID int64) bool {
     if c.TeamSessions == nil {
         return false
@@ -202,7 +202,7 @@ func (c *Config) IsTeamSession(topicID int64) bool {
 ---
 
 ### ✅ Good Concurrency
-**File**: `session/team_runtime.go`
+**File**: `pkg/session/team_runtime.go`
 
 The `ActiveTeamSessions` map uses proper mutex protection:
 
@@ -226,22 +226,22 @@ func (r *TeamRuntime) FindPaneByRole(sessionName string, role PaneRole) (string,
 ---
 
 ### ✅ Clean Interface Design
-**Files**: `routing/message.go`, `routing/hook.go`, `session/runtime.go`
+**Files**: `pkg/routing/message.go`, `pkg/routing/hook.go`, `pkg/session/runtime.go`
 
 Well-designed interfaces enable extensibility:
 
 ```go
-// routing/message.go
+// pkg/routing/message.go
 type MessageRouter interface {
     RouteMessage(text string, layout session.LayoutSpec) (session.PaneRole, string, error)
 }
 
-// routing/hook.go
+// pkg/routing/hook.go
 type HookRouter interface {
     RouteHook(transcriptPath string, sess session.Session) (session.PaneRole, error)
 }
 
-// session/runtime.go
+// pkg/session/runtime.go
 type SessionRuntime interface {
     EnsureLayout(session Session, workDir string) error
     GetRoleTarget(session Session, role PaneRole) (string, error)
@@ -253,7 +253,7 @@ type SessionRuntime interface {
 ---
 
 ### ✅ Proper Config Migration
-**File**: `config_load.go:89-93`
+**File**: `pkg/config/load.go:89-93`
 
 The migration logic preserves existing TeamSessions:
 
@@ -268,7 +268,7 @@ if config.TeamSessions == nil {
 ---
 
 ### ✅ Extensible Layout System
-**File**: `session/layout_registry.go`
+**File**: `pkg/session/layout_registry.go`
 
 New layouts can be added without code changes:
 
@@ -289,10 +289,10 @@ var BuiltinLayouts = map[string]LayoutSpec{
 The following tests should be added:
 
 1. **Unit Tests**:
-   - `routing/message.go` - Test prefix parsing and routing
-   - `routing/hook.go` - Test role inference from paths
-   - `session/team_runtime.go` - Test tmux commands (with mock)
-   - `session_lookup.go` - Test session finding logic
+   - `pkg/routing/message.go` - Test prefix parsing and routing
+   - `pkg/routing/hook.go` - Test role inference from paths
+   - `pkg/session/team_runtime.go` - Test tmux commands (with mock)
+   - `pkg/lookup/session.go` - Test session finding logic
 
 2. **Integration Tests**:
    - Team session creation flow
@@ -312,8 +312,8 @@ The following tests should be added:
 **YES**. The architecture demonstrates:
 
 1. **Separation of Concerns**:
-   - `session/` - Core session types and runtime
-   - `routing/` - Message and hook routing logic
+   - `pkg/session/` - Core session types and runtime
+   - `pkg/routing/` - Message and hook routing logic
    - `main` - Integration and glue code
 
 2. **Interface-Based Design**:
@@ -322,7 +322,7 @@ The following tests should be added:
 
 3. **No Circular Dependencies**:
    - Clean import hierarchy
-   - `routing/` depends on `session/`
+   - `pkg/routing/` depends on `pkg/session/`
    - `main` depends on both
 
 4. **Future-Proof**:

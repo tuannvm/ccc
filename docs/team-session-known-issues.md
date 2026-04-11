@@ -8,7 +8,7 @@
 
 ### 1. ✅ FIXED — Duplicate pane ClaudeSessionID
 
-**Files:** `session_persist.go:85-91`
+**Files:** `pkg/lookup/persist.go:85-91`
 
 **Problem:**
 - Persist logic sets the target pane ID but doesn't clear that ID from sibling panes
@@ -16,7 +16,7 @@
 
 **Fix Applied:**
 ```go
-// session_persist.go:86-91 - Now clears from sibling panes
+// pkg/lookup/persist.go:86-91 - Now clears from sibling panes
 // Clear this claudeSessionID from all OTHER panes to prevent ambiguity
 for otherRole, otherPane := range sessInfo.Panes {
     if otherRole != role && otherPane != nil && otherPane.ClaudeSessionID == claudeSessionID {
@@ -32,7 +32,7 @@ for otherRole, otherPane := range sessInfo.Panes {
 
 ### 2. ✅ FIXED — Retry path loses role prefix
 
-**Files:** `hooks.go:315-330`
+**Files:** `pkg/hooks/transcript.go:315-330`
 
 **Problem:**
 - `handleStopRetry` calls `deliverUnsentTexts(..., "")` with empty claudeSessionID
@@ -41,7 +41,7 @@ for otherRole, otherPane := range sessInfo.Panes {
 
 **Fix Applied:**
 ```go
-// hooks.go:315-330 - Added improved transcript path inference fallback
+// pkg/hooks/transcript.go:315-330 - Added improved transcript path inference fallback
 // Fallback 1: Try to infer role from transcript path (improved pattern matching)
 if rolePrefix == "" && transcriptPath != "" {
     role := inferRoleFromTranscriptPathForPrefix(transcriptPath)
@@ -64,7 +64,7 @@ if rolePrefix == "" {
 
 ### 3. ✅ FIXED — Inconsistent tmux name sanitization
 
-**Files:** `session/team_runtime.go:148`, `team_routing.go:80,101`
+**Files:** `pkg/session/team_runtime.go:148`, `pkg/listen/team.go:80,101`
 
 **Problem:**
 - One path maps `.` → `_`, another maps `.` → `__`
@@ -72,14 +72,14 @@ if rolePrefix == "" {
 - Dotted team names can break targeting/switch checks
 
 **Fix Applied:**
-- `session/team_runtime.go:148`: Changed to use `__` (double underscore)
-- `team_routing.go:80,101`: Added `tmuxSafeName()` sanitization
+- `pkg/session/team_runtime.go:148`: Changed to use `__` (double underscore)
+- `pkg/listen/team.go:80,101`: Added `tmuxSafeName()` sanitization
 
 ```go
-// session/team_runtime.go:148 - Now uses double underscore
+// pkg/session/team_runtime.go:148 - Now uses double underscore
 return strings.ReplaceAll(name, ".", "__")
 
-// team_routing.go:80 - Now sanitizes
+// pkg/listen/team.go:80 - Now sanitizes
 sanitizedName := tmuxSafeName(sessionName)
 target := "ccc-team:" + sanitizedName
 ```
@@ -90,7 +90,7 @@ target := "ccc-team:" + sanitizedName
 
 ### 4. ✅ ADDED — Input validation for empty session names
 
-**Files:** `team_routing.go:82,104`
+**Files:** `pkg/listen/team.go:82,104`
 
 **Improvement:** Added defensive checks for empty session names with clear error messages.
 
@@ -98,7 +98,7 @@ target := "ccc-team:" + sanitizedName
 
 ### 5. ✅ FIXED — Error handling in switchToTeamWindow
 
-**Files:** `team_routing.go:106`
+**Files:** `pkg/listen/team.go:106`
 
 **Improvement:** Previously ignored tmux errors. Now returns error for proper debugging.
 

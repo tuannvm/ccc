@@ -51,13 +51,13 @@ LEGEND:
 
 | Component | File | Responsibility |
 |-----------|------|---------------|
-| **Telegram Listener** | `telegram.go`, `commands.go` | Polls Telegram for messages, handles commands, routes prompts to sessions |
-| **Tmux Manager** | `tmux.go` | Creates/manages tmux sessions, switches windows, detects Claude state |
-| **Session Manager** | `session.go`, `session_lookup.go`, `session_persist.go` | Manages session lifecycle, creates topics, persists state |
-| **Config Manager** | `config_load.go`, `config_save.go`, `config_paths.go`, `config_validation.go`, `types.go` | Loads/saves config atomically, validates, manages providers and sessions |
-| **Hook System** | `hooks.go` | Installs Claude Code hooks, reads transcripts, sends notifications |
-| **Provider Abstraction** | `provider.go` | Provider-agnostic interface for AI providers |
-| **Message Ledger** | `ledger.go` | Tracks message delivery state between terminal and Telegram |
+| **Telegram Listener** | `pkg/listen/` (dispatch.go, commands.go) | Polls Telegram for messages, handles commands, routes prompts to sessions |
+| **Tmux Manager** | `pkg/tmux/` (tmux.go) | Creates/manages tmux sessions, switches windows, detects Claude state |
+| **Session Manager** | `pkg/listen/session_create.go`, `pkg/lookup/session.go`, `pkg/lookup/persist.go` | Manages session lifecycle, creates topics, persists state |
+| **Config Manager** | `pkg/config/` (load.go, save.go, path.go, validation.go, types.go) | Loads/saves config atomically, validates, manages providers and sessions |
+| **Hook System** | `pkg/hooks/` (handlers.go, transcript.go) | Installs Claude Code hooks, reads transcripts, sends notifications |
+| **Provider Abstraction** | `pkg/provider/` (provider.go) | Provider-agnostic interface for AI providers |
+| **Message Ledger** | `pkg/ledger/` (ledger.go) | Tracks message delivery state between terminal and Telegram |
 
 ## Message Flow
 
@@ -321,14 +321,14 @@ The configuration system is organized into specialized files:
 
 | File | Purpose |
 |------|---------|
-| **types.go** | All struct definitions (Config, SessionInfo, ProviderConfig, Telegram types, etc.) |
-| **config_paths.go** | Path utilities (configDir, cacheDir, expandPath, getProjectsDir, etc.) |
-| **config_validation.go** | Config validation (validateConfig checks providers and sessions) |
-| **config_load.go** | Config loading with migration from old formats |
-| **config_save.go** | Atomic config saving using write-then-rename pattern |
-| **session_lookup.go** | Session query functions (getSessionByTopic, findSessionBy*, findSession) |
-| **session_persist.go** | Session write operations (persistClaudeSessionID) |
-| **provider.go** | Provider interface and helper functions (getActiveProvider, getProvider, etc.) |
+| **pkg/config/types.go** | All struct definitions (Config, SessionInfo, ProviderConfig, Telegram types, etc.) |
+| **pkg/config/path.go** | Path utilities (configDir, cacheDir, expandPath, getProjectsDir, etc.) |
+| **pkg/config/validation.go** | Config validation (validateConfig checks providers and sessions) |
+| **pkg/config/load.go** | Config loading with migration from old formats |
+| **pkg/config/save.go** | Atomic config saving using write-then-rename pattern |
+| **pkg/lookup/session.go** | Session query functions (getSessionByTopic, findSessionBy*, findSession) |
+| **pkg/lookup/persist.go** | Session write operations (persistClaudeSessionID) |
+| **pkg/provider/provider.go** | Provider interface and helper functions (getActiveProvider, getProvider, etc.) |
 
 ### Config File Location
 
@@ -792,12 +792,12 @@ Team session code is organized across multiple files:
 
 | File | Responsibility |
 |------|---------------|
-| `team_commands.go` | CLI commands (`/team`, `/team new`, etc.) |
-| `team_runtime.go` | Tmux layout creation, pane management |
-| `session/team_runtime.go` | Session runtime interface implementation |
-| `session_lookup.go` | Session lookup (checks both Sessions and TeamSessions) |
-| `session_persist.go` | Claude session ID persistence per-pane |
-| `hooks.go` | Hook delivery with role prefix formatting |
+| `pkg/team/commands.go` | CLI commands (`/team`, `/team new`, etc.) |
+| `pkg/session/team_runtime.go` | Tmux layout creation, pane management |
+| `pkg/session/team_runtime.go` | Session runtime interface implementation |
+| `pkg/lookup/session.go` | Session lookup (checks both Sessions and TeamSessions) |
+| `pkg/lookup/persist.go` | Claude session ID persistence per-pane |
+| `pkg/hooks/transcript.go` | Hook delivery with role prefix formatting |
 
 ### Tmux Commands
 
