@@ -202,16 +202,16 @@ func StreamFileToRelay(relayURL, token, filePath, fileName string, fileSize int6
 }
 
 // RunRelayServerFromArgs starts the relay server using CLI args for port (default "8080")
-func RunRelayServerFromArgs(args []string) {
+func RunRelayServerFromArgs(args []string) error {
 	port := "8080"
 	if len(args) >= 1 {
 		port = args[0]
 	}
-	RunRelayServer(port)
+	return RunRelayServer(port)
 }
 
 // RunRelayServer starts the relay server that streams files from sender to receiver
-func RunRelayServer(port string) {
+func RunRelayServer(port string) error {
 	// Clean up old transfers periodically
 	go func() {
 		for {
@@ -451,5 +451,5 @@ func RunRelayServer(port string) {
 
 	fmt.Printf("🚀 Streaming relay server on :%s\n", port)
 	fmt.Println("   No files stored - direct sender→relay→receiver streaming!")
-	http.ListenAndServe(":"+port, nil)
+	return http.ListenAndServe(":"+port, nil)
 }

@@ -137,7 +137,7 @@ func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, 
 
 	topicID, err := telegram.CreateForumTopic(cfg, teamName, providerName, "")
 	if err != nil {
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		exec.Command(tmux.TmuxPath, "kill-window", "-t", "ccc-team:"+teamName).Run()
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to create topic: %v", err))
 		return
 	}
@@ -146,7 +146,7 @@ func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, 
 	cfg.SetTeamSession(topicID, sessInfo)
 	if err := configpkg.Save(cfg); err != nil {
 		telegram.DeleteForumTopic(cfg, topicID)
-		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		exec.Command(tmux.TmuxPath, "kill-window", "-t", "ccc-team:"+teamName).Run()
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
 		return
 	}
@@ -155,8 +155,9 @@ func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, 
 		loggingpkg.ListenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
 	}
 
-	if err := runtime.StartClaude(sessInfo, workDir); err != nil {
-		loggingpkg.ListenLog("[/team] Failed to start Claude for %s: %v", teamName, err)
+	startErr := runtime.StartClaude(sessInfo, workDir)
+	if startErr != nil {
+		loggingpkg.ListenLog("[/team] Failed to start Claude for %s: %v", teamName, startErr)
 	}
 
 	msg := fmt.Sprintf("✅ Team session '%s' created!\n\n", teamName)

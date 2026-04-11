@@ -23,6 +23,8 @@ COMMANDS:
     listen                  Start the Telegram bot listener manually
     install                 Install skill and background service
     install-hooks           Install hooks in current project directory
+    uninstall               Remove CCC skill
+    cleanup-hooks           Clean up old global hooks from pre-1.2 installations
     send <file>             Send file to current session's Telegram topic
     relay [port]            Start relay server for large files (default: 8080)
     run                     Run Claude directly (used by tmux sessions)

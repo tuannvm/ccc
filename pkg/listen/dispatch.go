@@ -42,6 +42,9 @@ func Run(version string) error {
 			}
 
 			msg := update.Message
+			if msg.Chat.ID == 0 && msg.Text == "" && msg.Voice == nil && msg.Photo == nil && msg.Document == nil {
+				continue
+			}
 
 			if !auth.IsAuthorizedMessage(config, msg) {
 				continue

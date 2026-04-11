@@ -125,7 +125,23 @@ func main() {
 		}
 
 	case "install":
-		service.InstallAll()
+		if err := service.InstallAll(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	case "uninstall":
+		fmt.Println("⚠️ Global hook uninstallation is deprecated.")
+		fmt.Println("💡 To remove hooks from a project, delete the .claude/settings.local.json file in that project.")
+		fmt.Println("💡 To cleanup old global hooks, use: ccc cleanup-hooks")
+		hooks.UninstallSkill()
+		fmt.Println("✅ CCC uninstalled")
+
+	case "cleanup-hooks":
+		if err := hooks.CleanupGlobalHooks(configpkg.Load); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "install-hooks":
 		if err := installHooksToCurrentDir(); err != nil {
@@ -152,7 +168,10 @@ func main() {
 		}
 
 	case "relay":
-		relay.RunRelayServerFromArgs(os.Args[2:])
+		if err := relay.RunRelayServerFromArgs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 	default:
 		if err := notifypkg.HandleDefaultCommand(os.Args[1:], listenpkg.StartSessionInCurrentDirAuto); err != nil {

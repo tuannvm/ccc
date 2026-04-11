@@ -380,11 +380,18 @@ func HandleStopRetry(cfg *HandleStopRetryConfig) error {
 // HandleStopRetryFromArgs parses CLI args for the hook-stop-retry command.
 func HandleStopRetryFromArgs(args []string, handleRetry func(string, int64, string) error) {
 	if len(args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: ccc hook-stop-retry <session> <topicID> <transcript>\n")
 		os.Exit(1)
 	}
 	var tid int64
-	fmt.Sscan(args[1], &tid)
-	handleRetry(args[0], tid, args[2])
+	if _, err := fmt.Sscan(args[1], &tid); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid topicID %q: %v\n", args[1], err)
+		os.Exit(1)
+	}
+	if err := handleRetry(args[0], tid, args[2]); err != nil {
+		fmt.Fprintf(os.Stderr, "Stop retry failed: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // ToolState tracks tool calls and the Telegram message ID for live updates

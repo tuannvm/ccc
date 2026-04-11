@@ -225,12 +225,17 @@ func Doctor() {
 				if pre, has := hooks["PreToolUse"].([]any); has && len(pre) > 0 {
 					installed = append(installed, "PreToolUse")
 				}
-				if len(installed) == 2 {
+				if notif, has := hooks["Notification"].([]any); has && len(notif) > 0 {
+					installed = append(installed, "Notification")
+				}
+				if len(installed) == 3 {
 					fmt.Printf("✅ installed (%s)\n", strings.Join(installed, ", "))
 				} else if len(installed) > 0 {
 					fmt.Printf("⚠️  partial (%s) - run: ccc install\n", strings.Join(installed, ", "))
+					allGood = false
 				} else {
 					fmt.Println("❌ not installed (run: ccc install)")
+					allGood = false
 				}
 			} else {
 				fmt.Println("❌ not installed (run: ccc install)")

@@ -123,10 +123,11 @@ func (p ConfiguredProvider) ConfigDir() string {
 }
 
 func (p ConfiguredProvider) TranscriptPath(sessionID string) string {
-	if p.Config == nil || p.Config.ConfigDir == "" {
+	configDir := p.ConfigDir()
+	if configDir == "" {
 		return ""
 	}
-	return filepath.Join(p.Config.ConfigDir, "claude-cli", "transcripts", sessionID, "transcript.jsonl")
+	return filepath.Join(configDir, "claude-cli", "transcripts", sessionID, "transcript.jsonl")
 }
 
 func (p ConfiguredProvider) EnvVars(cfg *config.Config) []string {

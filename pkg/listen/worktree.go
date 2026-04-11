@@ -37,10 +37,7 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 			return
 		}
 
-		basePath := baseSession.Path
-		if basePath == "" {
-			basePath = configpkg.ResolveProjectPath(cfg, baseSessionName)
-		}
+		basePath := lookup.GetSessionWorkDir(cfg, baseSessionName, baseSession)
 		gitCmd := exec.Command("git", "-C", basePath, "rev-parse", "--is-inside-work-tree")
 		if out, err := gitCmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Session '%s' is not a git repository: %s\n\nCannot create worktree. Initialize git first with 'git init'.", baseSessionName, basePath))
@@ -121,9 +118,12 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 	} else if len(parts) == 1 {
 		telegram.SendMessage(cfg, chatID, threadID, "Usage: /worktree <session_name> <worktree_name>\n\nCreates a new worktree session from an existing session's repository.\n\nTip: In a session topic, you can use just /worktree <name>.")
 		return
-	} else {
+	} else if len(parts) == 2 {
 		baseSessionName = parts[0]
 		worktreeName = parts[1]
+	} else {
+		telegram.SendMessage(cfg, chatID, threadID, "Usage: /worktree <session_name> <worktree_name>\n\nTip: in a session topic, use /worktree or /worktree <name>.")
+		return
 	}
 
 	baseSession, exists := cfg.Sessions[baseSessionName]
@@ -132,10 +132,7 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 		return
 	}
 
-	basePath := baseSession.Path
-	if basePath == "" {
-		basePath = configpkg.ResolveProjectPath(cfg, baseSessionName)
-	}
+	basePath := lookup.GetSessionWorkDir(cfg, baseSessionName, baseSession)
 	gitCmd := exec.Command("git", "-C", basePath, "rev-parse", "--is-inside-work-tree")
 	if out, err := gitCmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Base session path is not a git repository: %s", basePath))

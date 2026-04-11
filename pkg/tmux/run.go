@@ -38,7 +38,7 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	if winName, err := exec.Command(TmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
 		name := strings.TrimSpace(string(winName))
 		if name != "" {
-			telegramFlagPath := filepath.Join(configpkg.CacheDir(), "telegram-active-"+name)
+			telegramFlagPath := filepath.Join(configpkg.CacheDir(), "telegram-active-"+SafeName(name))
 			os.Remove(telegramFlagPath)
 		}
 	}

@@ -17,8 +17,9 @@ func RecoverUndeliveredMessages(config *configpkg.Config) {
 		undelivered := ledger.FindUndelivered(sessName, "telegram")
 		for _, ur := range undelivered {
 			if ur.Type == "assistant_text" || ur.Type == "notification" {
-				telegram.SendMessage(config, config.GroupID, info.TopicID, fmt.Sprintf("*%s:*\n%s", sessName, ur.Text))
-				ledger.UpdateDelivery(sessName, ur.ID, "telegram_delivered", true)
+				if err := telegram.SendMessage(config, config.GroupID, info.TopicID, fmt.Sprintf("*%s:*\n%s", sessName, ur.Text)); err == nil {
+					ledger.UpdateDelivery(sessName, ur.ID, "telegram_delivered", true)
+				}
 			}
 		}
 	}

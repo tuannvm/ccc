@@ -289,6 +289,8 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	if err != nil || time.Since(flagInfo.ModTime()) > otpGrantDuration {
 		return nil // no flag or expired, let Claude handle permissions normally
 	}
+	// Flag consumed â remove it now that PermissionHook has observed it
+	os.Remove(callbacks.TelegramActiveFlag(tmuxName))
 
 	// Check for a valid OTP grant (approved within the last 5 minutes)
 	if callbacks.HasValidOTPGrant(tmuxName) {
@@ -414,7 +416,7 @@ func HandleUserPromptHook(callbacks *HandlerCallbacks) error {
 	tmuxName := callbacks.TmuxSafeName(sessName)
 	if flagInfo, err := os.Stat(callbacks.TelegramActiveFlag(tmuxName)); err == nil {
 		if time.Since(flagInfo.ModTime()) < 30*time.Second {
-			os.Remove(callbacks.TelegramActiveFlag(tmuxName))
+			// Don't remove the flag here — PermissionHook needs it to detect Telegram origin
 			callbacks.WritePromptAck(sessName)
 			callbacks.SetThinking(sessName)
 			// Record: came from Telegram, both sides have it

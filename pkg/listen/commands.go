@@ -74,7 +74,11 @@ func HandleDeleteCommand(cfg *configpkg.Config, chatID, threadID int64) {
 
 	topicID := cfg.Sessions[sessName].TopicID
 	delete(cfg.Sessions, sessName)
-	configpkg.Save(cfg)
+	if err := configpkg.Save(cfg); err != nil {
+		cfg.Sessions[sessName] = &configpkg.SessionInfo{TopicID: topicID} // restore on failure
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("⚠️ Failed to save config: %v", err))
+		return
+	}
 	if err := telegram.DeleteForumTopic(cfg, topicID); err != nil {
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("⚠️ Session deleted but failed to delete thread: %v", err))
 	}

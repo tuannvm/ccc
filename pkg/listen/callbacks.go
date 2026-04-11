@@ -139,12 +139,22 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		workDir = existing.Path
 	}
 
+	if cfg.Sessions == nil {
+		cfg.Sessions = make(map[string]*configpkg.SessionInfo)
+	}
 	cfg.Sessions[sessionName] = &configpkg.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	configpkg.Save(cfg)
+	if err := configpkg.Save(cfg); err != nil {
+		delete(cfg.Sessions, sessionName) // rollback on failure
+		if cb.Message != nil {
+			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("⚠️ Failed to save config: %v", err))
+		}
+		return
+	}
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)

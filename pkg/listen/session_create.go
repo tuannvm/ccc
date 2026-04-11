@@ -160,10 +160,13 @@ func StartSession(continueSession bool, ) error {
 		resumeSessionID = config.Sessions[name].ClaudeSessionID
 	}
 
-	if config.GroupID != 0 {
+	if config.GroupID != 0 && !continueSession {
 		if _, exists := config.Sessions[name]; !exists {
 			topicID, err := telegram.CreateForumTopic(config, name, providerName, "")
 			if err == nil {
+				if config.Sessions == nil {
+					config.Sessions = make(map[string]*configpkg.SessionInfo)
+				}
 				config.Sessions[name] = &configpkg.SessionInfo{
 					TopicID:      topicID,
 					Path:         cwd,

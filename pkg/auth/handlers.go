@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
@@ -17,7 +18,7 @@ import (
 // Auth state for OAuth flow
 var (
 	authInProgress sync.Mutex
-	authWaitingCode bool
+	authWaitingCode atomic.Bool
 	otpAttempts = make(map[string]int) // session -> failed attempts
 )
 
@@ -47,7 +48,7 @@ func HandleAuth(cfg *config.Config, chatID, threadID int64) {
 	envCmd := buildProviderEnv(cfg, home)
 
 	time.Sleep(500 * time.Millisecond)
-	cmdStr := envCmd + tmux.ClaudePath + " --dangerously-skip-permissions"
+	cmdStr := envCmd + shellQuote(tmux.ClaudePath) + " --dangerously-skip-permissions"
 	exec.Command(tmux.TmuxPath, "send-keys", "-t", AuthTmuxSession, cmdStr, "C-m").Run()
 
 	var oauthURL string
@@ -79,13 +80,13 @@ func HandleAuth(cfg *config.Config, chatID, threadID int64) {
 		return
 	}
 
-	authWaitingCode = true
+	authWaitingCode.Store(true)
 	telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("🔗 Open this URL and authorize:\n\n%s\n\nThen paste the code here.", oauthURL))
 }
 
 // HandleAuthCode processes an OAuth code submission
 func HandleAuthCode(cfg *config.Config, chatID, threadID int64, code string) {
-	authWaitingCode = false
+	authWaitingCode.Store(false)
 	code = strings.TrimSpace(code)
 
 	telegram.SendMessage(cfg, chatID, threadID, "🔄 Sending code to Claude...")
@@ -133,7 +134,7 @@ func HandleAuthCode(cfg *config.Config, chatID, threadID int64, code string) {
 
 // IsAuthWaitingCode returns whether auth is waiting for a code submission
 func IsAuthWaitingCode() bool {
-	return authWaitingCode
+	return authWaitingCode.Load()
 }
 
 // HandleOTPResponse handles OTP code responses for permission approval.
@@ -167,6 +168,11 @@ func HandleOTPResponse(cfg *config.Config, text string, chatID, threadID int64) 
 	return true
 }
 
+// shellQuote wraps a string in single quotes, escaping any embedded single quotes
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
 // buildProviderEnv constructs environment variable exports from provider config
 func buildProviderEnv(cfg *config.Config, home string) string {
 	envCmd := ""
@@ -177,26 +183,26 @@ func buildProviderEnv(cfg *config.Config, home string) string {
 			authToken = os.Getenv(provider.AuthEnvVar)
 		}
 		if authToken != "" {
-			envCmd += fmt.Sprintf("export ANTHROPIC_AUTH_TOKEN='%s'; ", authToken)
+			envCmd += "export ANTHROPIC_AUTH_TOKEN=" + shellQuote(authToken) + "; "
 		}
 
 		if provider.BaseURL != "" {
-			envCmd += fmt.Sprintf("export ANTHROPIC_BASE_URL='%s'; ", provider.BaseURL)
+			envCmd += "export ANTHROPIC_BASE_URL=" + shellQuote(provider.BaseURL) + "; "
 		}
 		if provider.OpusModel != "" {
-			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_OPUS_MODEL='%s'; ", provider.OpusModel)
+			envCmd += "export ANTHROPIC_DEFAULT_OPUS_MODEL=" + shellQuote(provider.OpusModel) + "; "
 		}
 		if provider.SonnetModel != "" {
-			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_SONNET_MODEL='%s'; ", provider.SonnetModel)
-			envCmd += fmt.Sprintf("export ANTHROPIC_MODEL='%s'; ", provider.SonnetModel)
+			envCmd += "export ANTHROPIC_DEFAULT_SONNET_MODEL=" + shellQuote(provider.SonnetModel) + "; "
+			envCmd += "export ANTHROPIC_MODEL=" + shellQuote(provider.SonnetModel) + "; "
 		} else if provider.OpusModel != "" {
-			envCmd += fmt.Sprintf("export ANTHROPIC_MODEL='%s'; ", provider.OpusModel)
+			envCmd += "export ANTHROPIC_MODEL=" + shellQuote(provider.OpusModel) + "; "
 		}
 		if provider.HaikuModel != "" {
-			envCmd += fmt.Sprintf("export ANTHROPIC_DEFAULT_HAIKU_MODEL='%s'; ", provider.HaikuModel)
+			envCmd += "export ANTHROPIC_DEFAULT_HAIKU_MODEL=" + shellQuote(provider.HaikuModel) + "; "
 		}
 		if provider.SubagentModel != "" {
-			envCmd += fmt.Sprintf("export CLAUDE_CODE_SUBAGENT_MODEL='%s'; ", provider.SubagentModel)
+			envCmd += "export CLAUDE_CODE_SUBAGENT_MODEL=" + shellQuote(provider.SubagentModel) + "; "
 		}
 
 		if provider.ConfigDir != "" {
@@ -206,7 +212,7 @@ func buildProviderEnv(cfg *config.Config, home string) string {
 			} else if configDir == "~" {
 				configDir = home
 			}
-			envCmd += fmt.Sprintf("export CLAUDE_CONFIG_DIR='%s'; ", configDir)
+			envCmd += "export CLAUDE_CONFIG_DIR=" + shellQuote(configDir) + "; "
 		}
 
 		if provider.ApiTimeout > 0 {

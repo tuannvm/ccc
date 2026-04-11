@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
@@ -23,7 +24,7 @@ func HandleVoiceMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 	if sessionName == "" {
 		return
 	}
-	sessionInfo := cfg.Sessions[sessionName]
+	sessionInfo := lookup.GetSessionInfo(cfg, sessionName, threadID)
 	if sessionInfo == nil {
 		return
 	}
@@ -66,8 +67,11 @@ func HandlePhotoMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 	if sessionName == "" {
 		return
 	}
-	sessionInfo := cfg.Sessions[sessionName]
+	sessionInfo := lookup.GetSessionInfo(cfg, sessionName, threadID)
 	if sessionInfo == nil {
+		return
+	}
+	if len(msg.Photo) == 0 {
 		return
 	}
 	photo := msg.Photo[len(msg.Photo)-1]
@@ -86,7 +90,7 @@ func HandlePhotoMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 		photoLedgerID := fmt.Sprintf("tg:%d:photo", msg.MessageID)
 		ledger.AppendMessage(&ledger.MessageRecord{
 			ID: photoLedgerID, Session: sessionName, Type: "user_prompt",
-			Text: caption, Origin: "telegram",
+			Text: prompt, Origin: "telegram",
 			TerminalDelivered: false, TelegramDelivered: true,
 		})
 		workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
@@ -107,7 +111,7 @@ func HandleDocumentMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, 
 	if sessionName == "" {
 		return
 	}
-	sessionInfo := cfg.Sessions[sessionName]
+	sessionInfo := lookup.GetSessionInfo(cfg, sessionName, threadID)
 	if sessionInfo == nil {
 		return
 	}
@@ -115,7 +119,18 @@ func HandleDocumentMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, 
 	if destDir == "" {
 		destDir = configpkg.ResolveProjectPath(cfg, sessionName)
 	}
-	destPath := filepath.Join(destDir, msg.Document.FileName)
+	// Sanitize filename to prevent path traversal
+	safeName := filepath.Base(msg.Document.FileName)
+	if safeName == "" || safeName == "." || safeName == ".." {
+		telegram.SendMessage(cfg, chatID, threadID, "❌ Invalid file name")
+		return
+	}
+	destDirAbs, _ := filepath.Abs(destDir)
+	destPath := filepath.Join(destDirAbs, safeName)
+	if rel, err := filepath.Rel(destDirAbs, destPath); err != nil || strings.HasPrefix(rel, "..") {
+		telegram.SendMessage(cfg, chatID, threadID, "❌ Invalid file path")
+		return
+	}
 	if err := telegram.DownloadTelegramFile(cfg, msg.Document.FileID, destPath); err != nil {
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Download failed: %v", err))
 	} else {

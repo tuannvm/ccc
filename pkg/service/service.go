@@ -14,13 +14,14 @@ import (
 )
 
 // InstallAll installs both the Claude skill/hooks and the background service.
-func InstallAll() {
+func InstallAll() error {
 	if err := hooks.InstallSkill(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return fmt.Errorf("failed to install skill: %w", err)
 	}
 	if err := InstallService(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return fmt.Errorf("failed to install service: %w", err)
 	}
+	return nil
 }
 
 // InstallService installs the ccc background service (launchd on macOS, systemd on Linux)

@@ -203,6 +203,19 @@ func GetSessionByTopic(cfg *config.Config, topicID int64) string {
 	return ""
 }
 
+// GetSessionInfo resolves SessionInfo from either Sessions or TeamSessions.
+func GetSessionInfo(cfg *config.Config, sessionName string, topicID int64) *config.SessionInfo {
+	if info, ok := cfg.Sessions[sessionName]; ok && info != nil {
+		return info
+	}
+	if cfg.TeamSessions != nil {
+		if info, ok := cfg.TeamSessions[topicID]; ok && info != nil {
+			return info
+		}
+	}
+	return nil
+}
+
 // FindSessionByClaudeID matches a claude session ID to a configured session.
 func FindSessionByClaudeID(cfg *config.Config, claudeSessionID string) (string, int64) {
 	if claudeSessionID == "" {

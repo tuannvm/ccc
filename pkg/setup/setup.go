@@ -88,8 +88,8 @@ func Setup(botToken string) error {
 
 		for _, update := range updates.Result {
 			offset = update.UpdateID + 1
-			if update.Message.Chat.ID != 0 {
-				config.ChatID = update.Message.Chat.ID
+			if update.Message.Chat.Type == "private" && update.Message.From.ID != 0 {
+				config.ChatID = update.Message.From.ID
 				if err := configpkg.Save(config); err != nil {
 					return fmt.Errorf("failed to save config: %w", err)
 				}
@@ -131,7 +131,9 @@ step2:
 			chat := update.Message.Chat
 			if chat.Type == "supergroup" && update.Message.From.ID == config.ChatID {
 				config.GroupID = chat.ID
-				configpkg.Save(config)
+				if err := configpkg.Save(config); err != nil {
+					return fmt.Errorf("failed to save config: %w", err)
+				}
 				fmt.Printf("✅ Group configured!\n\n")
 				goto step3
 			}
@@ -161,7 +163,7 @@ step3:
 	if permMode == "otp" {
 		msg, err := auth.SetupOTP(config)
 		if err != nil {
-			fmt.Printf("⚠️  OTP setup failed: %v\n", err)
+			return fmt.Errorf("OTP setup failed: %w", err)
 		} else {
 			fmt.Println()
 			fmt.Println(msg)
