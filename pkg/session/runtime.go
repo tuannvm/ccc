@@ -1,9 +1,5 @@
 package session
 
-import (
-	"fmt"
-)
-
 // Session is a forward declaration to avoid circular imports
 // The actual SessionInfo is defined in the main package
 type Session interface {
@@ -23,7 +19,6 @@ type SessionRuntime interface {
 	EnsureLayout(session Session, workDir string) error
 
 	// GetRoleTarget returns the tmux target for a specific pane role
-	// For single-pane sessions, this returns the window target regardless of role
 	// For multi-pane sessions, this returns the specific pane target (e.g., "ccc:session.0")
 	GetRoleTarget(session Session, role PaneRole) (string, error)
 
@@ -43,62 +38,16 @@ func RegisterRuntime(kind SessionKind, runtime SessionRuntime) {
 }
 
 // GetRuntime retrieves the runtime implementation for a session kind
-// Returns nil if no runtime is registered for the kind
+// Returns nil if no runtime is registered for the kind.
+// Note: single-pane sessions do not use the runtime system — they call
+// tmux.SwitchSessionInWindow directly. Only team sessions use GetRuntime.
 func GetRuntime(kind SessionKind) SessionRuntime {
 	return RuntimeRegistry[kind]
 }
 
 // init registers the built-in runtime implementations
 func init() {
-	// Register single-pane runtime (wraps existing logic)
-	RegisterRuntime(SessionKindSingle, &SinglePaneRuntime{})
-	// Register team runtime (multi-pane layout)
+	// Single-pane sessions bypass the runtime system entirely.
+	// They use tmux.SwitchSessionInWindow directly via the listen package.
 	RegisterRuntime(SessionKindTeam, &TeamRuntime{})
-}
-
-// SinglePaneRuntime implements SessionRuntime for standard single-pane sessions
-// It wraps the existing switchSessionInWindow function from the main package
-type SinglePaneRuntime struct{}
-
-// EnsureLayout creates or verifies a single-pane tmux window
-// This wraps the existing switchSessionInWindow function
-func (r *SinglePaneRuntime) EnsureLayout(session Session, workDir string) error {
-	// The main package's switchSessionInWindow handles this
-	// We'll call it via the main package function
-	return ensureSinglePaneLayout(session, workDir)
-}
-
-// GetRoleTarget returns the window target for any role in single-pane sessions
-// Since there's only one pane, all roles map to the same target
-func (r *SinglePaneRuntime) GetRoleTarget(session Session, role PaneRole) (string, error) {
-	// For single-pane sessions, return the window target
-	return getSinglePaneTarget(session)
-}
-
-// GetDefaultTarget returns the window target
-func (r *SinglePaneRuntime) GetDefaultTarget(session Session) (string, error) {
-	return getSinglePaneTarget(session)
-}
-
-// StartClaude starts Claude in the single pane
-func (r *SinglePaneRuntime) StartClaude(session Session, workDir string) error {
-	return startClaudeInPane(session, workDir)
-}
-
-// The following functions are stubs that will be implemented by calling
-// main package functions. This avoids circular imports.
-
-func ensureSinglePaneLayout(session Session, workDir string) error {
-	// TODO: Call main.ensureProjectWindow + main.switchSessionInWindow
-	return fmt.Errorf("not implemented: ensureSinglePaneLayout")
-}
-
-func getSinglePaneTarget(session Session) (string, error) {
-	// TODO: Call main.getCccWindowTarget
-	return "", fmt.Errorf("not implemented: getSinglePaneTarget")
-}
-
-func startClaudeInPane(session Session, workDir string) error {
-	// TODO: Call main.switchSessionInWindow
-	return fmt.Errorf("not implemented: startClaudeInPane")
 }
