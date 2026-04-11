@@ -1,7 +1,9 @@
 package tmux
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +62,15 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	cmd := exec.Command(ClaudePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	// When resuming, capture stderr to detect "No conversation found" for auto-retry.
+	// Use a multi-writer to both capture and display stderr.
+	var stderrBuf bytes.Buffer
+	if resumeSessionID != "" {
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	} else {
+		cmd.Stderr = os.Stderr
+	}
 	cmd.Env = os.Environ()
 
 	cwd, _ := os.Getwd()
@@ -69,8 +79,8 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	homeDir := os.Getenv("HOME")
 	loggingpkg.ListenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", ClaudePath, args, cwd, configDirCode, configDirZai, homeDir)
 
-	config, err := configpkg.Load()
-	if err == nil {
+	config, loadErr := configpkg.Load()
+	if loadErr == nil {
 		sessionName := filepath.Base(cwd)
 		sessionInfo := &configpkg.SessionInfo{Path: cwd}
 		if config.Sessions != nil {
@@ -108,5 +118,59 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		}
 	}
 
-	return cmd.Run()
+	runErr := cmd.Run()
+
+	// If --resume failed because the session doesn't exist, clear the stale ID and retry fresh
+	staleSession := runErr != nil && resumeSessionID != "" && strings.Contains(stderrBuf.String(), "No conversation found")
+	if staleSession {
+		sessionName := filepath.Base(cwd)
+		loggingpkg.ListenLog("Resume failed for session %s, clearing stale session ID and starting fresh", resumeSessionID)
+		if config != nil {
+			cleared := false
+			// Clear from single sessions (try base name and worktree name pattern)
+			if config.Sessions != nil {
+				// Try exact session name
+				if info, exists := config.Sessions[sessionName]; exists && info != nil && info.ClaudeSessionID != "" {
+					info.ClaudeSessionID = ""
+					cleared = true
+				}
+				// Try worktree session name pattern: basename_worktreeName
+				if worktreeName != "" {
+					worktreeSessName := sessionName + "_" + worktreeName
+					if info, exists := config.Sessions[worktreeSessName]; exists && info != nil && info.ClaudeSessionID != "" {
+						info.ClaudeSessionID = ""
+						cleared = true
+					}
+				}
+				// Fallback: scan all sessions for matching stale ID
+				if !cleared {
+					for _, info := range config.Sessions {
+						if info != nil && info.ClaudeSessionID == resumeSessionID {
+							info.ClaudeSessionID = ""
+							cleared = true
+						}
+					}
+				}
+			}
+			// Clear from team session panes (stale ID may be stored in a pane)
+			if config.TeamSessions != nil {
+				for _, info := range config.TeamSessions {
+					if info != nil && info.Panes != nil {
+						for _, pane := range info.Panes {
+							if pane != nil && pane.ClaudeSessionID == resumeSessionID {
+								pane.ClaudeSessionID = ""
+								cleared = true
+							}
+						}
+					}
+				}
+			}
+			if cleared {
+				configpkg.Save(config)
+			}
+		}
+		return RunClaudeRaw(false, "", providerOverride, worktreeName, worktreeAutoGen, ensureHooks)
+	}
+
+	return runErr
 }

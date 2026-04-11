@@ -595,6 +595,38 @@ func PersistClaudeSessionID(cfg *config.Config, sessName string, claudeSessionID
 }
 
 
+// ClearClaudeSessionID clears the stored claude session ID for a given session name.
+// For single sessions, clears SessionInfo.ClaudeSessionID.
+// For team sessions, clears the matching pane's ClaudeSessionID.
+func ClearClaudeSessionID(cfg *config.Config, sessName string) {
+	if cfg == nil || sessName == "" || cfg.Sessions == nil {
+		return
+	}
+
+	// Check team sessions first
+	for _, info := range cfg.TeamSessions {
+		if info != nil && info.SessionName == sessName && info.Panes != nil {
+			cleared := false
+			for _, pane := range info.Panes {
+				if pane != nil && pane.ClaudeSessionID != "" {
+					pane.ClaudeSessionID = ""
+					cleared = true
+				}
+			}
+			if cleared {
+				config.Save(cfg)
+			}
+			return
+		}
+	}
+
+	// Single session
+	if info, exists := cfg.Sessions[sessName]; exists && info != nil && info.ClaudeSessionID != "" {
+		info.ClaudeSessionID = ""
+		config.Save(cfg)
+	}
+}
+
 // GetSessionContext returns commonly needed session attributes in a single call.
 // This avoids repeating the same IsWorktree/ClaudeSessionID/ProviderName pattern across handlers.
 func GetSessionContext(info *config.SessionInfo) (worktreeName, resumeSessionID, providerName string) {
