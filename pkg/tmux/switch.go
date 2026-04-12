@@ -2,7 +2,9 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/tuannvm/ccc/pkg/shell"
@@ -80,6 +82,17 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		}
 	}
 
+	// Determine the shell directory: use worktree path when a named worktree already exists,
+	// so after Claude exits the shell lands in the worktree folder.
+	// For new worktrees, use the parent dir — Claude will create the worktree via --worktree.
+	shellDir := workDir
+	if worktreeName != "" && worktreeName != WorktreeAutoGenerate {
+		candidatePath := filepath.Join(workDir, ".claude", "worktrees", worktreeName)
+		if info, err := os.Stat(candidatePath); err == nil && info.IsDir() {
+			shellDir = candidatePath
+		}
+	}
+
 	// Send commands to switch session context
 	if shouldRestart {
 		// Strategy: Always use respawn-pane for clean pane restart when shouldRestart is true
@@ -115,7 +128,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		}
 
 		// Change to work directory and start claude via ccc run (as one command)
-		fullCmd := "cd " + shell.Quote(workDir) + " && " + runCmd
+		fullCmd := "cd " + shell.Quote(shellDir) + " && " + runCmd
 		if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 			return fmt.Errorf("failed to send command: %w", err)
 		}
@@ -134,7 +147,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 				fmt.Printf("Shell detected with skipRestart=true - not sending restart command to preserve session state\n")
 			} else {
 				// Shell is running but no Claude - start Claude
-				fullCmd := "cd " + shell.Quote(workDir) + " && " + runCmd
+				fullCmd := "cd " + shell.Quote(shellDir) + " && " + runCmd
 				if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 					return fmt.Errorf("failed to send command: %w", err)
 				}
@@ -154,7 +167,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 
 				// Wait for respawn and send command
 				time.Sleep(500 * time.Millisecond)
-				fullCmd := "cd " + shell.Quote(workDir) + " && " + runCmd
+				fullCmd := "cd " + shell.Quote(shellDir) + " && " + runCmd
 				if err := exec.Command(TmuxPath, "send-keys", "-t", target, fullCmd, "C-m").Run(); err != nil {
 					return fmt.Errorf("failed to send command: %w", err)
 				}
@@ -231,6 +244,39 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 			fmt.Printf("Consent dialog was consumed during startup\n")
 		}
 	}
+
+	// For new named worktrees, spawn a background goroutine that waits for Claude
+	// to create the worktree directory, then sends a cd command to the shell.
+	// This runs after Claude exits, so the cd goes to the shell, not Claude's stdin.
+	// We poll for Claude to stop (pane has shell, no Claude), then cd.
+	newWorktreePath := ""
+	if worktreeName != "" && worktreeName != WorktreeAutoGenerate {
+		candidatePath := filepath.Join(workDir, ".claude", "worktrees", worktreeName)
+		if _, err := os.Stat(candidatePath); os.IsNotExist(err) {
+			newWorktreePath = candidatePath
+		}
+	}
+	if newWorktreePath != "" {
+		go func() {
+			// Wait for Claude to exit (pane transitions from Claude to shell)
+			for i := 0; i < 120; i++ { // up to ~4 minutes (2s * 120)
+				time.Sleep(2 * time.Second)
+				if !WindowHasClaudeRunning(target, "") && WindowHasShellRunning(target, "") {
+					// Claude exited, shell is back — safe to send cd
+					time.Sleep(500 * time.Millisecond) // let shell prompt settle
+					cdCmd := "cd " + shell.Quote(newWorktreePath)
+					if err := exec.Command(TmuxPath, "send-keys", "-t", target, cdCmd, "C-m").Run(); err != nil {
+						fmt.Printf("Warning: failed to cd to worktree: %v\n", err)
+					} else {
+						fmt.Printf("Changed shell directory to worktree: %s\n", newWorktreePath)
+					}
+					return
+				}
+			}
+			fmt.Printf("Warning: timed out waiting for Claude to exit for worktree cd\n")
+		}()
+	}
+
 
 	return nil
 }
