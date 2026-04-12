@@ -58,6 +58,7 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		if err := tmux.RunWithArgs(os.Args[2:], tmux.WorktreeAutoGenerate, ensureHooksForSession); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		return

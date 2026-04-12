@@ -45,6 +45,8 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		}
 	}
 
+	cwd, _ := os.Getwd()
+
 	var args []string
 	if resumeSessionID != "" {
 		args = append(args, "--resume", resumeSessionID)
@@ -57,6 +59,12 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		} else {
 			args = append(args, "--worktree", worktreeName)
 		}
+	}
+
+	// Predict worktree path for session config (Claude will run inside this directory)
+	var worktreePath string
+	if worktreeName != "" && worktreeName != worktreeAutoGen {
+		worktreePath = filepath.Join(cwd, ".claude", "worktrees", worktreeName)
 	}
 
 	cmd := exec.Command(ClaudePath, args...)
@@ -73,16 +81,22 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	}
 	cmd.Env = os.Environ()
 
-	cwd, _ := os.Getwd()
+	effectiveCwd := cwd
+	if worktreePath != "" {
+		effectiveCwd = worktreePath
+	}
 	configDirCode := os.Getenv("CLAUDE_CODE_CONFIG_DIR")
 	configDirZai := os.Getenv("CLAUDE_CONFIG_DIR")
 	homeDir := os.Getenv("HOME")
-	loggingpkg.ListenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", ClaudePath, args, cwd, configDirCode, configDirZai, homeDir)
+	loggingpkg.ListenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", ClaudePath, args, effectiveCwd, configDirCode, configDirZai, homeDir)
 
 	config, loadErr := configpkg.Load()
 	if loadErr == nil {
 		sessionName := filepath.Base(cwd)
 		sessionInfo := &configpkg.SessionInfo{Path: cwd}
+		if worktreePath != "" {
+			sessionInfo.Path = worktreePath
+		}
 		if config.Sessions != nil {
 			if existing := config.Sessions[sessionName]; existing != nil {
 				sessionInfo = existing

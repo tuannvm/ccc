@@ -191,3 +191,146 @@ exit 1
 		t.Errorf("expected 1 claude invocation (no retry for different error), got %s", string(countData))
 	}
 }
+
+// TestRunClaudeRawWorktreeAlwaysPassesFlag tests that --worktree <name> is always
+// passed to Claude regardless of whether the worktree directory exists.
+// Claude handles both new and existing worktrees correctly.
+func TestRunClaudeRawWorktreeAlwaysPassesFlag(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ccc-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create an existing worktree directory
+	worktreePath := filepath.Join(tmpDir, ".claude", "worktrees", "existing-wt")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	mockClaude := filepath.Join(tmpDir, "claude")
+	mockScript := fmt.Sprintf(`#!/bin/bash
+echo "ARGS: $*" > %s/output.txt
+	exit 0
+`, tmpDir)
+
+	if err := os.WriteFile(mockClaude, []byte(mockScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origClaudePath := ClaudePath
+	ClaudePath = mockClaude
+	defer func() { ClaudePath = origClaudePath }()
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Even with existing worktree, --worktree flag should be passed to Claude
+	err = RunClaudeRaw(false, "", "", "existing-wt", WorktreeAutoGenerate, nil)
+	if err != nil {
+		t.Errorf("RunClaudeRaw should succeed, got: %v", err)
+	}
+
+	output, err := os.ReadFile(filepath.Join(tmpDir, "output.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputStr := string(output)
+
+	if !strings.Contains(outputStr, "--worktree existing-wt") {
+		t.Errorf("--worktree existing-wt should always be passed to Claude, got: %s", outputStr)
+	}
+}
+
+// TestRunClaudeRawWorktreeNewNamePassesFlag tests that --worktree <name> is passed
+// for a new (non-existing) worktree as well.
+func TestRunClaudeRawWorktreeNewNamePassesFlag(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ccc-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mockClaude := filepath.Join(tmpDir, "claude")
+	mockScript := fmt.Sprintf(`#!/bin/bash
+echo "ARGS: $*" > %s/output.txt
+	exit 0
+`, tmpDir)
+
+	if err := os.WriteFile(mockClaude, []byte(mockScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origClaudePath := ClaudePath
+	ClaudePath = mockClaude
+	defer func() { ClaudePath = origClaudePath }()
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	err = RunClaudeRaw(false, "", "", "brand-new-wt", WorktreeAutoGenerate, nil)
+	if err != nil {
+		t.Errorf("RunClaudeRaw should succeed, got: %v", err)
+	}
+
+	output, err := os.ReadFile(filepath.Join(tmpDir, "output.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputStr := string(output)
+
+	if !strings.Contains(outputStr, "--worktree brand-new-wt") {
+		t.Errorf("--worktree brand-new-wt should be passed for new worktrees, got: %s", outputStr)
+	}
+}
+
+// TestRunClaudeRawWorktreeAutoGeneratePassesFlag tests that auto-generate
+// passes --worktree without a name.
+func TestRunClaudeRawWorktreeAutoGeneratePassesFlag(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ccc-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mockClaude := filepath.Join(tmpDir, "claude")
+	mockScript := fmt.Sprintf(`#!/bin/bash
+echo "ARGS: $*" > %s/output.txt
+	exit 0
+`, tmpDir)
+
+	if err := os.WriteFile(mockClaude, []byte(mockScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origClaudePath := ClaudePath
+	ClaudePath = mockClaude
+	defer func() { ClaudePath = origClaudePath }()
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	err = RunClaudeRaw(false, "", "", WorktreeAutoGenerate, WorktreeAutoGenerate, nil)
+	if err != nil {
+		t.Errorf("RunClaudeRaw should succeed, got: %v", err)
+	}
+
+	output, err := os.ReadFile(filepath.Join(tmpDir, "output.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputStr := string(output)
+
+	if !strings.Contains(outputStr, "--worktree") {
+		t.Errorf("--worktree should be passed for auto-generate, got: %s", outputStr)
+	}
+}
