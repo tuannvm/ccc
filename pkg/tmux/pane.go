@@ -136,50 +136,47 @@ func PaneHasClaudePrompt(paneTarget string) bool {
 // Uses strict detection with context requirement to avoid false positives from shell prompts
 func PaneHasActiveClaudePrompt(paneTarget string) bool {
 	// Capture the last few lines of the pane buffer to check for active prompt
-	// Use -e for escape sequences and -J to join wrapped lines
-	// -S -15 captures last 15 lines (enough to see prompt + recent context)
-	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-e", "-J", "-S", "-15")
+	// Use -J to join wrapped lines, -S -15 for last 15 lines
+	// Do NOT use -e: ANSI escape codes make empty lines appear non-empty,
+	// which consumes the scan budget before reaching the actual prompt line
+	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-J", "-S", "-15")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
 
 	content := string(out)
-	// Check if the last non-empty line contains Claude's prompt
+	// Check if a recent non-empty line contains Claude's prompt
+	// Scan up to 3 non-empty lines from the bottom to handle Claude's status bar
+	// which appears after the prompt line (model info, costs, etc.)
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 
-	// Find the last non-empty line
+	// Pre-compute Claude context check (shared across all lines)
+	hasClaudeContext := false
+	lowerContent := strings.ToLower(content)
+	if strings.Contains(content, "How can I help") ||
+		strings.Contains(lowerContent, "claude") ||
+		strings.Contains(lowerContent, "anthropic") ||
+		strings.Contains(content, "Bash:") ||
+		strings.Contains(content, "function:") ||
+		strings.Contains(content, "result:") {
+		hasClaudeContext = true
+	}
+
+	// Find the prompt in the last few non-empty lines
+	// Scan up to 5 non-empty lines to skip past Claude's status bar,
+	// separator lines, and other decorative elements that appear after the prompt
+	nonEmptySeen := 0
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line != "" {
-			// Check for Claude's prompt character (❯)
-			if strings.Contains(line, "❯") {
-				// To avoid false positives from shell prompts (e.g., Powerlevel10k),
-				// we require Claude-specific context in the recent buffer
-				// Claude-specific indicators:
-				// - "How can I help?" in welcome message
-				// - "Claude" or "Anthropic" in output
-				// - Tool use blocks (e.g., "function:", "result:", "Bash:")
-				hasClaudeContext := false
-				lowerContent := strings.ToLower(content)
-				if strings.Contains(content, "How can I help") ||
-					strings.Contains(lowerContent, "claude") ||
-					strings.Contains(lowerContent, "anthropic") ||
-					strings.Contains(content, "Bash:") ||
-					strings.Contains(content, "function:") ||
-					strings.Contains(content, "result:") {
-					hasClaudeContext = true
-				}
-
-				// Only accept the prompt if we have Claude-specific context
-				// This avoids false positives from shell prompts that use ❯
-				if hasClaudeContext {
-					return true
-				}
-				// Has ❯ but no Claude context - likely a shell prompt
+			nonEmptySeen++
+			if strings.Contains(line, "❯") && hasClaudeContext {
+				return true
 			}
-			// If we found a non-empty line without the prompt, Claude is not active
-			break
+			if nonEmptySeen >= 5 {
+				break
+			}
 		}
 	}
 	return false

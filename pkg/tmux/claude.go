@@ -199,10 +199,14 @@ func SendKeysWithDelay(target string, text string, delay time.Duration) error {
 		// Text did not appear, but continue anyway
 	}
 
-	// Dismiss autocomplete popup that bracketed paste may trigger
-	time.Sleep(100 * time.Millisecond)
-	if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Escape").Run(); err != nil {
-		// Ignore error
+	// Dismiss autocomplete popup ONLY when Claude is at the input prompt.
+	// Sending Escape while Claude is processing a response interrupts it.
+	// Claude Code queues prompts automatically when text is typed during processing.
+	if PaneHasActiveClaudePrompt(target) {
+		time.Sleep(100 * time.Millisecond)
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Escape").Run(); err != nil {
+			// Ignore error
+		}
 	}
 
 	// Send Enter to execute the prompt

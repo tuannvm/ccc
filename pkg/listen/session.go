@@ -46,7 +46,17 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 				loggingpkg.ListenLog("[sendToTmux] Failed to verify/install hooks for %s: %v", sessName, err)
 			}
 
-			if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+			// Only skip pane restart when Claude is already running.
+			// When Claude is not running (shell only or empty), we need
+			// skipRestart=false so SwitchSessionInWindow starts Claude.
+			skipRestart := false
+			if winTarget, err := tmux.GetWindowTarget(sessName); err == nil {
+				if tmux.WindowHasClaudeRunning(winTarget, "") {
+					skipRestart = true
+				}
+			}
+
+			if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, skipRestart); err != nil {
 				telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 				return
 			}
@@ -57,7 +67,11 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 				return
 			}
 
-			time.Sleep(1 * time.Second)
+			if skipRestart {
+				time.Sleep(200 * time.Millisecond)
+			} else {
+				time.Sleep(1 * time.Second)
+			}
 
 			// Replay any undelivered terminal messages
 			undelivered := ledger.FindUndelivered(sessName, "terminal")
