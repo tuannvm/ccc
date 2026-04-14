@@ -10,6 +10,27 @@ import (
 	"testing"
 )
 
+func splitConfigPaths(baseDir string) []string {
+	return []string{
+		filepath.Join(baseDir, "config.json"),
+		filepath.Join(baseDir, "config.core.json"),
+		filepath.Join(baseDir, "config.sessions.json"),
+		filepath.Join(baseDir, "config.providers.json"),
+	}
+}
+
+func assertValidJSONFile(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", path, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("File %s is not valid JSON: %v", path, err)
+	}
+}
+
 // TestAtomicSaveConfigConcurrent tests that concurrent writes don't corrupt config
 func TestAtomicSaveConfigConcurrent(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "ccc-concurrent-*")
@@ -22,7 +43,8 @@ func TestAtomicSaveConfigConcurrent(t *testing.T) {
 	os.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
 
-	configPath := filepath.Join(tmpDir, ".config", "ccc", "config.json")
+	configDir := filepath.Join(tmpDir, ".config", "ccc")
+	configPath := filepath.Join(configDir, "config.json")
 
 	// Create initial config
 	config := &Config{
@@ -71,7 +93,7 @@ func TestAtomicSaveConfigConcurrent(t *testing.T) {
 		t.Fatalf("Concurrent writes had %d errors: %v", len(errors), errors[0])
 	}
 
-	// Verify config is valid JSON
+	// Verify config files are valid JSON
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("Failed to read final config: %v", err)
@@ -80,6 +102,9 @@ func TestAtomicSaveConfigConcurrent(t *testing.T) {
 	var finalConfig Config
 	if err := json.Unmarshal(data, &finalConfig); err != nil {
 		t.Fatalf("Final config is not valid JSON: %v", err)
+	}
+	for _, p := range splitConfigPaths(configDir) {
+		assertValidJSONFile(t, p)
 	}
 
 	// All sessions should be present (or one of the last writes won)
@@ -272,5 +297,66 @@ func TestAtomicSaveConfigTempCleanup(t *testing.T) {
 
 	if afterTmp > beforeTmp {
 		t.Errorf("Temp files leaked: before=%d, after=%d", beforeTmp, afterTmp)
+	}
+}
+
+func TestSaveSplitWriteFailureKeepsLegacyAndRemovesSplit(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ccc-split-failure-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	configDir := filepath.Join(tmpDir, ".config", "ccc")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("Failed to create config dir: %v", err)
+	}
+
+	initial := &Config{BotToken: "legacy-old", ChatID: 111}
+	if err := Save(initial); err != nil {
+		t.Fatalf("Initial save failed: %v", err)
+	}
+
+	// Block writing core split file while still allowing legacy config.json write.
+	corePath := filepath.Join(configDir, "config.core.json")
+	if err := os.Remove(corePath); err != nil {
+		t.Fatalf("Failed to remove existing core split file: %v", err)
+	}
+	if err := os.Mkdir(corePath, 0755); err != nil {
+		t.Fatalf("Failed to create blocking dir at core path: %v", err)
+	}
+
+	updated := &Config{BotToken: "legacy-new", ChatID: 222}
+	err = Save(updated)
+	if err == nil {
+		t.Fatal("Expected Save to fail when core split path is a directory")
+	}
+
+	// Legacy aggregate should still be updated.
+	legacyData, err := os.ReadFile(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		t.Fatalf("Failed to read legacy config.json: %v", err)
+	}
+	var legacyCfg Config
+	if err := json.Unmarshal(legacyData, &legacyCfg); err != nil {
+		t.Fatalf("Legacy config.json invalid JSON: %v", err)
+	}
+	if legacyCfg.BotToken != "legacy-new" || legacyCfg.ChatID != 222 {
+		t.Fatalf("Legacy config not updated as expected: got bot_token=%q chat_id=%d", legacyCfg.BotToken, legacyCfg.ChatID)
+	}
+
+	// Split files should be absent after cleanup.
+	if _, err := os.Stat(filepath.Join(configDir, "config.core.json")); !os.IsNotExist(err) {
+		t.Fatalf("config.core.json should be removed after split write failure")
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "config.sessions.json")); !os.IsNotExist(err) {
+		t.Fatalf("config.sessions.json should be removed after split write failure")
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "config.providers.json")); !os.IsNotExist(err) {
+		t.Fatalf("config.providers.json should be removed after split write failure")
 	}
 }

@@ -28,15 +28,21 @@ func TestConfigFilePermissions(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	configPath := filepath.Join(tmpDir, ".config", "ccc", "config.json")
-	info, err := os.Stat(configPath)
-	if err != nil {
-		t.Fatalf("Failed to stat config file: %v", err)
+	paths := []string{
+		filepath.Join(tmpDir, ".config", "ccc", "config.json"),
+		filepath.Join(tmpDir, ".config", "ccc", "config.core.json"),
+		filepath.Join(tmpDir, ".config", "ccc", "config.sessions.json"),
+		filepath.Join(tmpDir, ".config", "ccc", "config.providers.json"),
 	}
 
-	// Check permissions are 0600 (owner read/write only)
-	perm := info.Mode().Perm()
-	if perm != 0600 {
-		t.Errorf("Config file permissions = %o, want 0600", perm)
+	for _, configPath := range paths {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatalf("Failed to stat config file %s: %v", configPath, err)
+		}
+		perm := info.Mode().Perm()
+		if perm != 0600 {
+			t.Errorf("Config file permissions for %s = %o, want 0600", configPath, perm)
+		}
 	}
 }

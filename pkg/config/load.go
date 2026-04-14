@@ -2,32 +2,125 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// loadConfig reads and parses the config file, handling migration from old format
+// loadConfig reads and parses config files, handling migration from old format
 func Load() (*Config, error) {
-	data, err := os.ReadFile(GetConfigPath())
+	var config Config
+
+	legacyLoaded, err := loadLegacyConfig(&config)
 	if err != nil {
 		return nil, err
 	}
 
-	// First check if this is old format (sessions as map[string]int64)
-	var rawConfig map[string]json.RawMessage
-	if err := json.Unmarshal(data, &rawConfig); err != nil {
+	loadedSplit, err := loadSplitConfigs(&config)
+	if err != nil {
 		return nil, err
 	}
 
-	// Try to detect old sessions format
+	if !legacyLoaded && !loadedSplit {
+		return nil, os.ErrNotExist
+	}
+
+	if config.Sessions == nil {
+		config.Sessions = make(map[string]*SessionInfo)
+	}
+	if config.TeamSessions == nil {
+		config.TeamSessions = make(map[int64]*SessionInfo)
+	}
+
+	if err := Validate(&config); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return &config, nil
+}
+
+func loadLegacyConfig(config *Config) (bool, error) {
+	data, err := os.ReadFile(GetConfigPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	migrated, err := unmarshalConfigWithMigration(data, config)
+	if err != nil {
+		return false, err
+	}
+	if migrated {
+		if err := Save(config); err != nil {
+			return false, err
+		}
+	}
+
+	return true, nil
+}
+
+func loadSplitConfigs(config *Config) (bool, error) {
+	loadedAny := false
+
+	coreData, err := os.ReadFile(GetCoreConfigPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	} else {
+		var core coreConfig
+		if err := json.Unmarshal(coreData, &core); err != nil {
+			return false, err
+		}
+		applyCoreConfig(config, core)
+		loadedAny = true
+	}
+
+	sessionsData, err := os.ReadFile(GetSessionsConfigPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	} else {
+		var sessions sessionsConfig
+		if err := json.Unmarshal(sessionsData, &sessions); err != nil {
+			return false, err
+		}
+		applySessionsConfig(config, sessions)
+		loadedAny = true
+	}
+
+	providersData, err := os.ReadFile(GetProvidersConfigPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	} else {
+		var providers providersConfig
+		if err := json.Unmarshal(providersData, &providers); err != nil {
+			return false, err
+		}
+		applyProvidersConfig(config, providers)
+		loadedAny = true
+	}
+
+	return loadedAny, nil
+}
+
+func unmarshalConfigWithMigration(data []byte, config *Config) (bool, error) {
+	var rawConfig map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawConfig); err != nil {
+		return false, err
+	}
+
 	var needsMigration bool
 	var oldSessions map[string]int64
 	if sessionsRaw, ok := rawConfig["sessions"]; ok {
-		// Try to parse as old format (map of topic IDs)
 		if json.Unmarshal(sessionsRaw, &oldSessions) == nil && len(oldSessions) > 0 {
-			// Check if values are positive numbers (old format)
 			for _, v := range oldSessions {
 				if v > 0 {
 					needsMigration = true
@@ -37,81 +130,79 @@ func Load() (*Config, error) {
 		}
 	}
 
-	var config Config
-	if needsMigration {
-		// Parse everything except sessions first
-		type ConfigWithoutSessions struct {
-			BotToken     string                       `json:"bot_token"`
-			ChatID       int64                        `json:"chat_id"`
-			GroupID      int64                        `json:"group_id"`
-			ProjectsDir  string                       `json:"projects_dir"`
-			Away         bool                         `json:"away"`
-			TeamSessions map[int64]*SessionInfo       `json:"team_sessions,omitempty"`
+	if !needsMigration {
+		if err := json.Unmarshal(data, config); err != nil {
+			return false, err
 		}
-		var partial ConfigWithoutSessions
-		json.Unmarshal(data, &partial)
-
-		config.BotToken = partial.BotToken
-		config.ChatID = partial.ChatID
-		config.GroupID = partial.GroupID
-		config.ProjectsDir = partial.ProjectsDir
-		config.Away = partial.Away
-		// Preserve existing TeamSessions if present in the config
-		config.TeamSessions = partial.TeamSessions
-
-		// Migrate sessions
-		home, _ := os.UserHomeDir()
-		config.Sessions = make(map[string]*SessionInfo)
-		for name, topicID := range oldSessions {
-			// For old sessions, try to figure out the path
-			var sessionPath string
-			if strings.HasPrefix(name, "/") {
-				// Absolute path
-				sessionPath = name
-			} else if strings.HasPrefix(name, "~/") {
-				// Home-relative path
-				sessionPath = filepath.Join(home, name[2:])
-			} else if config.ProjectsDir != "" {
-				// Use projects_dir if set
-				projectsDir := config.ProjectsDir
-				if strings.HasPrefix(projectsDir, "~/") {
-					projectsDir = filepath.Join(home, projectsDir[2:])
-				}
-				sessionPath = filepath.Join(projectsDir, name)
-			} else {
-				sessionPath = filepath.Join(home, name)
-			}
-			config.Sessions[name] = &SessionInfo{
-				TopicID: topicID,
-				Path:    sessionPath,
-			}
-		}
-		// IMPORTANT: Initialize TeamSessions only if not already present
-		// The migration should preserve existing TeamSessions, not wipe them
-		if config.TeamSessions == nil {
-			config.TeamSessions = make(map[int64]*SessionInfo)
-		}
-		// Save migrated config (now with both Sessions and TeamSessions)
-		Save(&config)
-	} else {
-		// Parse with new format
-		if err := json.Unmarshal(data, &config); err != nil {
-			return nil, err
-		}
+		return false, nil
 	}
 
-	if config.Sessions == nil {
-		config.Sessions = make(map[string]*SessionInfo)
+	type ConfigWithoutSessions struct {
+		BotToken     string                 `json:"bot_token"`
+		ChatID       int64                  `json:"chat_id"`
+		GroupID      int64                  `json:"group_id"`
+		ProjectsDir  string                 `json:"projects_dir"`
+		Away         bool                   `json:"away"`
+		TeamSessions map[int64]*SessionInfo `json:"team_sessions,omitempty"`
 	}
-	// IMPORTANT: Initialize TeamSessions if nil (may not be in old config files)
+	var partial ConfigWithoutSessions
+	json.Unmarshal(data, &partial)
+
+	config.BotToken = partial.BotToken
+	config.ChatID = partial.ChatID
+	config.GroupID = partial.GroupID
+	config.ProjectsDir = partial.ProjectsDir
+	config.Away = partial.Away
+	config.TeamSessions = partial.TeamSessions
+
+	home, _ := os.UserHomeDir()
+	config.Sessions = make(map[string]*SessionInfo)
+	for name, topicID := range oldSessions {
+		var sessionPath string
+		if strings.HasPrefix(name, "/") {
+			sessionPath = name
+		} else if strings.HasPrefix(name, "~/") {
+			sessionPath = filepath.Join(home, name[2:])
+		} else if config.ProjectsDir != "" {
+			projectsDir := config.ProjectsDir
+			if strings.HasPrefix(projectsDir, "~/") {
+				projectsDir = filepath.Join(home, projectsDir[2:])
+			}
+			sessionPath = filepath.Join(projectsDir, name)
+		} else {
+			sessionPath = filepath.Join(home, name)
+		}
+		config.Sessions[name] = &SessionInfo{TopicID: topicID, Path: sessionPath}
+	}
 	if config.TeamSessions == nil {
 		config.TeamSessions = make(map[int64]*SessionInfo)
 	}
 
-	// Validate the loaded config
-	if err := Validate(&config); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
-	}
+	return true, nil
+}
 
-	return &config, nil
+func applyCoreConfig(config *Config, core coreConfig) {
+	config.BotToken = core.BotToken
+	config.ChatID = core.ChatID
+	config.GroupID = core.GroupID
+	config.MultiUserMode = core.MultiUserMode
+	config.CustomEmojiIDs = core.CustomEmojiIDs
+	config.EnableStreaming = core.EnableStreaming
+	config.ProjectsDir = core.ProjectsDir
+	config.TranscriptionLang = core.TranscriptionLang
+	config.RelayURL = core.RelayURL
+	config.Away = core.Away
+	config.OAuthToken = core.OAuthToken
+	config.OTPSecret = core.OTPSecret
+}
+
+func applySessionsConfig(config *Config, sessions sessionsConfig) {
+	config.Sessions = sessions.Sessions
+	config.TeamSessions = sessions.TeamSessions
+}
+
+func applyProvidersConfig(config *Config, providers providersConfig) {
+	config.ActiveProvider = providers.ActiveProvider
+	config.Providers = providers.Providers
+	config.Provider = providers.Provider
 }

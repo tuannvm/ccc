@@ -41,6 +41,18 @@ func GetConfigPath() string {
 	return newPath
 }
 
+func GetCoreConfigPath() string {
+	return filepath.Join(ConfigDir(), "config.core.json")
+}
+
+func GetSessionsConfigPath() string {
+	return filepath.Join(ConfigDir(), "config.sessions.json")
+}
+
+func GetProvidersConfigPath() string {
+	return filepath.Join(ConfigDir(), "config.providers.json")
+}
+
 // GetProjectsDir returns the base directory for projects
 func GetProjectsDir(config *Config) string {
 	if config.ProjectsDir != "" {

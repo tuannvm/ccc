@@ -154,6 +154,64 @@ type Config struct {
 	Provider      *ProviderConfig            `json:"provider,omitempty"`        // Deprecated: Use providers + active_provider
 }
 
+type coreConfig struct {
+	BotToken         string            `json:"bot_token"`
+	ChatID           int64             `json:"chat_id"`
+	GroupID          int64             `json:"group_id,omitempty"`
+	MultiUserMode    bool              `json:"multi_user_mode,omitempty"`
+	CustomEmojiIDs   map[string]string `json:"custom_emoji_ids,omitempty"`
+	EnableStreaming  bool              `json:"enable_streaming,omitempty"`
+	ProjectsDir      string            `json:"projects_dir,omitempty"`
+	TranscriptionLang string           `json:"transcription_lang,omitempty"`
+	RelayURL         string            `json:"relay_url,omitempty"`
+	Away             bool              `json:"away"`
+	OAuthToken       string            `json:"oauth_token,omitempty"`
+	OTPSecret        string            `json:"otp_secret,omitempty"`
+}
+
+type sessionsConfig struct {
+	Sessions     map[string]*SessionInfo `json:"sessions,omitempty"`
+	TeamSessions map[int64]*SessionInfo  `json:"team_sessions,omitempty"`
+}
+
+type providersConfig struct {
+	ActiveProvider string                     `json:"active_provider,omitempty"`
+	Providers      map[string]*ProviderConfig `json:"providers,omitempty"`
+	Provider       *ProviderConfig            `json:"provider,omitempty"`
+}
+
+func (c *Config) CoreConfig() coreConfig {
+	return coreConfig{
+		BotToken:          c.BotToken,
+		ChatID:            c.ChatID,
+		GroupID:           c.GroupID,
+		MultiUserMode:     c.MultiUserMode,
+		CustomEmojiIDs:    c.CustomEmojiIDs,
+		EnableStreaming:   c.EnableStreaming,
+		ProjectsDir:       c.ProjectsDir,
+		TranscriptionLang: c.TranscriptionLang,
+		RelayURL:          c.RelayURL,
+		Away:              c.Away,
+		OAuthToken:        c.OAuthToken,
+		OTPSecret:         c.OTPSecret,
+	}
+}
+
+func (c *Config) SessionsConfig() sessionsConfig {
+	return sessionsConfig{
+		Sessions:     c.Sessions,
+		TeamSessions: c.TeamSessions,
+	}
+}
+
+func (c *Config) ProvidersConfig() providersConfig {
+	return providersConfig{
+		ActiveProvider: c.ActiveProvider,
+		Providers:      c.Providers,
+		Provider:       c.Provider,
+	}
+}
+
 // IsTeamSession checks if a topic ID corresponds to a team session
 func (c *Config) IsTeamSession(topicID int64) bool {
 	if c.TeamSessions == nil {

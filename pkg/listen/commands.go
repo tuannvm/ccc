@@ -135,7 +135,7 @@ func HandleProvidersCommand(cfg *configpkg.Config, chatID, threadID int64, text 
 		}
 	}
 	if len(msg) == 1 {
-		msg = append(msg, "\nNo additional providers configured.\n\nConfigure providers in ~/.config/ccc/config.json.")
+		msg = append(msg, "\nNo additional providers configured.\n\nConfigure providers in ~/.config/ccc/ (config.providers.json, config.core.json, config.sessions.json; legacy config.json is also supported).")
 	}
 	telegram.SendMessage(cfg, chatID, threadID, strings.Join(msg, "\n"))
 }

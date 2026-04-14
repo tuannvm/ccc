@@ -7,51 +7,69 @@ import (
 	"path/filepath"
 )
 
-// Save atomically writes the config to disk using write-then-rename pattern
-// Multiple processes may write config simultaneously; atomic rename prevents corruption
+// Save atomically writes the legacy aggregate config and split config files.
+// Legacy config is written first so callers always have a consistent fallback.
 func Save(config *Config) error {
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+	if err := writeConfigFile(GetConfigPath(), config); err != nil {
+		return err
 	}
 
-	configPath := GetConfigPath()
-	configDir := filepath.Dir(configPath)
+	core := config.CoreConfig()
+	sessions := config.SessionsConfig()
+	providers := config.ProvidersConfig()
 
-	// Atomic write: use unique temp file + rename to prevent concurrent write corruption
-	// Multiple ccc processes (listener, hooks, CLI) may write config simultaneously
-	// Using unique temp filename prevents race conditions where multiple processes
-	// use the same .tmp file and one process's rename causes another to fail
+	if err := writeConfigFile(GetCoreConfigPath(), core); err != nil {
+		cleanupSplitConfigFiles()
+		return err
+	}
+	if err := writeConfigFile(GetSessionsConfigPath(), sessions); err != nil {
+		cleanupSplitConfigFiles()
+		return err
+	}
+	if err := writeConfigFile(GetProvidersConfigPath(), providers); err != nil {
+		cleanupSplitConfigFiles()
+		return err
+	}
+	return nil
+}
+
+func cleanupSplitConfigFiles() {
+	_ = os.Remove(GetCoreConfigPath())
+	_ = os.Remove(GetSessionsConfigPath())
+	_ = os.Remove(GetProvidersConfigPath())
+}
+
+func writeConfigFile(path string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config %s: %w", path, err)
+	}
+
+	configDir := filepath.Dir(path)
 	tmpFile, err := os.CreateTemp(configDir, "config-*.json.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
-	// Set permissions to 0600 (owner read/write only) before writing
 	if err := tmpFile.Chmod(0600); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("failed to set temp file permissions: %w", err)
 	}
 
-	// Track success for cleanup
 	success := false
 	defer func() {
 		if !success {
-			// Clean up temp file on any error
 			os.Remove(tmpPath)
 		}
 	}()
 
-	// Write data
 	if _, err := tmpFile.Write(data); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 
-	// Sync to disk - critical for durability
-	// Ensures data is written to stable storage before rename
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to sync temp file: %w", err)
@@ -61,14 +79,10 @@ func Save(config *Config) error {
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	// Atomic rename - this is the critical operation that ensures atomicity
-	// On Linux/macOS, rename is atomic within the same filesystem
-	if err := os.Rename(tmpPath, configPath); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("failed to rename config: %w", err)
 	}
 
-	// Sync parent directory to persist rename across crashes/power loss
-	// The directory entry itself is cached and must be flushed to disk
 	dirFile, err := os.Open(configDir)
 	if err != nil {
 		return fmt.Errorf("failed to open config directory: %w", err)
