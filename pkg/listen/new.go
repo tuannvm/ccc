@@ -59,7 +59,6 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string) {
 	providerName := ""
 	sessionInput := arg
-	gitURLHandled := false
 	providerWasExplicit := false
 
 	if strings.Contains(arg, " --provider ") {
@@ -137,7 +136,6 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 			telegram.SendMessage(cfg, chatID, threadID, "✅ Repository ready (using existing clone)")
 		}
 
-		gitURLHandled = true
 	}
 
 	if providerName != "" {
@@ -151,7 +149,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		}
 	}
 
-	if providerName == "" && !gitURLHandled {
+	if providerName == "" {
 		existing, exists := cfg.Sessions[sessionName]
 		if exists && existing != nil && existing.TopicID != 0 {
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("⚠️ Session '%s' already exists. Use /new without args in that topic to restart.", sessionName))
