@@ -9,8 +9,8 @@ import (
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
-	"github.com/tuannvm/ccc/pkg/lookup"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
@@ -44,10 +44,11 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 			loggingpkg.ListenLog("[/new] Failed to verify/install hooks for %s: %v", sessionName, err)
 		}
 
-		if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+		providerName := effectiveProviderName(cfg, sessionInfo)
+		if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, false); err != nil {
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 		} else {
-			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("🚀 Session '%s' restarted", sessionName))
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("%s restarted\n%s", sessionName, providerSummary(cfg, sessionInfo)))
 		}
 	} else {
 		telegram.SendMessage(cfg, chatID, threadID, "Usage: /new <name> to create a new session")
@@ -59,15 +60,18 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	providerName := ""
 	sessionInput := arg
 	gitURLHandled := false
+	providerWasExplicit := false
 
 	if strings.Contains(arg, " --provider ") {
 		parts := strings.SplitN(arg, " --provider ", 2)
 		sessionInput = strings.TrimSpace(parts[0])
 		providerName = strings.TrimSpace(parts[1])
+		providerWasExplicit = providerName != ""
 	} else if !configpkg.IsGitURL(arg) {
 		if idx := strings.Index(arg, "@"); idx > 0 {
 			sessionInput = arg[:idx]
 			providerName = strings.TrimSpace(arg[idx+1:])
+			providerWasExplicit = providerName != ""
 		}
 	}
 
@@ -178,7 +182,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		return
 	}
 	if providerName == "" {
-		providerName = cfg.ActiveProvider
+		providerName = defaultProviderName(cfg)
 	}
 	topicID, err := telegram.CreateForumTopic(cfg, sessionName, providerName, "")
 	if err != nil {
@@ -203,13 +207,13 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
 	}
-	providerMsg := ""
-	if providerName != "" {
-		providerMsg = fmt.Sprintf("\n🤖 Provider: %s", providerName)
+	providerMsg := activeDefaultProviderSummary(cfg)
+	if providerWasExplicit {
+		providerMsg = explicitProviderSummary(providerName)
 	}
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 	} else {
-		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("🚀 Session '%s' started!%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
 	}
 }

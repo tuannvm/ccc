@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tuannvm/ccc/pkg/config"
@@ -196,6 +197,7 @@ func GetProviderNames(cfg *config.Config) []string {
 			}
 		}
 	}
+	sort.Strings(names[1:])
 	return names
 }
 

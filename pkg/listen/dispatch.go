@@ -117,6 +117,11 @@ func Run(version string) error {
 				continue
 			}
 
+			if text == "/status" || strings.HasPrefix(text, "/status ") {
+				HandleStatusCommand(config, chatID, threadID, text, isGroup, offset)
+				continue
+			}
+
 			if auth.IsAuthWaitingCode() && !strings.HasPrefix(text, "/") {
 				go auth.HandleAuthCode(config, chatID, threadID, text)
 				continue

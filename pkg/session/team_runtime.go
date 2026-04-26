@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-
 // TeamRuntime implements SessionRuntime for 3-pane team sessions
 // Creates a tmux window with 3 panes: Planner (left) | Executor (middle) | Reviewer (right)
 type TeamRuntime struct {
@@ -90,7 +89,11 @@ func (r *TeamRuntime) StartClaude(sess Session, workDir string) error {
 		// Export CCC_ROLE separately to ensure it's available to ccc run
 		// Use bash explicitly to avoid shell compatibility issues
 		// NOTE: We use double quotes for the bash -c string to allow single quotes in workDir
-		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run --provider %s\"", role, shell.Quote(workDir), sess.GetProviderName())
+		providerArg := ""
+		if sess.GetProviderName() != "" {
+			providerArg = " --provider " + shell.Quote(sess.GetProviderName())
+		}
+		runCmd := fmt.Sprintf("bash -c \"export CCC_ROLE=%s; cd %s && exec ccc run%s\"", role, shell.Quote(workDir), providerArg)
 
 		// Clear any existing content in the pane
 		exec.Command(r.tmuxPath, "send-keys", "-t", paneTarget, "C-c").Run()
@@ -330,9 +333,9 @@ type TeamWindowState struct {
 
 // TeamPaneInfo stores info about a single pane
 type TeamPaneInfo struct {
-	PaneID   string // tmux pane ID (%0, %1, etc.)
-	Role     PaneRole
-	ClaudePID int   // Claude process ID (0 if not running)
+	PaneID    string // tmux pane ID (%0, %1, etc.)
+	Role      PaneRole
+	ClaudePID int // Claude process ID (0 if not running)
 }
 
 // GetOrCreateTeamWindow retrieves or creates a team session window

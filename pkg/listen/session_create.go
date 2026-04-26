@@ -7,13 +7,12 @@ import (
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/lookup"
-	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // AttachToExistingSession attaches to an existing session and sends a message if provided.
-func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionInfo *configpkg.SessionInfo, message string, ) error {
+func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionInfo *configpkg.SessionInfo, message string) error {
 	workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 	worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
@@ -31,7 +30,8 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 
 	// Restart the session
 	continueSession := resumeSessionID != ""
-	if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, continueSession, false); err != nil {
+	providerName := effectiveProviderName(cfg, sessionInfo)
+	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, continueSession, false); err != nil {
 		return fmt.Errorf("failed to attach to session '%s': %w", sessionName, err)
 	}
 
@@ -45,13 +45,13 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 		}
 	}
 
-	fmt.Printf("Attached to existing session '%s'\n", sessionName)
+	fmt.Printf("Attached to existing session '%s'\n%s\n", sessionName, providerSummary(cfg, sessionInfo))
 	return tmux.AttachToSession(sessionName)
 }
 
 // StartLocalSession starts a session without Telegram integration (local-only mode).
-func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message string, ) error {
-	providerName := cfg.ActiveProvider
+func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message string) error {
+	providerName := defaultProviderName(cfg)
 
 	if cfg.Sessions == nil {
 		cfg.Sessions = make(map[string]*configpkg.SessionInfo)
@@ -82,17 +82,13 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 		}
 	}
 
-	fmt.Printf("Started local session '%s' (no Telegram integration)\n", sessionName)
+	fmt.Printf("Started local session '%s' (no Telegram integration)\n%s\n", sessionName, providerSummary(cfg, cfg.Sessions[sessionName]))
 	return tmux.AttachToSession(sessionName)
 }
 
 // StartTelegramSession starts a session with Telegram integration.
-func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message string, ) error {
-	provider := providerpkg.GetActiveProvider(cfg)
-	providerName := ""
-	if provider != nil && cfg.ActiveProvider != "" {
-		providerName = cfg.ActiveProvider
-	}
+func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message string) error {
+	providerName := defaultProviderName(cfg)
 
 	topicID, err := telegram.CreateForumTopic(cfg, sessionName, providerName, "")
 	if err != nil {
@@ -119,11 +115,7 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	providerMsg := ""
-	if providerName != "" {
-		providerMsg = fmt.Sprintf(" (provider: %s)", providerName)
-	}
-	fmt.Printf("Created new session '%s'%s\n", sessionName, providerMsg)
+	fmt.Printf("Created new session '%s'\n%s\n", sessionName, providerSummary(cfg, cfg.Sessions[sessionName]))
 
 	if message != "" {
 		if err := telegram.SendMessage(cfg, cfg.GroupID, topicID, message); err != nil {
@@ -135,7 +127,7 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 }
 
 // StartSession creates/attaches to a tmux window with Telegram topic.
-func StartSession(continueSession bool, ) error {
+func StartSession(continueSession bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -148,11 +140,9 @@ func StartSession(continueSession bool, ) error {
 		return tmux.RunClaudeRaw(continueSession, "", "", "", "", nil)
 	}
 
-	providerName := ""
+	providerName := defaultProviderName(config)
 	if config.Sessions[name] != nil && config.Sessions[name].ProviderName != "" {
 		providerName = config.Sessions[name].ProviderName
-	} else if config.ActiveProvider != "" {
-		providerName = config.ActiveProvider
 	}
 
 	resumeSessionID := ""
@@ -178,7 +168,7 @@ func StartSession(continueSession bool, ) error {
 					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
 				}
 
-				fmt.Printf("📱 Created Telegram topic: %s\n", name)
+				fmt.Printf("Created Telegram topic: %s\n%s\n", name, providerSummary(config, config.Sessions[name]))
 			}
 		}
 	}
@@ -225,11 +215,7 @@ func StartDetached(name string, workDir string, prompt string) error {
 		config.Sessions = make(map[string]*configpkg.SessionInfo)
 	}
 
-	provider := providerpkg.GetActiveProvider(config)
-	providerName := ""
-	if provider != nil && config.ActiveProvider != "" {
-		providerName = config.ActiveProvider
-	}
+	providerName := defaultProviderName(config)
 
 	topicID, err := telegram.CreateForumTopic(config, name, providerName, "")
 	if err != nil {
@@ -266,7 +252,7 @@ func StartDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to send prompt: %w", err)
 	}
 
-	fmt.Printf("Session '%s' started in ccc window with topic %d\n", name, topicID)
+	fmt.Printf("Session '%s' started in ccc window with topic %d\n%s\n", name, topicID, providerSummary(config, config.Sessions[name]))
 	return nil
 }
 
