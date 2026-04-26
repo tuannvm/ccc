@@ -53,6 +53,55 @@ func TestWindowNameFromTarget(t *testing.T) {
 	}
 }
 
+func TestDetectConsentDialog(t *testing.T) {
+	currentClaudePrompt := `────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /Users/tuannvm/Projects/test-codex
+
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+`
+
+	numberedClaudePrompt := currentClaudePrompt + `
+
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+
+ Enter to confirm · Esc to cancel
+`
+
+	activePrompt := `╭─── Claude Code v2.1.119 ─────────────────────────────────────────────────────╮
+│ Welcome back Tommy!                                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+❯
+`
+
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "current safety screen without visible options", content: currentClaudePrompt, want: true},
+		{name: "numbered trust dialog", content: numberedClaudePrompt, want: true},
+		{name: "active claude prompt", content: activePrompt, want: false},
+		{name: "shell output mentioning trust", content: "run tests before you trust this result\n$", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DetectConsentDialog(tt.content); got != tt.want {
+				t.Errorf("DetectConsentDialog() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCaptureVisiblePane tests bounded pane capture
 // Note: This test requires tmux to be running and is skipped in CI
 func TestCaptureVisiblePane(t *testing.T) {

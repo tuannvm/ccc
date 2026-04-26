@@ -308,12 +308,11 @@ func PaneIsClaudeProcess(paneID string) bool {
 		// 1. "/claude" or "/claude.js" as a path component (not just substring)
 		// 2. "@anthropic-ai/" npm package namespace
 		// 3. Known Claude entrypoint patterns
-		isClaude := isNode && (
-			strings.Contains(cmdline, "/claude ") ||           // "node .../claude" (global bin)
-				strings.Contains(cmdline, "/claude.js ") ||        // direct script
-				strings.Contains(cmdline, "/@anthropic-ai/") ||    // npm package
-				strings.HasSuffix(cmdline, "/claude") ||           // ends with /claude
-				strings.HasSuffix(cmdline, "/claude.js"))          // ends with /claude.js
+		isClaude := isNode && (strings.Contains(cmdline, "/claude ") || // "node .../claude" (global bin)
+			strings.Contains(cmdline, "/claude.js ") || // direct script
+			strings.Contains(cmdline, "/@anthropic-ai/") || // npm package
+			strings.HasSuffix(cmdline, "/claude") || // ends with /claude
+			strings.HasSuffix(cmdline, "/claude.js")) // ends with /claude.js
 
 		if isClaude {
 			return true
@@ -412,6 +411,15 @@ func WindowHasShellRunning(windowID string, windowName string) bool {
 func DetectConsentDialog(content string) bool {
 	lowerContent := strings.ToLower(content)
 
+	// Claude Code 2.1.119 shows a workspace safety screen headed by
+	// "Accessing workspace:" before the numbered choices. Match this first so
+	// the detector still works when the visible capture clips the options.
+	if strings.Contains(lowerContent, "accessing workspace:") &&
+		strings.Contains(lowerContent, "quick safety check") &&
+		strings.Contains(lowerContent, "claude code'll be able to read") {
+		return true
+	}
+
 	// Check for numbered options - looks for patterns like "1.", "2)", "[1]", etc.
 	optionPattern := regexp.MustCompile(`[1-9][\.\)\]]`)
 	lines := strings.Split(content, "\n")
@@ -429,7 +437,7 @@ func DetectConsentDialog(content string) bool {
 	}
 	hasNumberedOptions := len(foundDigits) >= 2
 
-	trustKeywords := []string{"trust", "safety check", "confirm", "allow", "proceed", "project you created", "you trust"}
+	trustKeywords := []string{"accessing workspace", "trust", "safety check", "confirm", "allow", "proceed", "project you created", "you trust"}
 	exitKeywords := []string{"exit", "decline", "cancel", "skip", "deny"}
 
 	hasTrustKeyword := false

@@ -53,7 +53,7 @@ func CaptureVisiblePane(target string) string {
 }
 
 // AutoAcceptTrustDialog checks if a workspace trust/consent dialog is visible
-// and auto-accepts it by sending Enter. Returns true if dialog was detected and accepted.
+// and auto-accepts it. Returns true if dialog was detected and accepted.
 // Uses generic pattern detection instead of exact strings to handle UI variations.
 // Uses bounded capture to avoid matching stale dialog text from scrollback.
 func AutoAcceptTrustDialog(target string) bool {
@@ -63,8 +63,10 @@ func AutoAcceptTrustDialog(target string) bool {
 	}
 
 	if detectConsentDialog(content) {
-		// Dialog detected, auto-accept
-		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+		// Dialog detected, explicitly choose the affirmative option. Claude Code
+		// 2.1.119 defaults to "1. Yes, I trust this folder", but sending the
+		// selection keeps this robust if focus starts elsewhere in the prompt.
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "1", "Enter").Run(); err != nil {
 			return false
 		}
 		return true
