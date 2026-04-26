@@ -197,6 +197,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		ProviderName: providerName,
 	}
 	configpkg.Save(cfg)
+	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
 	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)

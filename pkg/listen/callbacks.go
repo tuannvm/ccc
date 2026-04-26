@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannvm/ccc/pkg/auth"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
-	"github.com/tuannvm/ccc/pkg/lookup"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	providerpkg "github.com/tuannvm/ccc/pkg/provider"
+	"github.com/tuannvm/ccc/pkg/session"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
-	"github.com/tuannvm/ccc/pkg/auth"
-	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // HandleCallbackQuery processes callback queries from inline keyboard button presses
@@ -155,6 +155,7 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		}
 		return
 	}
+	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
@@ -192,6 +193,7 @@ func HandleProviderChange(cfg *configpkg.Config, cb *telegram.CallbackQuery, ses
 
 	sess.ProviderName = providerName
 	configpkg.Save(cfg)
+	pinSessionHeader(cfg, sessionName, sess)
 
 	resultMsg := fmt.Sprintf("provider changed\nsession: %s\nprovider: %s\nsource: session\n\nRestart with /new to apply.", sessionName, provider.Name())
 	if cb.Message != nil {

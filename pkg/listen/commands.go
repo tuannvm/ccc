@@ -105,6 +105,7 @@ func HandleProvidersCommand(cfg *configpkg.Config, chatID, threadID int64, text 
 					telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("failed to save provider: %v", err))
 					return
 				}
+				pinSessionHeader(cfg, sessName, sessionInfo)
 				telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("provider changed\nsession: %s\nprovider: %s\nsource: session\n\nRestart with /new to apply.", sessName, provider.Name()))
 				return
 			}

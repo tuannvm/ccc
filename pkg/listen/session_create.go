@@ -106,6 +106,7 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 	if err := configpkg.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
+	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
 	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		fmt.Printf("Warning: failed to install hooks: %v\n", err)
@@ -163,6 +164,7 @@ func StartSession(continueSession bool) error {
 					ProviderName: providerName,
 				}
 				configpkg.Save(config)
+				pinSessionHeader(config, name, config.Sessions[name])
 
 				if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
 					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
@@ -234,6 +236,7 @@ func StartDetached(name string, workDir string, prompt string) error {
 	if err := configpkg.Save(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
+	pinSessionHeader(config, name, config.Sessions[name])
 
 	if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
 		return fmt.Errorf("failed to install hooks: %w", err)

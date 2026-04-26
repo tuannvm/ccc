@@ -128,15 +128,23 @@ ccc uses a provider abstraction to support multiple AI providers. Each provider 
 
 When creating a session, the provider is determined in this order:
 
-1. **Explicit provider**: Specified via `--provider` flag or in session config
+1. **Session provider**: Stored in the session after explicit selection from `/new`, `/provider`, or `--provider`
 2. **Active provider**: Uses `active_provider` from config
-3. **Builtin provider**: Falls back to default Anthropic provider
+3. **Builtin provider**: Falls back to the default Anthropic provider
+
+Telegram session messages show both the provider and its source (`session`, `active default`, or `builtin default`). New session topics also pin a plain-text header with the session name, provider, and resolved path:
+
+```text
+session: myproject
+provider: anthropic
+path: /Users/you/Projects/myproject
+```
+
+For worktree sessions, `path` is the full worktree directory.
 
 ```mermaid
 graph TD
-    A[Session Request] --> B{--provider flag?}
-    B -->|Yes| C[Use Specified Provider]
-    B -->|No| D{Session has provider_name?}
+    A[Session Request] --> D{Session has provider_name?}
     D -->|Yes| E[Use Session Provider]
     D -->|No| F{active_provider set?}
     F -->|Yes| G[Use Active Provider]
