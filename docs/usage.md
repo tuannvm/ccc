@@ -25,21 +25,12 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 
 | Command | Description |
 |---------|-------------|
-| `/new <name>` | Create new session + topic |
-| `/new <name>@provider` | Create session with specific provider |
-| `/new ~/path/to/dir` | Create session with custom path |
-| `/new` | Restart session in current topic |
-| `/worktree` | Create worktree with auto-generated name |
-| `/worktree <name>` | Create worktree with custom name |
-| `/worktree <base> <name>` | Create worktree for specific base session |
-| `/continue` | Restart keeping conversation history |
-| `/providers` | List available providers |
-| `/provider [name]` | Show/change provider for current session |
-| `/c <command>` | Execute shell command |
-| `/update` | Update ccc binary |
-| `/restart` | Restart ccc service |
-| `/stats` | Show system statistics |
-| `/auth` | Re-authenticate Claude Code |
+| `/new [name-or-url]` | Create, clone, or restart a session |
+| `/provider [name]` | View or change the current session provider |
+| `/worktree [name]` | Create a worktree session |
+| `/status [command]` | Inspect and manage session state |
+
+Lower-frequency commands are available through `/status`, for example `/status resume`, `/status stop`, `/status update`, `/status service`, and `/status system`. Legacy aliases such as `/continue`, `/resume`, `/stop`, `/delete`, `/providers`, `/team`, `/update`, and `/restart` still work.
 
 ## Getting Started
 
@@ -67,6 +58,7 @@ This creates:
 - A new Telegram topic named "myproject"
 - A project directory at `~/myproject` (or `~/Projects/myproject` if configured)
 - A tmux window with Claude Code running
+- A pinned topic message with `session`, `provider`, and `path`
 
 ### 3. Send Your First Prompt
 
@@ -96,11 +88,20 @@ You're now attached to the same session and can continue working.
 /new myproject
 ```
 
+If no provider is specified, ccc shows an inline provider picker before creating the topic.
+
 **Session with specific provider:**
 ```
 /new myproject@provider-name
 ```
 Replace `provider-name` with your configured provider.
+
+**Session from a Git URL:**
+```
+/new https://github.com/tuannvm/gemini-mcp-server
+```
+
+ccc clones or reuses the repository, derives the session name from the repo, and then shows the same provider picker used by named sessions.
 
 **Session with custom path:**
 ```
@@ -146,31 +147,22 @@ ccc delete myproject
 
 ## Provider Management
 
-### Viewing Providers
-
-```
-/providers
-```
-
-Response:
-```
-Available providers:
-• default (builtin)
-• provider-name-1
-• provider-name-2
-
-Active: provider-name-1
-```
-
-Use inline buttons or provider names to switch between configured providers.
-
-### Changing Provider for Current Session
+### Viewing or Changing Providers
 
 ```
 /provider
 ```
 
-This shows inline buttons for quick provider selection. Choose a provider from the list to switch.
+Response:
+```
+session: myproject
+provider: anthropic
+source: session
+
+Select provider:
+```
+
+This shows inline buttons for quick provider selection. To change directly, send `/provider provider-name` in the session topic.
 
 ### Creating a Session with Specific Provider
 
@@ -179,6 +171,20 @@ This shows inline buttons for quick provider selection. Choose a provider from t
 ```
 
 Replace `provider-name` with your configured provider. Use the `/providers` command to see available providers.
+
+If a session is created without an explicit provider, the provider source is shown as `active default` or `builtin default` so the selected provider is visible.
+
+### Pinned Session Header
+
+Each session topic pins a compact plain-text header:
+
+```text
+session: myproject
+provider: anthropic
+path: /Users/you/Projects/myproject
+```
+
+For worktree sessions, `path` is the full worktree path. When a session provider changes, ccc pins a fresh header so the current provider remains visible.
 
 ### Setting Default Provider
 

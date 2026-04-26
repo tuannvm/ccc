@@ -65,20 +65,10 @@ func DeleteForumTopic(cfg *config.Config, topicID int64) error {
 // SetBotCommands sets the bot commands in Telegram
 func SetBotCommands(botToken string) {
 	commands := []map[string]string{
-		{"command": "new", "description": "Create/restart session: /new <name>"},
-		{"command": "team", "description": "Create team session (3-pane): /team <name>"},
-		{"command": "continue", "description": "Restart session with history"},
-		{"command": "delete", "description": "Delete current session and thread"},
-		{"command": "resume", "description": "List/switch Claude sessions: /resume [id]"},
-		{"command": "worktree", "description": "Create worktree session: /worktree <base> <name>"},
-		{"command": "providers", "description": "List available AI providers"},
-		{"command": "cleanup", "description": "Delete ALL sessions, folders and threads"},
-		{"command": "c", "description": "Execute shell command: /c <cmd>"},
-		{"command": "update", "description": "Update ccc binary from GitHub"},
-		{"command": "version", "description": "Show ccc version"},
-		{"command": "stats", "description": "Show system stats (RAM, disk, etc)"},
-		{"command": "auth", "description": "Re-authenticate Claude OAuth"},
-		{"command": "stop", "description": "Stop/interrupt current Claude execution"},
+		{"command": "new", "description": "Start or restart a session"},
+		{"command": "provider", "description": "View or change provider"},
+		{"command": "worktree", "description": "Create a worktree session"},
+		{"command": "status", "description": "Inspect and manage session"},
 	}
 
 	// Set for default scope

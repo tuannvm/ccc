@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannvm/ccc/pkg/auth"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
-	"github.com/tuannvm/ccc/pkg/lookup"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	providerpkg "github.com/tuannvm/ccc/pkg/provider"
+	"github.com/tuannvm/ccc/pkg/session"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
-	"github.com/tuannvm/ccc/pkg/auth"
-	"github.com/tuannvm/ccc/pkg/session"
 )
 
 // HandleCallbackQuery processes callback queries from inline keyboard button presses
@@ -155,12 +155,13 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		}
 		return
 	}
+	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
 	}
 
-	resultMsg := fmt.Sprintf("🚀 Session '%s' started!\n🤖 Provider: %s\n\nSend messages here to interact with Claude.", sessionName, providerName)
+	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with Claude.", sessionName, selectedProviderSummary(providerName))
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		resultMsg = fmt.Sprintf("❌ Failed to start session: %v", err)
 	}
@@ -192,8 +193,9 @@ func HandleProviderChange(cfg *configpkg.Config, cb *telegram.CallbackQuery, ses
 
 	sess.ProviderName = providerName
 	configpkg.Save(cfg)
+	pinSessionHeader(cfg, sessionName, sess)
 
-	resultMsg := fmt.Sprintf("✅ Provider changed to %s for session '%s'\n\nRestart with /new to apply the new provider.", provider.Name(), sessionName)
+	resultMsg := fmt.Sprintf("provider changed\nsession: %s\nprovider: %s\nsource: session\n\nRestart with /new to apply.", sessionName, provider.Name())
 	if cb.Message != nil {
 		telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
 	}
@@ -280,7 +282,7 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 
 	resultMsg := fmt.Sprintf("✅ Team session '%s' created!\n\n", teamName)
 	resultMsg += fmt.Sprintf("📂 Path: %s\n", workDir)
-	resultMsg += fmt.Sprintf("🤖 Provider: %s\n", providerName)
+	resultMsg += selectedProviderSummary(providerName) + "\n"
 	resultMsg += fmt.Sprintf("💬 Topic ID: %d\n\n", topicID)
 	resultMsg += "📱 Send messages:\n"
 	resultMsg += "  /planner <msg>   - Send to planner\n"

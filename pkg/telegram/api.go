@@ -53,9 +53,11 @@ func SendMessageWithMode(cfg *config.Config, chatID int64, threadID int64, text 
 
 	for _, msg := range messages {
 		params := url.Values{
-			"chat_id":    {fmt.Sprintf("%d", chatID)},
-			"text":       {msg},
-			"parse_mode": {parseMode},
+			"chat_id": {fmt.Sprintf("%d", chatID)},
+			"text":    {msg},
+		}
+		if parseMode != "" {
+			params.Set("parse_mode", parseMode)
 		}
 		if threadID > 0 {
 			params.Set("message_thread_id", fmt.Sprintf("%d", threadID))
@@ -98,6 +100,27 @@ func SendMessageWithMode(cfg *config.Config, chatID int64, threadID int64, text 
 		}
 	}
 	return lastMsgID, nil
+}
+
+func SendPlainMessageGetID(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
+	return SendMessageWithMode(cfg, chatID, threadID, text, "")
+}
+
+func PinMessage(cfg *config.Config, chatID int64, messageID int64) error {
+	params := url.Values{
+		"chat_id":              {fmt.Sprintf("%d", chatID)},
+		"message_id":           {fmt.Sprintf("%d", messageID)},
+		"disable_notification": {"true"},
+	}
+
+	result, err := TelegramAPI(cfg, "pinChatMessage", params)
+	if err != nil {
+		return err
+	}
+	if !result.OK {
+		return fmt.Errorf("telegram error: %s", result.Description)
+	}
+	return nil
 }
 
 // EditMessageHTML edits a message using HTML parse mode

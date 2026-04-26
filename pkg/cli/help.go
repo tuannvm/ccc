@@ -30,19 +30,18 @@ COMMANDS:
     run                     Run Claude directly (used by tmux sessions)
 
 TELEGRAM COMMANDS:
-    /new <name>             Create new session (tap to select provider)
-    /new <name>@provider    Create session with specific provider
-    /new ~/path/name        Create session with custom path
-    /new                    Restart session in current topic
-    /team <name>            Create team session (3-pane: planner|executor|reviewer)
-    /team <name>@provider   Create team session with specific provider
-    /worktree <base> <name> Create worktree session from existing session
-    /continue               Restart session keeping conversation history
-    /providers              List available AI providers
-    /provider [name]        Show or change provider for current session
-    /c <cmd>                Execute shell command
-    /update                 Update ccc binary from GitHub
-    /restart                Restart ccc service
+    /new <name>             Start or restart a session
+    /new <name>@provider    Start with a specific provider
+    /provider [name]        View or change current session provider
+    /worktree [name]        Create a worktree session
+    /status                 Show current session state
+    /status restart         Restart with current conversation
+    /status stop            Interrupt current Claude execution
+    /status resume          List available Claude conversations
+    /status delete          Delete current session and topic
+
+LEGACY TELEGRAM ALIASES:
+    /continue, /resume, /stop, /delete, /providers, /team, /update, /restart
 
 OTP (permission approval):
     When OTP is enabled (via 'ccc setup'), Claude's permission requests

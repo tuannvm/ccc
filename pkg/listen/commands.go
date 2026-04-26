@@ -40,10 +40,11 @@ func HandleContinueCommand(cfg *configpkg.Config, chatID, threadID int64) {
 	}
 	worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
-	if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, false); err != nil {
+	providerName := effectiveProviderName(cfg, sessionInfo)
+	if err := tmux.SwitchSessionInWindow(sessName, workDir, providerName, resumeSessionID, worktreeName, true, false); err != nil {
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 	} else {
-		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("🔄 Session '%s' restarted with conversation history", sessName))
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("%s restarted\n%s", sessName, providerSummary(cfg, sessionInfo)))
 	}
 }
 
@@ -87,18 +88,28 @@ func HandleDeleteCommand(cfg *configpkg.Config, chatID, threadID int64) {
 // HandleProvidersCommand handles the /providers and /provider commands
 func HandleProvidersCommand(cfg *configpkg.Config, chatID, threadID int64, text string, isGroup bool) {
 	cfg, _ = configpkg.Load()
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/provider"))
 
 	if isGroup && threadID > 0 {
 		sessName := lookup.GetSessionByTopic(cfg, threadID)
 		if sessName != "" {
 			sessionInfo := cfg.Sessions[sessName]
-			current := sessionInfo.ProviderName
-			if current == "" {
-				current = cfg.ActiveProvider
-				if current == "" {
-					current = "anthropic"
+			if arg != "" && text != "/providers" {
+				provider := providerpkg.GetProvider(cfg, arg)
+				if provider == nil {
+					telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("unknown provider: %s\navailable: %s", arg, strings.Join(providerpkg.GetProviderNames(cfg), ", ")))
+					return
 				}
+				sessionInfo.ProviderName = provider.Name()
+				if err := configpkg.Save(cfg); err != nil {
+					telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("failed to save provider: %v", err))
+					return
+				}
+				pinSessionHeader(cfg, sessName, sessionInfo)
+				telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("provider changed\nsession: %s\nprovider: %s\nsource: session\n\nRestart with /new to apply.", sessName, provider.Name()))
+				return
 			}
+			current := effectiveProviderName(cfg, sessionInfo)
 
 			var buttons [][]telegram.InlineKeyboardButton
 			providerNames := providerpkg.GetProviderNames(cfg)
@@ -113,7 +124,7 @@ func HandleProvidersCommand(cfg *configpkg.Config, chatID, threadID int64, text 
 				})
 			}
 
-			msg := fmt.Sprintf("🤖 **%s**\n\nCurrent provider: %s\n\nSelect a new provider:", sessName, current)
+			msg := fmt.Sprintf("session: %s\n%s\n\nSelect provider:", sessName, providerSummary(cfg, sessionInfo))
 			telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
 			return
 		}
@@ -121,7 +132,7 @@ func HandleProvidersCommand(cfg *configpkg.Config, chatID, threadID int64, text 
 
 	// Not in a topic - show all available providers
 	var msg []string
-	msg = append(msg, "📋 Available providers:")
+	msg = append(msg, "providers")
 	providerNames := providerpkg.GetProviderNames(cfg)
 	for _, name := range providerNames {
 		active := ""

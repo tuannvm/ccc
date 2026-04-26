@@ -97,7 +97,7 @@ func HandleResumeCommand(cfg *configpkg.Config, chatID, threadID int64, text str
 	sessionInfo.ClaudeSessionID = arg
 	configpkg.Save(cfg)
 
-	msg := fmt.Sprintf("✅ Switched to session: %s", arg)
+	msg := fmt.Sprintf("conversation: %s\n%s", shortSessionID(arg), providerSummary(cfg, sessionInfo))
 	if oldID != "" && oldID != arg {
 		shortOld := oldID
 		if len(oldID) > 8 {
@@ -116,11 +116,12 @@ func HandleResumeCommand(cfg *configpkg.Config, chatID, threadID int64, text str
 		worktreeName = sessionInfo.WorktreeName
 	}
 
-	if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, arg, worktreeName, false, false); err != nil {
+	providerName := effectiveProviderName(cfg, sessionInfo)
+	if err := tmux.SwitchSessionInWindow(sessName, workDir, providerName, arg, worktreeName, false, false); err != nil {
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 	} else {
 		sessionInfo.ClaudeSessionID = arg
 		configpkg.Save(cfg)
-		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("🚀 Session '%s' resumed with Claude session %s", sessName, arg))
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("%s resumed\nconversation: %s\n%s", sessName, shortSessionID(arg), providerSummary(cfg, sessionInfo)))
 	}
 }

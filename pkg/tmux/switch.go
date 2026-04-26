@@ -18,6 +18,12 @@ const WorktreeAutoGenerate = "AUTO"
 // Each project gets its own named window within the main "ccc" session
 // If skipRestart is true and the requested session is already active, it will skip restarting
 func SwitchSessionInWindow(sessionName string, workDir string, providerName string, sessionID string, worktreeName string, continueSession bool, skipRestart bool) error {
+	existingTarget, err := FindExistingWindow(sessionName)
+	if err != nil {
+		return err
+	}
+	createdWindow := existingTarget == ""
+
 	// Ensure the project window exists in the ccc session (e.g., "ccc:TommyClaw")
 	target, err := EnsureProjectWindow(sessionName)
 	if err != nil {
@@ -27,7 +33,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	// Check if we should skip restarting
 	// Only skip if: 1) skipRestart is true, AND 2) the target window already has Claude/shell running
 	shouldRestart := true
-	if skipRestart {
+	if skipRestart && !createdWindow {
 		// Check if the target window already has Claude or a shell running
 		// A shell means the window is ready for input and we can send commands directly
 		if WindowHasClaudeRunning(target, "") || WindowHasShellRunning(target, "") {
@@ -192,57 +198,16 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		exec.Command(TmuxPath, "set-window-option", "-t", target, "@ccc-provider", prefix).Run()
 	}
 
-	// After starting Claude, poll for consent dialog and auto-accept it
-	// This is needed for new sessions where Claude Code 2.1.84+ shows a workspace trust dialog
-	// IMPORTANT: Only poll for new sessions (sessionID == ""), not when resuming.
-	// Consent dialogs only appear on first startup, not when resuming existing sessions.
-	// Polling during resume can interfere with message delivery by sending spurious Enter keys.
+	// After starting Claude, wait until the interactive prompt is usable. This
+	// also handles Claude Code's workspace trust dialog, including the 2.1.119
+	// "Accessing workspace" safety screen. Keep this on fresh starts only:
+	// polling during resume can interfere with message delivery by sending keys.
 	if shouldRestart && sessionID == "" {
-		fmt.Printf("Polling for consent dialog after Claude startup...\n")
-		pollDeadline := time.Now().Add(10 * time.Second)
-		consumedDialog := false
-		for time.Now().Before(pollDeadline) {
-			time.Sleep(500 * time.Millisecond)
-
-			// Get the pane ID for the target
-			cmd := exec.Command(TmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}")
-			out, err := cmd.Output()
-			if err != nil {
-				continue
-			}
-
-			var activePaneID string
-			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-			for _, line := range lines {
-				parts := strings.SplitN(line, "\t", 2)
-				if len(parts) == 2 && parts[0] == "1" {
-					activePaneID = parts[1]
-					break
-				}
-			}
-
-			if activePaneID == "" {
-				continue
-			}
-
-			// Check for consent dialog and auto-accept
-			if AutoAcceptTrustDialog(activePaneID) {
-				fmt.Printf("Consent dialog auto-accepted during startup polling\n")
-				consumedDialog = true
-				// Give Claude time to proceed after accepting
-				time.Sleep(2 * time.Second)
-				break
-			}
-
-			// If Claude prompt is detected, Claude is ready - no need to continue polling
-			if PaneHasActiveClaudePrompt(target) {
-				fmt.Printf("Claude prompt detected, startup complete\n")
-				break
-			}
+		fmt.Printf("Waiting for Claude startup...\n")
+		if err := WaitForClaude(target, 60*time.Second); err != nil {
+			return fmt.Errorf("claude did not start in time: %w", err)
 		}
-		if consumedDialog {
-			fmt.Printf("Consent dialog was consumed during startup\n")
-		}
+		fmt.Printf("Claude prompt detected, startup complete\n")
 	}
 
 	// For new named worktrees, spawn a background goroutine that waits for Claude
@@ -277,7 +242,5 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		}()
 	}
 
-
 	return nil
 }
-

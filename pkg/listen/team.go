@@ -88,7 +88,7 @@ func HandleTeamCreateCommand(cfg *configpkg.Config, chatID, threadID int64, text
 			return
 		}
 
-		telegram.SendMessage(cfg, chatID, threadID, "✅ Team session restarted!")
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("%s restarted\n%s", getSessionNameFromInfo(sessInfo), providerSummary(cfg, sessInfo)))
 		return
 	}
 
@@ -97,6 +97,9 @@ func HandleTeamCreateCommand(cfg *configpkg.Config, chatID, threadID int64, text
 
 // CreateTeamSession creates a new team session with the given provider
 func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, providerName string) {
+	if providerName == "" {
+		providerName = defaultProviderName(cfg)
+	}
 	for topicID, sessInfo := range cfg.TeamSessions {
 		if sessInfo != nil {
 			sessName := getSessionNameFromInfo(sessInfo)
@@ -162,7 +165,7 @@ func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, 
 
 	msg := fmt.Sprintf("✅ Team session '%s' created!\n\n", teamName)
 	msg += fmt.Sprintf("📂 Path: %s\n", workDir)
-	msg += fmt.Sprintf("🤖 Provider: %s\n", providerName)
+	msg += selectedProviderSummary(providerName) + "\n"
 	msg += fmt.Sprintf("💬 Topic ID: %d\n\n", topicID)
 	msg += "📱 Send messages:\n"
 	msg += "  /planner <msg>   - Send to planner\n"

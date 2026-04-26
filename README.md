@@ -75,6 +75,12 @@ Then in Telegram, create a session:
 /new myproject
 ```
 
+For a GitHub repo, send the URL and choose a provider from the inline picker:
+
+```
+/new https://github.com/tuannvm/gemini-mcp-server
+```
+
 Send your first prompt:
 
 ```
@@ -89,6 +95,7 @@ That's it! 🎉
 - 🔔 **Smart Notifications** — Get notified when tasks complete
 - 📁 **Multi-Session** — Multiple projects, each in its own topic
 - 🌳 **Git Worktrees** — Auto-generated sessions with color grouping
+- 📌 **Pinned Session Context** — Session, provider, and path stay visible in each topic
 - 🔄 **Seamless Handoff** — Start on phone, continue on PC
 - ⚡ **Streaming Responses** — Real-time typing effect for AI messages
 - 📤 **File Transfer** — Send files to your phone
