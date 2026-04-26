@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
-	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/auth"
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/service"
 	"github.com/tuannvm/ccc/pkg/telegram"
@@ -185,7 +185,7 @@ step3:
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  ccc           Start Claude Code in current directory")
-	fmt.Println("  ccc -c        Continue previous session")
+	fmt.Println("  ccc status restart  Continue/restart current session")
 	fmt.Println()
 	if config.GroupID != 0 {
 		fmt.Println("Telegram commands (in your group):")

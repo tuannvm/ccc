@@ -10,29 +10,30 @@ import (
 
 // SessionInfo stores information about a session
 type SessionInfo struct {
-	TopicID         int64  `json:"topic_id"`
-	Path            string `json:"path"`
-	SessionName     string `json:"session_name,omitempty"`    // User-provided session name (for team sessions)
-	ClaudeSessionID string `json:"claude_session_id,omitempty"`
-	WindowID        string `json:"window_id,omitempty"`     // tmux window ID (@N)
-	ProviderName    string `json:"provider_name,omitempty"` // Provider to use for this session
-	IsWorktree      bool   `json:"is_worktree,omitempty"`   // Whether this is a worktree session
-	WorktreeName    string `json:"worktree_name,omitempty"` // Name of the worktree
-	BaseSession     string `json:"base_session,omitempty"`  // Base session name for worktree
+	TopicID           int64  `json:"topic_id"`
+	Path              string `json:"path"`
+	SessionName       string `json:"session_name,omitempty"` // User-provided session name (for team sessions)
+	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
+	WindowID          string `json:"window_id,omitempty"`            // tmux window ID (@N)
+	ProviderName      string `json:"provider_name,omitempty"`        // Provider to use for this session
+	PinnedHeaderMsgID int64  `json:"pinned_header_msg_id,omitempty"` // Telegram message ID for the pinned session header
+	IsWorktree        bool   `json:"is_worktree,omitempty"`          // Whether this is a worktree session
+	WorktreeName      string `json:"worktree_name,omitempty"`        // Name of the worktree
+	BaseSession       string `json:"base_session,omitempty"`         // Base session name for worktree
 
 	// Multi-pane support (for team sessions)
-	Type            session.SessionKind            `json:"type,omitempty"`           // "single" or "team"
-	LayoutName      string                         `json:"layout_name,omitempty"`     // "single", "team-3pane"
-	DefaultPaneID   string                         `json:"default_pane_id,omitempty"` // Default input pane ID
-	Panes           map[session.PaneRole]*PaneInfo `json:"panes,omitempty"`           // role -> pane info
+	Type          session.SessionKind            `json:"type,omitempty"`            // "single" or "team"
+	LayoutName    string                         `json:"layout_name,omitempty"`     // "single", "team-3pane"
+	DefaultPaneID string                         `json:"default_pane_id,omitempty"` // Default input pane ID
+	Panes         map[session.PaneRole]*PaneInfo `json:"panes,omitempty"`           // role -> pane info
 }
 
 // PaneInfo stores information about a single pane in a session
 // This is the main package version of session.PaneInfo to avoid circular imports
 type PaneInfo struct {
-	ClaudeSessionID string              `json:"claude_session_id,omitempty"` // Claude session ID for this pane
-	PaneID          string              `json:"pane_id,omitempty"`           // Tmux pane ID (%1, %2, etc.)
-	Role            session.PaneRole    `json:"role"`                        // Role of this pane
+	ClaudeSessionID string           `json:"claude_session_id,omitempty"` // Claude session ID for this pane
+	PaneID          string           `json:"pane_id,omitempty"`           // Tmux pane ID (%1, %2, etc.)
+	Role            session.PaneRole `json:"role"`                        // Role of this pane
 }
 
 // ========== Session Interface Implementation ==========
@@ -124,9 +125,9 @@ type ProviderConfig struct {
 type Config struct {
 	// ========== Telegram Integration ==========
 	BotToken      string `json:"bot_token"`
-	ChatID        int64  `json:"chat_id"`                    // Private chat for simple commands
-	GroupID       int64  `json:"group_id,omitempty"`         // Group with topics for sessions
-	MultiUserMode bool   `json:"multi_user_mode,omitempty"`  // Allow any group member (default: false = owner only)
+	ChatID        int64  `json:"chat_id"`                   // Private chat for simple commands
+	GroupID       int64  `json:"group_id,omitempty"`        // Group with topics for sessions
+	MultiUserMode bool   `json:"multi_user_mode,omitempty"` // Allow any group member (default: false = owner only)
 	// API 9.5: Custom emoji IDs for forum topic icons (optional)
 	CustomEmojiIDs map[string]string `json:"custom_emoji_ids,omitempty"` // provider -> emoji_id (e.g., "zai": "5372874709367178364")
 	// API 9.5: Enable streaming responses for real-time typing effect
@@ -146,27 +147,27 @@ type Config struct {
 
 	// ========== Authentication ==========
 	OAuthToken string `json:"oauth_token,omitempty"`
-	OTPSecret string `json:"otp_secret,omitempty"` // TOTP secret for safe mode
+	OTPSecret  string `json:"otp_secret,omitempty"` // TOTP secret for safe mode
 
 	// ========== AI Providers ==========
 	ActiveProvider string                     `json:"active_provider,omitempty"` // Which provider to use from providers map
-	Providers     map[string]*ProviderConfig `json:"providers,omitempty"`       // Named provider configurations
-	Provider      *ProviderConfig            `json:"provider,omitempty"`        // Deprecated: Use providers + active_provider
+	Providers      map[string]*ProviderConfig `json:"providers,omitempty"`       // Named provider configurations
+	Provider       *ProviderConfig            `json:"provider,omitempty"`        // Deprecated: Use providers + active_provider
 }
 
 type coreConfig struct {
-	BotToken         string            `json:"bot_token"`
-	ChatID           int64             `json:"chat_id"`
-	GroupID          int64             `json:"group_id,omitempty"`
-	MultiUserMode    bool              `json:"multi_user_mode,omitempty"`
-	CustomEmojiIDs   map[string]string `json:"custom_emoji_ids,omitempty"`
-	EnableStreaming  bool              `json:"enable_streaming,omitempty"`
-	ProjectsDir      string            `json:"projects_dir,omitempty"`
-	TranscriptionLang string           `json:"transcription_lang,omitempty"`
-	RelayURL         string            `json:"relay_url,omitempty"`
-	Away             bool              `json:"away"`
-	OAuthToken       string            `json:"oauth_token,omitempty"`
-	OTPSecret        string            `json:"otp_secret,omitempty"`
+	BotToken          string            `json:"bot_token"`
+	ChatID            int64             `json:"chat_id"`
+	GroupID           int64             `json:"group_id,omitempty"`
+	MultiUserMode     bool              `json:"multi_user_mode,omitempty"`
+	CustomEmojiIDs    map[string]string `json:"custom_emoji_ids,omitempty"`
+	EnableStreaming   bool              `json:"enable_streaming,omitempty"`
+	ProjectsDir       string            `json:"projects_dir,omitempty"`
+	TranscriptionLang string            `json:"transcription_lang,omitempty"`
+	RelayURL          string            `json:"relay_url,omitempty"`
+	Away              bool              `json:"away"`
+	OAuthToken        string            `json:"oauth_token,omitempty"`
+	OTPSecret         string            `json:"otp_secret,omitempty"`
 }
 
 type sessionsConfig struct {

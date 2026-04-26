@@ -14,8 +14,8 @@ import (
 	"github.com/tuannvm/ccc/pkg/relay"
 	"github.com/tuannvm/ccc/pkg/service"
 	setuppkg "github.com/tuannvm/ccc/pkg/setup"
-	"github.com/tuannvm/ccc/pkg/tmux"
 	teampkg "github.com/tuannvm/ccc/pkg/team"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 const version = "1.7.0"
@@ -45,14 +45,6 @@ func main() {
 		return
 	}
 
-	// Check for -c flag (continue) as first arg
-	if os.Args[1] == "-c" {
-		if err := listenpkg.StartSession(true); err != nil {
-			os.Exit(1)
-		}
-		return
-	}
-
 	cb := newHandlerCallbacks()
 
 	switch os.Args[1] {
@@ -73,6 +65,18 @@ func main() {
 
 	case "config":
 		configpkg.HandleConfigCommand(os.Args[2:], auth.IsOTPEnabled)
+
+	case "status":
+		if err := listenpkg.RunStatusFromArgs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "provider":
+		if err := listenpkg.RunProviderFromArgs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "setgroup":
 		if err := setuppkg.SetGroupAuto(); err != nil {
@@ -127,9 +131,9 @@ func main() {
 
 	case "install":
 		if err := service.InstallAll(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "uninstall":
 		fmt.Println("⚠️ Global hook uninstallation is deprecated.")

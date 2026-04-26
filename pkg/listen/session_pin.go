@@ -26,10 +26,26 @@ func pinSessionHeader(cfg *configpkg.Config, sessionName string, info *configpkg
 		return
 	}
 
-	msgID, err := telegram.SendPlainMessageGetID(cfg, cfg.GroupID, info.TopicID, sessionPinMessage(cfg, sessionName, info))
+	msg := sessionPinMessage(cfg, sessionName, info)
+	if info.PinnedHeaderMsgID != 0 {
+		if err := telegram.EditPlainMessage(cfg, cfg.GroupID, info.PinnedHeaderMsgID, msg); err == nil {
+			if err := telegram.PinMessage(cfg, cfg.GroupID, info.PinnedHeaderMsgID); err != nil {
+				loggingpkg.ListenLog("[pin] failed to re-pin session header for %s: %v", sessionName, err)
+			}
+			return
+		} else {
+			loggingpkg.ListenLog("[pin] failed to update session header for %s: %v", sessionName, err)
+		}
+	}
+
+	msgID, err := telegram.SendPlainMessageGetID(cfg, cfg.GroupID, info.TopicID, msg)
 	if err != nil {
 		loggingpkg.ListenLog("[pin] failed to send session header for %s: %v", sessionName, err)
 		return
+	}
+	info.PinnedHeaderMsgID = msgID
+	if err := configpkg.Save(cfg); err != nil {
+		loggingpkg.ListenLog("[pin] failed to persist pinned header for %s: %v", sessionName, err)
 	}
 	if err := telegram.PinMessage(cfg, cfg.GroupID, msgID); err != nil {
 		loggingpkg.ListenLog("[pin] failed to pin session header for %s: %v", sessionName, err)

@@ -191,12 +191,24 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	if exists && existing != nil && existing.Path != "" {
 		workDir = existing.Path
 	}
+	previous, hadPrevious := cfg.Sessions[sessionName]
 	cfg.Sessions[sessionName] = &configpkg.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
 		ProviderName: providerName,
 	}
-	configpkg.Save(cfg)
+	if err := configpkg.Save(cfg); err != nil {
+		if hadPrevious {
+			cfg.Sessions[sessionName] = previous
+		} else {
+			delete(cfg.Sessions, sessionName)
+		}
+		if deleteErr := telegram.DeleteForumTopic(cfg, topicID); deleteErr != nil {
+			loggingpkg.ListenLog("[/new] failed to delete topic after save failure for %s: %v", sessionName, deleteErr)
+		}
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("⚠️ Failed to save config: %v", err))
+		return
+	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
 	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {

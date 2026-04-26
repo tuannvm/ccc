@@ -106,6 +106,29 @@ func SendPlainMessageGetID(cfg *config.Config, chatID int64, threadID int64, tex
 	return SendMessageWithMode(cfg, chatID, threadID, text, "")
 }
 
+func EditPlainMessage(cfg *config.Config, chatID int64, messageID int64, text string) error {
+	const maxLen = 4000
+	messages := splitMessage(text, maxLen)
+
+	params := url.Values{
+		"chat_id":    {fmt.Sprintf("%d", chatID)},
+		"message_id": {fmt.Sprintf("%d", messageID)},
+		"text":       {messages[0]},
+	}
+
+	result, err := TelegramAPI(cfg, "editMessageText", params)
+	if err != nil {
+		return err
+	}
+	if !result.OK {
+		if strings.Contains(result.Description, "message is not modified") {
+			return nil
+		}
+		return fmt.Errorf("telegram error: %s", result.Description)
+	}
+	return nil
+}
+
 func PinMessage(cfg *config.Config, chatID int64, messageID int64) error {
 	params := url.Values{
 		"chat_id":              {fmt.Sprintf("%d", chatID)},
@@ -139,7 +162,9 @@ func EditMessageWithMode(cfg *config.Config, chatID int64, messageID int64, thre
 		"chat_id":    {fmt.Sprintf("%d", chatID)},
 		"message_id": {fmt.Sprintf("%d", messageID)},
 		"text":       {messages[0]},
-		"parse_mode": {parseMode},
+	}
+	if parseMode != "" {
+		params.Set("parse_mode", parseMode)
 	}
 
 	result, err := TelegramAPI(cfg, "editMessageText", params)

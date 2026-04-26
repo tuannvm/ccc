@@ -319,8 +319,8 @@ ccc config otp disable                # Disable OTP mode
 ### Provider Commands
 
 ```bash
-ccc providers                # List all providers
-ccc providers --set-active <provider-name>    # Set active provider
+ccc provider                 # List providers for the current session
+ccc provider <provider-name> # Change the current session provider
 ```
 
 ## Environment Variables

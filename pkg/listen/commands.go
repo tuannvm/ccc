@@ -25,6 +25,21 @@ func EnsureHooks(cfg *configpkg.Config, sessionName string, info *configpkg.Sess
 	})
 }
 
+func parseProviderCommand(text string) (string, string) {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	cmd := fields[0]
+	if i := strings.Index(cmd, "@"); i >= 0 {
+		cmd = cmd[:i]
+	}
+	if len(fields) == 1 {
+		return cmd, ""
+	}
+	return cmd, strings.Join(fields[1:], " ")
+}
+
 // HandleContinueCommand handles the /continue command - restart session preserving conversation history
 func HandleContinueCommand(cfg *configpkg.Config, chatID, threadID int64) {
 	cfg, _ = configpkg.Load()
@@ -87,14 +102,19 @@ func HandleDeleteCommand(cfg *configpkg.Config, chatID, threadID int64) {
 
 // HandleProvidersCommand handles the /providers and /provider commands
 func HandleProvidersCommand(cfg *configpkg.Config, chatID, threadID int64, text string, isGroup bool) {
-	cfg, _ = configpkg.Load()
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/provider"))
+	fresh, err := configpkg.Load()
+	if err != nil || fresh == nil {
+		telegram.SendMessage(cfg, chatID, threadID, "providers unavailable: config not loaded")
+		return
+	}
+	cfg = fresh
+	cmd, arg := parseProviderCommand(text)
 
 	if isGroup && threadID > 0 {
 		sessName := lookup.GetSessionByTopic(cfg, threadID)
 		if sessName != "" {
 			sessionInfo := cfg.Sessions[sessName]
-			if arg != "" && text != "/providers" {
+			if arg != "" && cmd == "/provider" {
 				provider := providerpkg.GetProvider(cfg, arg)
 				if provider == nil {
 					telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("unknown provider: %s\navailable: %s", arg, strings.Join(providerpkg.GetProviderNames(cfg), ", ")))

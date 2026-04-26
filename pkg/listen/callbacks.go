@@ -191,8 +191,16 @@ func HandleProviderChange(cfg *configpkg.Config, cb *telegram.CallbackQuery, ses
 		return
 	}
 
+	previousProvider := sess.ProviderName
 	sess.ProviderName = providerName
-	configpkg.Save(cfg)
+	if err := configpkg.Save(cfg); err != nil {
+		sess.ProviderName = previousProvider
+		if cb.Message != nil {
+			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
+				fmt.Sprintf("⚠️ Failed to save config: %v", err))
+		}
+		return
+	}
 	pinSessionHeader(cfg, sessionName, sess)
 
 	resultMsg := fmt.Sprintf("provider changed\nsession: %s\nprovider: %s\nsource: session\n\nRestart with /new to apply.", sessionName, provider.Name())
