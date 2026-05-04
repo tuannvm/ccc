@@ -127,6 +127,28 @@ func WaitForAgent(target string, providerName string, timeout time.Duration) err
 	return WaitForClaude(target, timeout)
 }
 
+// WaitForAgentInputPrompt waits until the selected backend is ready to accept
+// an input submission. Unlike WaitForAgent, this requires the prompt itself,
+// not just a running process.
+func WaitForAgentInputPrompt(target string, providerName string, timeout time.Duration) error {
+	interval := 100 * time.Millisecond
+	if timeout > 10*time.Second {
+		interval = 500 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if AutoAcceptTrustDialog(target) {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if PaneHasActiveAgentPrompt(target, providerName) {
+			return nil
+		}
+		time.Sleep(interval)
+	}
+	return fmt.Errorf("timeout waiting for %s input prompt", providerName)
+}
+
 // PaneHasActiveAgentPrompt checks recent pane content for the selected backend prompt.
 func PaneHasActiveAgentPrompt(paneTarget string, providerName string) bool {
 	if isCodexProviderName(providerName) {

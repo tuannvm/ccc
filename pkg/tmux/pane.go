@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"fmt"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -34,6 +35,11 @@ func WindowHasAgentRunning(windowID string, windowName string, providerName stri
 
 func isCodexProviderName(name string) bool {
 	return strings.EqualFold(name, "codex")
+}
+
+// IsCodexProviderName reports whether a provider name selects the Codex backend.
+func IsCodexProviderName(name string) bool {
+	return isCodexProviderName(name)
 }
 
 // TargetHasClaudeRunning checks if a tmux target (pane or window) has Claude running
@@ -181,7 +187,7 @@ func TargetHasCodexRunning(target string) bool {
 
 // PaneHasActiveCodexPrompt checks recent pane content for Codex's interactive prompt.
 func PaneHasActiveCodexPrompt(paneTarget string) bool {
-	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-J", "-S", "-15")
+	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-J", "-S", "-80")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -222,15 +228,12 @@ func PaneHasCodexChild(paneID string) bool {
 	if panePid == "" || panePid == "0" {
 		return false
 	}
-	psOut, err := exec.Command("ps", "-o", "pid,command", "--ppid", panePid, "--no-headers").Output()
+	allPsOut, err := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
 	if err != nil {
-		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
-		if psErr != nil {
-			return false
-		}
-		psOut = filterChildProcesses(allPsOut, panePid)
+		psOut, psErr := exec.Command("ps", "-o", "pid,command", "--ppid", panePid, "--no-headers").Output()
+		return psErr == nil && psOutputHasCodex(psOut)
 	}
-	return psOutputHasCodex(psOut)
+	return psOutputHasCodex(filterDescendantProcesses(allPsOut, panePid))
 }
 
 func PaneIsCodexProcess(paneID string) bool {
@@ -243,15 +246,15 @@ func PaneIsCodexProcess(paneID string) bool {
 	if shellPid == "" || shellPid == "0" {
 		return false
 	}
-	psOut, err := exec.Command("ps", "-o", "pid,command", "--ppid", shellPid, "--no-headers").Output()
+	allPsOut, err := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
 	if err != nil {
-		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+		psOut, psErr := exec.Command("ps", "-o", "pid,command", "--ppid", shellPid, "--no-headers").Output()
 		if psErr != nil {
 			return PaneHasActiveCodexPrompt(paneID)
 		}
-		psOut = filterChildProcesses(allPsOut, shellPid)
+		return psOutputHasCodex(psOut)
 	}
-	return psOutputHasCodex(psOut)
+	return psOutputHasCodex(filterDescendantProcesses(allPsOut, shellPid))
 }
 
 func psOutputHasCodex(psOut []byte) bool {
@@ -520,6 +523,65 @@ func filterChildProcesses(psOutput []byte, parentPid string) []byte {
 		}
 	}
 
+	return []byte(strings.Join(result, "\n"))
+}
+
+// filterDescendantProcesses parses ps output and returns all descendant process
+// lines for parentPid in "PID COMMAND" format. This handles shell -> ccc -> codex
+// trees where Codex is not a direct child of the tmux pane shell.
+func filterDescendantProcesses(psOutput []byte, parentPid string) []byte {
+	rootPid, err := strconv.Atoi(parentPid)
+	if err != nil {
+		return []byte{}
+	}
+
+	type proc struct {
+		pid     int
+		ppid    int
+		command string
+	}
+	var procs []proc
+	children := make(map[int][]proc)
+	for _, line := range strings.Split(string(psOutput), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "PID") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		p := proc{pid: pid, ppid: ppid, command: strings.Join(fields[2:], " ")}
+		procs = append(procs, p)
+		children[ppid] = append(children[ppid], p)
+	}
+	if len(procs) == 0 {
+		return []byte{}
+	}
+
+	var result []string
+	queue := []int{rootPid}
+	seen := map[int]bool{rootPid: true}
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		for _, child := range children[pid] {
+			if seen[child.pid] {
+				continue
+			}
+			seen[child.pid] = true
+			result = append(result, fmt.Sprintf("%d %s", child.pid, child.command))
+			queue = append(queue, child.pid)
+		}
+	}
 	return []byte(strings.Join(result, "\n"))
 }
 

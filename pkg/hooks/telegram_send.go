@@ -22,6 +22,11 @@ func SendFromTelegramToProvider(target string, windowName string, text string, p
 	if err := os.WriteFile(TelegramActiveFlag(windowName), []byte("1"), 0600); err != nil {
 		return fmt.Errorf("failed to set telegram flag: %w", err)
 	}
+	if tmux.IsCodexProviderName(providerName) {
+		if err := tmux.WaitForAgentInputPrompt(target, providerName, 60*time.Second); err != nil {
+			return err
+		}
+	}
 	return tmux.SendKeysForProvider(target, text, providerName)
 }
 
@@ -30,6 +35,11 @@ func SendFromTelegramToProvider(target string, windowName string, text string, p
 func SendFromTelegramToProviderWithDelay(target string, windowName string, text string, providerName string, delay time.Duration) error {
 	if err := os.WriteFile(TelegramActiveFlag(windowName), []byte("1"), 0600); err != nil {
 		return fmt.Errorf("failed to set telegram flag: %w", err)
+	}
+	if tmux.IsCodexProviderName(providerName) {
+		if err := tmux.WaitForAgentInputPrompt(target, providerName, 60*time.Second); err != nil {
+			return err
+		}
 	}
 	return tmux.SendKeysForProviderWithDelay(target, text, providerName, delay)
 }

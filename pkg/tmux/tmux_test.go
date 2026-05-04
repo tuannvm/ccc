@@ -169,6 +169,25 @@ func TestHasActiveCodexPrompt(t *testing.T) {
 	}
 }
 
+func TestFilterDescendantProcesses(t *testing.T) {
+	psOutput := []byte(`  PID  PPID COMMAND
+  100     1 zsh
+  101   100 ccc run --provider codex
+  102   101 /opt/homebrew/bin/codex --no-alt-screen
+  200     1 unrelated
+`)
+	got := string(filterDescendantProcesses(psOutput, "100"))
+	if !strings.Contains(got, "101 ccc run --provider codex") {
+		t.Fatalf("missing ccc child in descendants: %q", got)
+	}
+	if !strings.Contains(got, "102 /opt/homebrew/bin/codex --no-alt-screen") {
+		t.Fatalf("missing codex grandchild in descendants: %q", got)
+	}
+	if strings.Contains(got, "unrelated") {
+		t.Fatalf("included unrelated process: %q", got)
+	}
+}
+
 // TestCaptureVisiblePane tests bounded pane capture
 // Note: This test requires tmux to be running and is skipped in CI
 func TestCaptureVisiblePane(t *testing.T) {
