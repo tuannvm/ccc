@@ -10,7 +10,6 @@ Your companion for Claude Code - control sessions remotely via Telegram and tmux
 
 USAGE:
     ccc                     Start/attach tmux session in current directory
-    ccc -c                  Continue previous session
     ccc <message>           Send notification (if away mode is on)
 
 COMMANDS:
@@ -19,6 +18,11 @@ COMMANDS:
     config                  Show/set configuration values
     config projects-dir <path>  Set base directory for projects
     config oauth-token <token>  Set OAuth token
+    status                  Show the session mapped to this directory
+    status all              List Telegram-backed sessions and local bridges
+    status attach <session> Attach/resume a known CCC session by name
+    status restart          Continue/restart the current directory session
+    provider [name]         View or change current session provider
     setgroup                Configure Telegram group for topics (if skipped during setup)
     listen                  Start the Telegram bot listener manually
     install                 Install skill and background service

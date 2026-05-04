@@ -16,7 +16,12 @@ import (
 
 // HandleStatusCommand is the compact management hub for session operations.
 func HandleStatusCommand(cfg *configpkg.Config, chatID, threadID int64, text string, isGroup bool, updateOffset int) {
-	cfg, _ = configpkg.Load()
+	fresh, err := configpkg.Load()
+	if err != nil || fresh == nil {
+		telegram.SendMessage(cfg, chatID, threadID, "ccc status\nconfig: unavailable")
+		return
+	}
+	cfg = fresh
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/status"))
 	if strings.HasPrefix(arg, "resume ") {
 		HandleResumeCommand(cfg, chatID, threadID, "/resume "+strings.TrimSpace(strings.TrimPrefix(arg, "resume ")))

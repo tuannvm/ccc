@@ -9,13 +9,16 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 | Command | Description |
 |---------|-------------|
 | `ccc` | Start/attach to session in current directory |
-| `ccc -c` | Continue previous session |
+| `ccc status` | Show the session mapped to current directory |
+| `ccc status all` | List Telegram-backed sessions and local bridges |
+| `ccc status attach <session>` | Attach/resume a known session by name |
+| `ccc status restart` | Continue/restart the current directory session |
+| `ccc provider [name]` | View or change the current session provider |
 | `ccc "message"` | Send notification (if away mode enabled) |
 | `ccc send <file>` | Send file to Telegram |
 | `ccc start <name> <dir> <prompt>` | Start detached session with initial prompt |
 | `ccc doctor` | Check dependencies and configuration |
 | `ccc config [key] [value]` | View/set configuration |
-| `ccc providers` | List available providers |
 | `ccc listen` | Start Telegram listener (service mode) |
 | `ccc install-hooks` | Install hooks in current project |
 | `ccc cleanup-hooks` | Remove hooks from current project |
@@ -184,15 +187,15 @@ provider: anthropic
 path: /Users/you/Projects/myproject
 ```
 
-For worktree sessions, `path` is the full worktree path. When a session provider changes, ccc pins a fresh header so the current provider remains visible.
+For worktree sessions, `path` is the base repository path. When a session provider changes, ccc updates the pinned header so the current provider remains visible.
 
-### Setting Default Provider
+### Setting Session Provider
 
 ```bash
-ccc config providers --set-active provider-name
+ccc provider provider-name
 ```
 
-Or edit `~/.config/ccc/config.json`:
+To change the default provider for new sessions, edit `~/.config/ccc/config.providers.json` or the legacy `~/.config/ccc/config.json`:
 ```json
 {
   "active_provider": "provider-name"
@@ -259,7 +262,7 @@ Creates `myproject_experiment-x` session from the `myproject` base session.
 - **Visual grouping**: Same color icon for all worktrees of a base project
 - **Independent conversations**: Each worktree has its own Claude Code session history
 - **Provider inheritance**: Uses base session's provider and API configuration
-- **Easy switching**: `ccc attach myproject-feature-auth` to resume
+- **Easy switching**: `ccc status attach myproject_feature-auth` to resume
 
 ## Advanced Usage
 
