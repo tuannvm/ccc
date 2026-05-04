@@ -324,7 +324,7 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 			// Send as plain text. Codex and Claude often emit Markdown that is not
 			// valid Telegram Markdown, so do not ask Telegram to parse it.
 			msg := fmt.Sprintf("%s: %s%s", cfg.SessionName, rolePrefix, block.Text)
-			tgMsgID, err := cfg.SendMessageHTML(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
+			tgMsgID, err := cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
 				if strings.Contains(err.Error(), "message thread not found") && cfg.TopicID != 0 {
