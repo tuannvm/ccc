@@ -1,14 +1,14 @@
 package main
 
 import (
+	"github.com/tuannvm/ccc/pkg/auth"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
 	"github.com/tuannvm/ccc/pkg/lookup"
+	"github.com/tuannvm/ccc/pkg/session"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
-	"github.com/tuannvm/ccc/pkg/auth"
-	"github.com/tuannvm/ccc/pkg/session"
 )
 
 func newHandlerCallbacks() *hooks.HandlerCallbacks {
@@ -27,8 +27,8 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 		ClearThinking:           hooks.ClearThinking,
 		TelegramActiveFlag:      hooks.TelegramActiveFlag,
 		SendMessage:             telegram.SendMessage,
-		SendMessageHTML:         telegram.SendMessageHTMLGetID,
-		SendMessageGetID:        telegram.SendMessageGetID,
+		SendMessageHTML:         hooks.SendAssistantMessage,
+		SendMessageGetID:        telegram.SendPlainMessageGetID,
 		EditMessageHTML:         telegram.EditMessageHTML,
 		SendMessageWithKeyboard: telegram.SendMessageWithKeyboard,
 		IsDelivered:             ledger.IsDelivered,
@@ -52,26 +52,21 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 	}
 }
 
-
-
-
-
-
 func deliverUnsentTexts(cfg *configpkg.Config, sessName string, topicID int64, transcriptPath string, insertIntoToolMsg bool, claudeSessionID string) int {
 	return hooks.DeliverUnsentTexts(&hooks.DeliverUnsentTextsConfig{
-		Config:            cfg,
-		SessionName:       sessName,
-		TopicID:           topicID,
-		TranscriptPath:    transcriptPath,
-		InsertIntoToolMsg: insertIntoToolMsg,
-		ClaudeSessionID:   claudeSessionID,
+		Config:             cfg,
+		SessionName:        sessName,
+		TopicID:            topicID,
+		TranscriptPath:     transcriptPath,
+		InsertIntoToolMsg:  insertIntoToolMsg,
+		ClaudeSessionID:    claudeSessionID,
 		LoadToolState:      hooks.LoadToolState,
 		AddTextToToolState: hooks.AddTextToToolState,
 		SaveToolState:      hooks.SaveToolState,
 		FormatToolMessage:  hooks.FormatToolMessage,
 		EditMessageHTML:    telegram.EditMessageHTML,
 		SendMessageHTML:    hooks.SendAssistantMessage,
-		SendMessageGetID:   telegram.SendMessageGetID,
+		SendMessageGetID:   telegram.SendPlainMessageGetID,
 		SendMessage:        telegram.SendMessage,
 		IsDelivered:        ledger.IsDelivered,
 		AppendMessage: func(msg *ledger.MessageRecord) {

@@ -32,9 +32,10 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 
 		currentSession := tmux.GetCurrentSessionName()
 		needsSwitch := currentSession != tmux.SafeName(sessName)
+		sessionInfo := cfg.Sessions[sessName]
+		providerName := effectiveProviderName(cfg, sessionInfo)
 
 		if needsSwitch {
-			sessionInfo := cfg.Sessions[sessName]
 			workDir := lookup.GetSessionWorkDir(cfg, sessName, sessionInfo)
 			if _, err := os.Stat(workDir); os.IsNotExist(err) {
 				os.MkdirAll(workDir, 0755)
@@ -51,12 +52,12 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			// skipRestart=false so SwitchSessionInWindow starts Claude.
 			skipRestart := false
 			if winTarget, err := tmux.GetWindowTarget(sessName); err == nil {
-				if tmux.WindowHasAgentRunning(winTarget, "", effectiveProviderName(cfg, sessionInfo)) {
+				if tmux.WindowHasAgentRunning(winTarget, "", providerName) {
 					skipRestart = true
 				}
 			}
 
-			if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, skipRestart); err != nil {
+			if err := tmux.SwitchSessionInWindow(sessName, workDir, providerName, resumeSessionID, worktreeName, true, skipRestart); err != nil {
 				telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 				return
 			}
@@ -106,7 +107,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			TelegramDelivered: true,
 		})
 
-		if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessName), text, effectiveProviderName(cfg, cfg.Sessions[sessName])); err != nil {
+		if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessName), text, providerName); err != nil {
 			loggingpkg.ListenLog("sendToTmux FAILED: target=%s err=%v", target, err)
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 		} else {

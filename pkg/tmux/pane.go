@@ -228,7 +228,7 @@ func PaneHasCodexChild(paneID string) bool {
 	if panePid == "" || panePid == "0" {
 		return false
 	}
-	allPsOut, err := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+	allPsOut, err := exec.Command("ps", "-axww", "-o", "pid,ppid,command").Output()
 	if err != nil {
 		psOut, psErr := exec.Command("ps", "-o", "pid,command", "--ppid", panePid, "--no-headers").Output()
 		return psErr == nil && psOutputHasCodex(psOut)
@@ -246,7 +246,7 @@ func PaneIsCodexProcess(paneID string) bool {
 	if shellPid == "" || shellPid == "0" {
 		return false
 	}
-	allPsOut, err := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+	allPsOut, err := exec.Command("ps", "-axww", "-o", "pid,ppid,command").Output()
 	if err != nil {
 		psOut, psErr := exec.Command("ps", "-o", "pid,command", "--ppid", shellPid, "--no-headers").Output()
 		if psErr != nil {

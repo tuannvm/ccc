@@ -321,9 +321,9 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 				TelegramMsgID:     state.MsgID,
 			})
 		} else {
-			// Send as separate message with role prefix for team sessions
-			// Format: *topic-name:* [Role] message
-			msg := fmt.Sprintf("*%s:* %s%s", cfg.SessionName, rolePrefix, block.Text)
+			// Send as plain text. Codex and Claude often emit Markdown that is not
+			// valid Telegram Markdown, so do not ask Telegram to parse it.
+			msg := fmt.Sprintf("%s: %s%s", cfg.SessionName, rolePrefix, block.Text)
 			tgMsgID, err := cfg.SendMessageHTML(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
@@ -371,11 +371,10 @@ func HookLog(format string, args ...any) {
 	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
-// SendAssistantMessage sends an assistant text message with optional streaming
-// If config.EnableStreaming is true, uses telegram.SendDraftMessage for real-time typing effect
-// Otherwise, falls back to standard telegram.SendMessage
+// SendAssistantMessage sends assistant text as plain text so Telegram does not
+// parse model-authored Markdown as Telegram Markdown.
 func SendAssistantMessage(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
-	return telegram.SendStreamingMessage(cfg, chatID, threadID, text, cfg.EnableStreaming)
+	return telegram.SendPlainMessageGetID(cfg, chatID, threadID, text)
 }
 
 // HandleStopRetryConfig holds configuration for stop retry handler
