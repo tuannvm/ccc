@@ -32,10 +32,6 @@ func RunWithArgs(args []string, autoGen string, ensureHooks EnsureHooksFunc) err
 // worktreeAutoGen: special value that triggers auto-generation of worktree name
 // ensureHooks: callback to ensure hooks are installed (passed from root to avoid import cycles)
 func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride string, worktreeName string, worktreeAutoGen string, ensureHooks EnsureHooksFunc) error {
-	if ClaudePath == "" {
-		return fmt.Errorf("claude binary not found")
-	}
-
 	// Clean stale Telegram flag from previous sessions
 	if winName, err := exec.Command(TmuxPath, "display-message", "-p", "#{window_name}").Output(); err == nil {
 		name := strings.TrimSpace(string(winName))
@@ -47,39 +43,15 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 
 	cwd, _ := os.Getwd()
 
-	var args []string
-	if resumeSessionID != "" {
-		args = append(args, "--resume", resumeSessionID)
-	} else if continueSession {
-		args = append(args, "-c")
-	}
-	if worktreeName != "" {
-		if worktreeName == worktreeAutoGen {
-			args = append(args, "--worktree")
-		} else {
-			args = append(args, "--worktree", worktreeName)
-		}
-	}
-
 	// Predict worktree path for session config (Claude will run inside this directory)
 	var worktreePath string
 	if worktreeName != "" && worktreeName != worktreeAutoGen {
 		worktreePath = filepath.Join(cwd, ".claude", "worktrees", worktreeName)
 	}
 
-	cmd := exec.Command(ClaudePath, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-
 	// When resuming, capture stderr to detect "No conversation found" for auto-retry.
 	// Use a multi-writer to both capture and display stderr.
 	var stderrBuf bytes.Buffer
-	if resumeSessionID != "" {
-		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-	} else {
-		cmd.Stderr = os.Stderr
-	}
-	cmd.Env = os.Environ()
 
 	effectiveCwd := cwd
 	if worktreePath != "" {
@@ -88,9 +60,10 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	configDirCode := os.Getenv("CLAUDE_CODE_CONFIG_DIR")
 	configDirZai := os.Getenv("CLAUDE_CONFIG_DIR")
 	homeDir := os.Getenv("HOME")
-	loggingpkg.ListenLog("runClaudeRaw: claude=%s args=%v cwd=%s config_code_dir=%q config_dir=%q home=%q", ClaudePath, args, effectiveCwd, configDirCode, configDirZai, homeDir)
+	loggingpkg.ListenLog("runClaudeRaw: cwd=%s config_code_dir=%q config_dir=%q home=%q", effectiveCwd, configDirCode, configDirZai, homeDir)
 
 	config, loadErr := configpkg.Load()
+	var provider providerpkg.Provider
 	if loadErr == nil {
 		sessionName := filepath.Base(cwd)
 		sessionInfo := &configpkg.SessionInfo{Path: cwd}
@@ -102,18 +75,42 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 				sessionInfo = existing
 			}
 		}
-		if ensureHooks != nil {
-			if err := ensureHooks(config, sessionName, sessionInfo); err != nil {
-				loggingpkg.ListenLog("Warning: Failed to ensure hooks in %s: %v", cwd, err)
-			}
-		}
-
-		provider := providerpkg.GetProvider(config, providerOverride)
+		provider = providerpkg.GetProvider(config, providerOverride)
 
 		if providerOverride != "" && provider == nil {
 			return fmt.Errorf("unknown provider: %s (available providers: %v)", providerOverride, providerpkg.GetProviderNames(config))
 		}
+		if provider == nil {
+			provider = providerpkg.BuiltinProvider{}
+		}
+		if ensureHooks != nil && provider.Backend() == providerpkg.BackendClaude {
+			if err := ensureHooks(config, sessionName, sessionInfo); err != nil {
+				loggingpkg.ListenLog("Warning: Failed to ensure hooks in %s: %v", cwd, err)
+			}
+		}
+	} else if providerpkg.IsCodexProviderName(providerOverride) {
+		provider = providerpkg.CodexProvider{}
+	} else {
+		provider = providerpkg.BuiltinProvider{}
+	}
 
+	cmdPath, args, isCodex, err := buildAgentCommand(provider, continueSession, resumeSessionID, worktreeName, worktreeAutoGen)
+	if err != nil {
+		return err
+	}
+	loggingpkg.ListenLog("runClaudeRaw: agent=%s args=%v cwd=%s", cmdPath, args, effectiveCwd)
+
+	cmd := exec.Command(cmdPath, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	if resumeSessionID != "" && !isCodex {
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	} else {
+		cmd.Stderr = os.Stderr
+	}
+	cmd.Env = os.Environ()
+
+	if loadErr == nil {
 		shouldApplyProviderEnv := (resumeSessionID == "") || (providerOverride != "")
 
 		if err := providerpkg.EnsureProviderSettings(provider); err != nil {
@@ -127,7 +124,7 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 			loggingpkg.ListenLog("Preserving original session environment for resumeSessionID=%q", resumeSessionID)
 		}
 
-		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && config.OAuthToken != "" {
+		if provider.Backend() == providerpkg.BackendClaude && os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && config.OAuthToken != "" {
 			cmd.Env = append(cmd.Env, "CLAUDE_CODE_OAUTH_TOKEN="+config.OAuthToken)
 		}
 	}
@@ -135,7 +132,7 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	runErr := cmd.Run()
 
 	// If --resume failed because the session doesn't exist, clear the stale ID and retry fresh
-	staleSession := runErr != nil && resumeSessionID != "" && strings.Contains(stderrBuf.String(), "No conversation found")
+	staleSession := runErr != nil && resumeSessionID != "" && !isCodex && strings.Contains(stderrBuf.String(), "No conversation found")
 	if staleSession {
 		sessionName := filepath.Base(cwd)
 		loggingpkg.ListenLog("Resume failed for session %s, clearing stale session ID and starting fresh", resumeSessionID)
@@ -187,4 +184,40 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 	}
 
 	return runErr
+}
+
+func buildAgentCommand(p providerpkg.Provider, continueSession bool, resumeSessionID string, worktreeName string, autoWorktree string) (string, []string, bool, error) {
+	if p != nil && p.Backend() == providerpkg.BackendCodex {
+		if CodexPath == "" {
+			return "", nil, true, fmt.Errorf("codex binary not found")
+		}
+		if worktreeName != "" {
+			return "", nil, true, fmt.Errorf("codex backend does not support Claude Code worktree sessions")
+		}
+		if resumeSessionID != "" {
+			return CodexPath, []string{"resume", "--no-alt-screen", resumeSessionID}, true, nil
+		}
+		if continueSession {
+			return CodexPath, []string{"resume", "--last", "--no-alt-screen"}, true, nil
+		}
+		return CodexPath, []string{"--no-alt-screen"}, true, nil
+	}
+
+	if ClaudePath == "" {
+		return "", nil, false, fmt.Errorf("claude binary not found")
+	}
+	var args []string
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	} else if continueSession {
+		args = append(args, "-c")
+	}
+	if worktreeName != "" {
+		if worktreeName == autoWorktree {
+			args = append(args, "--worktree")
+		} else {
+			args = append(args, "--worktree", worktreeName)
+		}
+	}
+	return ClaudePath, args, false, nil
 }

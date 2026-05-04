@@ -22,7 +22,7 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 | `ccc listen` | Start Telegram listener (service mode) |
 | `ccc install-hooks` | Install hooks in current project |
 | `ccc cleanup-hooks` | Remove hooks from current project |
-| `ccc run` | Run Claude directly (used by tmux) |
+| `ccc run` | Run selected backend directly (used by tmux) |
 
 ### Telegram Commands (Group)
 
@@ -60,7 +60,7 @@ From Telegram (in your group):
 This creates:
 - A new Telegram topic named "myproject"
 - A project directory at `~/myproject` (or `~/Projects/myproject` if configured)
-- A tmux window with Claude Code running
+- A tmux window with the selected backend running
 - A pinned topic message with `session`, `provider`, and `path`
 
 ### 3. Send Your First Prompt
@@ -71,7 +71,7 @@ In the "myproject" topic:
 Fix the authentication bug in login.ts
 ```
 
-Claude will process your request and respond in the same topic.
+The selected backend will process your request in the same topic.
 
 ### 4. Attach from Terminal
 
@@ -98,6 +98,12 @@ If no provider is specified, ccc shows an inline provider picker before creating
 /new myproject@provider-name
 ```
 Replace `provider-name` with your configured provider.
+
+Use `codex` to start the session with OpenAI Codex CLI:
+
+```
+/new myproject@codex
+```
 
 **Session from a Git URL:**
 ```
@@ -202,6 +208,8 @@ To change the default provider for new sessions, edit `~/.config/ccc/config.prov
 }
 ```
 
+`codex` is built in and can be used as either a session provider or active default without adding a provider config.
+
 ## Worktree Sessions
 
 Worktree sessions allow you to work on git branches in separate tmux windows with visual organization.
@@ -216,6 +224,8 @@ Worktree sessions are automatically color-coded by base project in Telegram:
 ### Creating a Worktree Session
 
 #### From a Telegram Topic (Recommended)
+
+Worktree sessions currently require a Claude-compatible backend. Codex CLI worktrees are not supported.
 
 When in a session's Telegram topic, simply run:
 

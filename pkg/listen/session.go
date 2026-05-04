@@ -8,8 +8,8 @@ import (
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
-	"github.com/tuannvm/ccc/pkg/lookup"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
@@ -51,7 +51,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			// skipRestart=false so SwitchSessionInWindow starts Claude.
 			skipRestart := false
 			if winTarget, err := tmux.GetWindowTarget(sessName); err == nil {
-				if tmux.WindowHasClaudeRunning(winTarget, "") {
+				if tmux.WindowHasAgentRunning(winTarget, "", effectiveProviderName(cfg, sessionInfo)) {
 					skipRestart = true
 				}
 			}
@@ -106,7 +106,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			TelegramDelivered: true,
 		})
 
-		if err := hooks.SendFromTelegram(target, tmux.SafeName(sessName), text); err != nil {
+		if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessName), text, effectiveProviderName(cfg, cfg.Sessions[sessName])); err != nil {
 			loggingpkg.ListenLog("sendToTmux FAILED: target=%s err=%v", target, err)
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 		} else {

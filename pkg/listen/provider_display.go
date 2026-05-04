@@ -57,6 +57,17 @@ func activeDefaultProviderSummary(cfg *configpkg.Config) string {
 	return fmt.Sprintf("provider: %s\nsource: %s", defaultProviderName(cfg), providerSource(cfg, nil))
 }
 
+func isCodexProviderName(providerName string) bool {
+	return strings.EqualFold(providerName, "codex")
+}
+
+func agentDisplayName(providerName string) string {
+	if isCodexProviderName(providerName) {
+		return "Codex"
+	}
+	return "Claude"
+}
+
 func shortSessionID(id string) string {
 	if len(id) <= 8 {
 		return id

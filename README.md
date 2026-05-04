@@ -101,7 +101,7 @@ That's it! 🎉
 - 📤 **File Transfer** — Send files to your phone
 - 🎤 **Voice Messages** — Auto-transcribed voice notes
 - 🔒 **100% Self-Hosted** — Runs on your machine, no cloud
-- 🏢 **Multiple Providers** — Anthropic, Zai, OpenAI, and more
+- 🏢 **Multiple Backends** — Claude-compatible providers plus Codex CLI
 
 ## Privacy & Security
 
@@ -125,7 +125,7 @@ That's it! 🎉
 
 - **OS**: macOS, Linux, or Windows (WSL)
 - **tmux**: Terminal multiplexer
-- **Claude Code**: [Install here](https://claude.ai/claude-code)
+- **Claude Code or Codex CLI**: install at least one supported backend
 - **Telegram**: Account + bot token
 
 ## Troubleshooting

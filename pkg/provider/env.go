@@ -67,13 +67,15 @@ func ApplyProviderEnv(baseEnv []string, p Provider, cfg *config.Config) []string
 	}
 
 	// Common settings for all providers
-	env = append(env, []string{
-		"TMPDIR=/tmp/claude",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"DISABLE_COST_WARNINGS=1",
-		"DISABLE_TELEMETRY=1",
-		"DISABLE_ERROR_REPORTING=1",
-	}...)
+	if p.Backend() == BackendClaude {
+		env = append(env, []string{
+			"TMPDIR=/tmp/claude",
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+			"DISABLE_COST_WARNINGS=1",
+			"DISABLE_TELEMETRY=1",
+			"DISABLE_ERROR_REPORTING=1",
+		}...)
+	}
 
 	return env
 }

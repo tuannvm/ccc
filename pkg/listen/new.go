@@ -213,8 +213,10 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
-	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-		loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
+	if !isCodexProviderName(providerName) {
+		if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+			loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
+		}
 	}
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
@@ -227,6 +229,6 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 	} else {
-		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, providerMsg, agentDisplayName(providerName)))
 	}
 }

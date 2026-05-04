@@ -14,6 +14,7 @@ import (
 // Provider defines the interface for AI providers that can be used with ccc
 type Provider interface {
 	Name() string
+	Backend() string
 	BaseURL() string
 	AuthToken(cfg *config.Config) string
 	Models() ModelConfig
@@ -22,6 +23,11 @@ type Provider interface {
 	EnvVars(cfg *config.Config) []string
 	IsBuiltin() bool
 }
+
+const (
+	BackendClaude = "claude"
+	BackendCodex  = "codex"
+)
 
 // ModelConfig holds the model names for a provider
 type ModelConfig struct {
@@ -35,6 +41,8 @@ type ModelConfig struct {
 type BuiltinProvider struct{}
 
 func (BuiltinProvider) Name() string { return "anthropic" }
+
+func (BuiltinProvider) Backend() string { return BackendClaude }
 
 func (BuiltinProvider) BaseURL() string { return "" }
 
@@ -61,6 +69,32 @@ func (BuiltinProvider) EnvVars(cfg *config.Config) []string {
 
 func (BuiltinProvider) IsBuiltin() bool { return true }
 
+// CodexProvider represents OpenAI Codex CLI as a native backend.
+type CodexProvider struct{}
+
+func (CodexProvider) Name() string { return BackendCodex }
+
+func (CodexProvider) Backend() string { return BackendCodex }
+
+func (CodexProvider) BaseURL() string { return "" }
+
+func (CodexProvider) AuthToken(*config.Config) string { return "" }
+
+func (CodexProvider) Models() ModelConfig { return ModelConfig{} }
+
+func (CodexProvider) ConfigDir() string { return "" }
+
+func (CodexProvider) TranscriptPath(string) string { return "" }
+
+func (CodexProvider) EnvVars(*config.Config) []string { return nil }
+
+func (CodexProvider) IsBuiltin() bool { return true }
+
+// IsCodexProviderName reports whether a provider name selects the Codex CLI backend.
+func IsCodexProviderName(name string) bool {
+	return strings.EqualFold(name, "codex")
+}
+
 // ConfiguredProvider represents a provider configured in config.json
 type ConfiguredProvider struct {
 	ProviderName string
@@ -68,6 +102,8 @@ type ConfiguredProvider struct {
 }
 
 func (p ConfiguredProvider) Name() string { return p.ProviderName }
+
+func (p ConfiguredProvider) Backend() string { return BackendClaude }
 
 func (p ConfiguredProvider) BaseURL() string {
 	if p.Config == nil {
@@ -178,6 +214,9 @@ func (p ConfiguredProvider) IsBuiltin() bool { return false }
 
 // GetActiveProvider returns the active provider config
 func GetActiveProvider(cfg *config.Config) *config.ProviderConfig {
+	if cfg == nil {
+		return nil
+	}
 	if cfg.Providers != nil && cfg.ActiveProvider != "" {
 		if p := cfg.Providers[cfg.ActiveProvider]; p != nil {
 			return p
@@ -190,26 +229,30 @@ func GetActiveProvider(cfg *config.Config) *config.ProviderConfig {
 func GetProviderNames(cfg *config.Config) []string {
 	var names []string
 	names = append(names, "anthropic")
-	if cfg.Providers != nil {
+	names = append(names, BackendCodex)
+	if cfg != nil && cfg.Providers != nil {
 		for name := range cfg.Providers {
-			if name != "anthropic" {
+			if name != "anthropic" && !IsCodexProviderName(name) {
 				names = append(names, name)
 			}
 		}
 	}
-	sort.Strings(names[1:])
+	sort.Strings(names[2:])
 	return names
 }
 
 // GetProvider returns a Provider for the given name
 func GetProvider(cfg *config.Config, name string) Provider {
 	if name == "" {
-		if cfg.ActiveProvider != "" && cfg.Providers != nil {
+		if cfg != nil && IsCodexProviderName(cfg.ActiveProvider) {
+			return CodexProvider{}
+		}
+		if cfg != nil && cfg.ActiveProvider != "" && cfg.Providers != nil {
 			if p := cfg.Providers[cfg.ActiveProvider]; p != nil {
 				return ConfiguredProvider{ProviderName: cfg.ActiveProvider, Config: p}
 			}
 		}
-		if cfg.Provider != nil {
+		if cfg != nil && cfg.Provider != nil {
 			return ConfiguredProvider{ProviderName: "legacy", Config: cfg.Provider}
 		}
 		return BuiltinProvider{}
@@ -218,8 +261,11 @@ func GetProvider(cfg *config.Config, name string) Provider {
 	if name == "anthropic" {
 		return BuiltinProvider{}
 	}
+	if IsCodexProviderName(name) {
+		return CodexProvider{}
+	}
 
-	if cfg.Providers != nil {
+	if cfg != nil && cfg.Providers != nil {
 		if p := cfg.Providers[name]; p != nil {
 			return ConfiguredProvider{ProviderName: name, Config: p}
 		}

@@ -36,7 +36,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	if skipRestart && !createdWindow {
 		// Check if the target window already has Claude or a shell running
 		// A shell means the window is ready for input and we can send commands directly
-		if WindowHasClaudeRunning(target, "") || WindowHasShellRunning(target, "") {
+		if WindowHasAgentRunning(target, "", providerName) || WindowHasShellRunning(target, "") {
 			// Target window already has Claude or shell running - skip respawn
 			// We can send commands directly without restarting
 			shouldRestart = false
@@ -44,8 +44,8 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 			// When skipRestart=true but we don't detect Claude or shell, be extra cautious
 			// This handles false negatives in detection where Claude is actually running
 			// Check for Claude prompt in the pane content as a fallback
-			if PaneHasActiveClaudePrompt(target) {
-				fmt.Printf("skipRestart=true: Claude prompt detected in pane content (fallback detection)\n")
+			if PaneHasActiveAgentPrompt(target, providerName) {
+				fmt.Printf("skipRestart=true: agent prompt detected in pane content (fallback detection)\n")
 				shouldRestart = false
 			}
 		}
@@ -63,11 +63,11 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		runCmd += " --resume " + shell.Quote(sessionID)
 	} else if continueSession {
 		// Check if Claude is actually running before adding -c flag
-		if WindowHasClaudeRunning(target, "") {
+		if WindowHasAgentRunning(target, "", providerName) {
 			runCmd += " -c"
-			fmt.Printf("Claude is running, will continue existing session\n")
+			fmt.Printf("Agent is running, will continue existing session\n")
 		} else {
-			fmt.Printf("continueSession=true but Claude not running, will start new session instead\n")
+			fmt.Printf("continueSession=true but agent not running, will start new session instead\n")
 		}
 	}
 	// If no sessionID and not continueSession (or Claude not running), start fresh (no flags)
@@ -117,20 +117,20 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		respawnComplete := false
 		for time.Now().Before(deadline) {
 			time.Sleep(200 * time.Millisecond)
-			if !WindowHasClaudeRunning(target, "") {
+			if !WindowHasAgentRunning(target, "", providerName) {
 				respawnComplete = true
 				fmt.Printf("Pane respawn complete, shell is ready\n")
 				break
 			}
 		}
 
-		if !respawnComplete && WindowHasClaudeRunning(target, "") {
-			return fmt.Errorf("pane respawn timed out - still shows Claude running after 5 seconds")
+		if !respawnComplete && WindowHasAgentRunning(target, "", providerName) {
+			return fmt.Errorf("pane respawn timed out - still shows agent running after 5 seconds")
 		}
 
 		// Verify we have a shell running now
-		if WindowHasClaudeRunning(target, "") {
-			return fmt.Errorf("pane still shows Claude running after respawn - cannot proceed safely")
+		if WindowHasAgentRunning(target, "", providerName) {
+			return fmt.Errorf("pane still shows agent running after respawn - cannot proceed safely")
 		}
 
 		// Change to work directory and start claude via ccc run (as one command)
@@ -140,10 +140,10 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		}
 	} else {
 		// Not restarting - check what's running in the target window
-		if WindowHasClaudeRunning(target, "") {
-			// Claude is already running in this window - don't send any command
+		if WindowHasAgentRunning(target, "", providerName) {
+			// The selected backend is already running in this window - don't send any command
 			// The user can continue their existing session
-			fmt.Printf("Claude already running in target window, skipping command send\n")
+			fmt.Printf("Agent already running in target window, skipping command send\n")
 		} else if WindowHasShellRunning(target, "") {
 			// Shell is running - decide whether to start Claude
 			// When skipRestart=true, the caller indicates the session should already be usable
@@ -203,11 +203,11 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	// "Accessing workspace" safety screen. Keep this on fresh starts only:
 	// polling during resume can interfere with message delivery by sending keys.
 	if shouldRestart && sessionID == "" {
-		fmt.Printf("Waiting for Claude startup...\n")
-		if err := WaitForClaude(target, 60*time.Second); err != nil {
-			return fmt.Errorf("claude did not start in time: %w", err)
+		fmt.Printf("Waiting for agent startup...\n")
+		if err := WaitForAgent(target, providerName, 60*time.Second); err != nil {
+			return fmt.Errorf("agent did not start in time: %w", err)
 		}
-		fmt.Printf("Claude prompt detected, startup complete\n")
+		fmt.Printf("Agent prompt detected, startup complete\n")
 	}
 
 	// For new named worktrees, spawn a background goroutine that waits for Claude
@@ -226,7 +226,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 			// Wait for Claude to exit (pane transitions from Claude to shell)
 			for i := 0; i < 120; i++ { // up to ~4 minutes (2s * 120)
 				time.Sleep(2 * time.Second)
-				if !WindowHasClaudeRunning(target, "") && WindowHasShellRunning(target, "") {
+				if !WindowHasAgentRunning(target, "", providerName) && WindowHasShellRunning(target, "") {
 					// Claude exited, shell is back — safe to send cd
 					time.Sleep(500 * time.Millisecond) // let shell prompt settle
 					cdCmd := "cd " + shell.Quote(newWorktreePath)

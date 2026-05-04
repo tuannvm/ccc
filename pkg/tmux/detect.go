@@ -19,6 +19,8 @@ var (
 	CCCPath string
 	// ClaudePath is the path to the claude binary
 	ClaudePath string
+	// CodexPath is the path to the codex binary
+	CodexPath string
 )
 
 // InitPaths initializes the paths to tmux, ccc, and claude binaries
@@ -60,6 +62,25 @@ func InitPaths() {
 		for _, p := range claudePaths {
 			if _, err := os.Stat(p); err == nil {
 				ClaudePath = p
+				break
+			}
+		}
+	}
+
+	// Find codex binary - first try PATH, then fallback paths
+	if path, err := exec.LookPath("codex"); err == nil {
+		CodexPath = path
+	} else {
+		home, _ := os.UserHomeDir()
+		codexPaths := []string{
+			home + "/.npm-global/bin/codex",
+			home + "/.local/bin/codex",
+			"/opt/homebrew/bin/codex",
+			"/usr/local/bin/codex",
+		}
+		for _, p := range codexPaths {
+			if _, err := os.Stat(p); err == nil {
+				CodexPath = p
 				break
 			}
 		}

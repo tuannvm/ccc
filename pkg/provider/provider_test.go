@@ -50,10 +50,32 @@ func TestProviderResolution(t *testing.T) {
 
 	// Test GetProviderNames
 	names := GetProviderNames(config)
-	if len(names) != 2 {
-		t.Errorf("GetProviderNames length: got %d, want 2", len(names))
+	if len(names) != 3 {
+		t.Errorf("GetProviderNames length: got %d, want 3", len(names))
 	}
 	if !slices.Contains(names, "anthropic") {
 		t.Error("'anthropic' not in provider names (should always be included)")
+	}
+	if !slices.Contains(names, "codex") {
+		t.Error("'codex' not in provider names (should always be included)")
+	}
+}
+
+func TestCodexProviderResolution(t *testing.T) {
+	cfg := &configpkg.Config{ActiveProvider: "codex"}
+	p := GetProvider(cfg, "")
+	if p == nil {
+		t.Fatal("GetProvider('') returned nil")
+	}
+	if p.Name() != "codex" {
+		t.Fatalf("active codex provider name = %q, want codex", p.Name())
+	}
+	if p.Backend() != BackendCodex {
+		t.Fatalf("active codex backend = %q, want %q", p.Backend(), BackendCodex)
+	}
+
+	p = GetProvider(&configpkg.Config{}, "codex")
+	if p == nil || p.Backend() != BackendCodex {
+		t.Fatalf("explicit codex provider = %#v, want codex backend", p)
 	}
 }

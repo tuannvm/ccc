@@ -48,6 +48,10 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 		if providerName == "" {
 			providerName = defaultProviderName(cfg)
 		}
+		if isCodexProviderName(providerName) {
+			telegram.SendMessage(cfg, chatID, threadID, "❌ Worktree sessions require the Claude backend; Codex CLI worktrees are not supported yet.")
+			return
+		}
 
 		existingWorktrees := lookup.GetWorktreeNames(basePath)
 		if existingWorktrees == nil {
@@ -146,6 +150,10 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 	providerName := baseSession.ProviderName
 	if providerName == "" {
 		providerName = defaultProviderName(cfg)
+	}
+	if isCodexProviderName(providerName) {
+		telegram.SendMessage(cfg, chatID, threadID, "❌ Worktree sessions require the Claude backend; Codex CLI worktrees are not supported yet.")
+		return
 	}
 
 	topicID, err := telegram.CreateForumTopic(cfg, worktreeSessionName, providerName, baseSessionName)

@@ -156,12 +156,17 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
+	if !isCodexProviderName(providerName) {
+		if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+			loggingpkg.ListenLog("[callback:new] Failed to install hooks for %s: %v", sessionName, err)
+		}
+	}
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		os.MkdirAll(workDir, 0755)
 	}
 
-	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with Claude.", sessionName, selectedProviderSummary(providerName))
+	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, selectedProviderSummary(providerName), agentDisplayName(providerName))
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		resultMsg = fmt.Sprintf("❌ Failed to start session: %v", err)
 	}

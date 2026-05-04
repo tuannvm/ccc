@@ -20,6 +20,22 @@ func WindowHasClaudeRunning(windowID string, windowName string) bool {
 	return TargetHasClaudeRunning(target)
 }
 
+// WindowHasAgentRunning checks if the active pane has the selected backend running.
+func WindowHasAgentRunning(windowID string, windowName string, providerName string) bool {
+	target := TargetByID(windowID, windowName)
+	if target == "" {
+		return false
+	}
+	if isCodexProviderName(providerName) {
+		return TargetHasCodexRunning(target)
+	}
+	return TargetHasClaudeRunning(target)
+}
+
+func isCodexProviderName(name string) bool {
+	return strings.EqualFold(name, "codex")
+}
+
 // TargetHasClaudeRunning checks if a tmux target (pane or window) has Claude running
 // This is the shared implementation used by both WindowHasClaudeRunning and currentPaneHasClaudeRunning
 // Uses hybrid detection: process name check + process tree check + prompt character check
@@ -106,6 +122,145 @@ func TargetHasClaudeRunning(target string) bool {
 	}
 
 	// If we reach here, the active pane doesn't have Claude running
+	return false
+}
+
+// TargetHasCodexRunning checks if a tmux target has Codex CLI running.
+func TargetHasCodexRunning(target string) bool {
+	cmd := exec.Command(TmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}\t#{pane_current_command}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	shells := map[string]bool{
+		"sh": true, "bash": true, "zsh": true, "fish": true,
+		"dash": true, "nu": true, "elvish": true, "xonsh": true,
+		"tcsh": true, "csh": true, "ksh": true,
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var activePaneID string
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		isActive, paneID, paneCmd := parts[0], parts[1], strings.TrimSpace(parts[2])
+		if isActive != "1" {
+			continue
+		}
+		activePaneID = paneID
+		if paneCmd == "codex" {
+			return true
+		}
+		if paneCmd == "node" || paneCmd == "nodejs" {
+			if PaneIsCodexProcess(paneID) {
+				return true
+			}
+		}
+		if paneCmd == "ccc" || paneCmd == "ccc run" {
+			if PaneHasActiveCodexPrompt(paneID) {
+				return true
+			}
+		}
+		if shells[paneCmd] && PaneHasCodexChild(paneID) {
+			return true
+		}
+	}
+	return activePaneID != "" && PaneHasActiveCodexPrompt(activePaneID)
+}
+
+// PaneHasActiveCodexPrompt checks recent pane content for Codex's interactive prompt.
+func PaneHasActiveCodexPrompt(paneTarget string) bool {
+	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-J", "-S", "-15")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return hasActiveCodexPrompt(string(out))
+}
+
+func hasActiveCodexPrompt(content string) bool {
+	lowerContent := strings.ToLower(content)
+	if !strings.Contains(lowerContent, "codex") && !strings.Contains(lowerContent, "openai") {
+		return false
+	}
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	nonEmptySeen := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		nonEmptySeen++
+		if strings.Contains(line, "›") {
+			return true
+		}
+		if nonEmptySeen >= 5 {
+			break
+		}
+	}
+	return false
+}
+
+func PaneHasCodexChild(paneID string) bool {
+	cmd := exec.Command(TmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	panePid := strings.TrimSpace(string(out))
+	if panePid == "" || panePid == "0" {
+		return false
+	}
+	psOut, err := exec.Command("ps", "-o", "pid,command", "--ppid", panePid, "--no-headers").Output()
+	if err != nil {
+		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+		if psErr != nil {
+			return false
+		}
+		psOut = filterChildProcesses(allPsOut, panePid)
+	}
+	return psOutputHasCodex(psOut)
+}
+
+func PaneIsCodexProcess(paneID string) bool {
+	cmd := exec.Command(TmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	shellPid := strings.TrimSpace(string(out))
+	if shellPid == "" || shellPid == "0" {
+		return false
+	}
+	psOut, err := exec.Command("ps", "-o", "pid,command", "--ppid", shellPid, "--no-headers").Output()
+	if err != nil {
+		allPsOut, psErr := exec.Command("ps", "-ax", "-o", "pid,ppid,command").Output()
+		if psErr != nil {
+			return PaneHasActiveCodexPrompt(paneID)
+		}
+		psOut = filterChildProcesses(allPsOut, shellPid)
+	}
+	return psOutputHasCodex(psOut)
+}
+
+func psOutputHasCodex(psOut []byte) bool {
+	for _, line := range strings.Split(string(psOut), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		cmdline := strings.ToLower(strings.TrimSpace(parts[1]))
+		if strings.Contains(cmdline, "codex") && !strings.Contains(cmdline, "ccc") {
+			return true
+		}
+	}
 	return false
 }
 

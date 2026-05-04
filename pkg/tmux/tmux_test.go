@@ -102,6 +102,38 @@ func TestDetectConsentDialog(t *testing.T) {
 	}
 }
 
+func TestHasActiveCodexPrompt(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "active codex prompt",
+			content: "OpenAI Codex v0.60.0\n\n› ",
+			want:    true,
+		},
+		{
+			name:    "shell prompt after codex command",
+			content: "which codex\n/Users/me/.npm-global/bin/codex\n~/repo > ",
+			want:    false,
+		},
+		{
+			name:    "bare glyph without codex context",
+			content: "some unrelated tui\n› ",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasActiveCodexPrompt(tt.content); got != tt.want {
+				t.Fatalf("hasActiveCodexPrompt() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCaptureVisiblePane tests bounded pane capture
 // Note: This test requires tmux to be running and is skipped in CI
 func TestCaptureVisiblePane(t *testing.T) {
