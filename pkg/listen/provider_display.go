@@ -68,6 +68,16 @@ func agentDisplayName(providerName string) string {
 	return "Claude"
 }
 
+func agentOptionLabel(providerName string) string {
+	if providerName == builtinProviderName {
+		return "Claude"
+	}
+	if isCodexProviderName(providerName) {
+		return "Codex"
+	}
+	return providerName
+}
+
 func shortSessionID(id string) string {
 	if len(id) <= 8 {
 		return id

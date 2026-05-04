@@ -12,8 +12,8 @@ import (
 
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/ledger"
-	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/session"
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // AssistantTextBlock pairs extracted text with its requestId for dedup
@@ -48,6 +48,13 @@ func ExtractRecentAssistantTexts(transcriptPath string, tailCount int) []Assista
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
+		Payload struct {
+			Type    string          `json:"type"`
+			ID      string          `json:"id,omitempty"`
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+			Phase   string          `json:"phase,omitempty"`
+		} `json:"payload"`
 	}
 
 	type contentBlock struct {
@@ -91,6 +98,23 @@ func ExtractRecentAssistantTexts(transcriptPath string, tailCount int) []Assista
 		if json.Unmarshal(line, &tl) != nil {
 			continue
 		}
+		if tl.Type == "response_item" && tl.Payload.Type == "message" && tl.Payload.Role == "assistant" {
+			rid := tl.RequestID
+			if rid == "" {
+				rid = tl.UUID
+			}
+			if rid == "" {
+				rid = tl.Payload.ID
+			}
+			if rid == "" {
+				rid = "codex:" + ledger.ContentHash(string(tl.Payload.Content))
+			}
+			entries = append(entries, entry{
+				requestID: rid,
+				content:   tl.Payload.Content,
+			})
+			continue
+		}
 		if tl.Type != "assistant" || tl.Message.Role != "assistant" {
 			continue
 		}
@@ -131,11 +155,15 @@ func ExtractRecentAssistantTexts(transcriptPath string, tailCount int) []Assista
 	for _, e := range entries {
 		var blocks []contentBlock
 		if json.Unmarshal(e.content, &blocks) != nil {
-			continue
+			var textContent string
+			if json.Unmarshal(e.content, &textContent) != nil {
+				continue
+			}
+			blocks = []contentBlock{{Type: "text", Text: textContent}}
 		}
 		var texts []string
 		for _, b := range blocks {
-			if b.Type != "text" {
+			if b.Type != "text" && b.Type != "output_text" {
 				continue
 			}
 			t := strings.TrimSpace(b.Text)
@@ -172,17 +200,17 @@ type DeliverUnsentTextsConfig struct {
 	InsertIntoToolMsg bool
 	ClaudeSessionID   string
 	// Callbacks for root-level dependencies
-	LoadToolState      func(sessionName string) *ToolState
-	AddTextToToolState func(sessName string, text string, ts int64)
-	SaveToolState      func(sessionName string, state *ToolState)
-	FormatToolMessage  func(state *ToolState) string
-	EditMessageHTML    func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
-	SendMessageHTML    func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	SendMessageGetID   func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	SendMessage        func(cfg *config.Config, chatID int64, threadID int64, text string) error
-	IsDelivered        func(sessName, id, origin string) bool
-	AppendMessage      func(msg *ledger.MessageRecord)
-	ClearToolState     func(sessionName string)
+	LoadToolState               func(sessionName string) *ToolState
+	AddTextToToolState          func(sessName string, text string, ts int64)
+	SaveToolState               func(sessionName string, state *ToolState)
+	FormatToolMessage           func(state *ToolState) string
+	EditMessageHTML             func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
+	SendMessageHTML             func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
+	SendMessageGetID            func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
+	SendMessage                 func(cfg *config.Config, chatID int64, threadID int64, text string) error
+	IsDelivered                 func(sessName, id, origin string) bool
+	AppendMessage               func(msg *ledger.MessageRecord)
+	ClearToolState              func(sessionName string)
 	InferRoleFromTranscriptPath func(transcriptPath string) session.PaneRole
 }
 
@@ -396,7 +424,7 @@ func HandleStopRetryFromArgs(args []string, handleRetry func(string, int64, stri
 
 // ToolState tracks tool calls and the Telegram message ID for live updates
 type ToolState struct {
-	MsgID int64     `json:"msg_id"`
+	MsgID int64      `json:"msg_id"`
 	Tools []ToolCall `json:"tools"`
 }
 

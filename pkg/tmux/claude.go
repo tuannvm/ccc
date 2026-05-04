@@ -62,11 +62,8 @@ func AutoAcceptTrustDialog(target string) bool {
 		return false
 	}
 
-	if detectConsentDialog(content) {
-		// Dialog detected, explicitly choose the affirmative option. Claude Code
-		// 2.1.119 defaults to "1. Yes, I trust this folder", but sending the
-		// selection keeps this robust if focus starts elsewhere in the prompt.
-		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "1", "Enter").Run(); err != nil {
+	if choice, ok := ConsentDialogChoice(content); ok {
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, choice, "Enter").Run(); err != nil {
 			return false
 		}
 		return true
@@ -116,6 +113,10 @@ func WaitForAgent(target string, providerName string, timeout time.Duration) err
 		}
 		deadline := time.Now().Add(timeout)
 		for time.Now().Before(deadline) {
+			if AutoAcceptTrustDialog(target) {
+				time.Sleep(1 * time.Second)
+				continue
+			}
 			if PaneHasActiveCodexPrompt(target) || TargetHasCodexRunning(target) {
 				return nil
 			}

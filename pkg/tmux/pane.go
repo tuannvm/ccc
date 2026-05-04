@@ -163,9 +163,17 @@ func TargetHasCodexRunning(target string) bool {
 			if PaneHasActiveCodexPrompt(paneID) {
 				return true
 			}
+			if AutoAcceptTrustDialog(paneID) {
+				return false
+			}
 		}
-		if shells[paneCmd] && PaneHasCodexChild(paneID) {
-			return true
+		if shells[paneCmd] {
+			if PaneHasCodexChild(paneID) {
+				return true
+			}
+			if AutoAcceptTrustDialog(paneID) {
+				return false
+			}
 		}
 	}
 	return activePaneID != "" && PaneHasActiveCodexPrompt(activePaneID)
@@ -564,7 +572,21 @@ func WindowHasShellRunning(windowID string, windowName string) bool {
 // DetectConsentDialog checks if the content matches a consent/trust dialog pattern.
 // Uses generic pattern detection to handle UI variations across versions.
 func DetectConsentDialog(content string) bool {
+	_, ok := ConsentDialogChoice(content)
+	return ok
+}
+
+// ConsentDialogChoice returns the numeric option ccc should select for known
+// trust/consent dialogs. Most trust prompts should proceed, but Codex's external
+// agent migration prompt should be skipped so startup does not block.
+func ConsentDialogChoice(content string) (string, bool) {
 	lowerContent := strings.ToLower(content)
+
+	if strings.Contains(lowerContent, "external agent config detected") &&
+		strings.Contains(lowerContent, "migrate hooks") &&
+		strings.Contains(lowerContent, "skip for now") {
+		return "2", true
+	}
 
 	// Claude Code 2.1.119 shows a workspace safety screen headed by
 	// "Accessing workspace:" before the numbered choices. Match this first so
@@ -572,7 +594,7 @@ func DetectConsentDialog(content string) bool {
 	if strings.Contains(lowerContent, "accessing workspace:") &&
 		strings.Contains(lowerContent, "quick safety check") &&
 		strings.Contains(lowerContent, "claude code'll be able to read") {
-		return true
+		return "1", true
 	}
 
 	// Check for numbered options - looks for patterns like "1.", "2)", "[1]", etc.
@@ -621,5 +643,8 @@ func DetectConsentDialog(content string) bool {
 	isConsentDialog := hasNumberedOptions && hasTrustKeyword && hasExitKeyword &&
 		(!hasPrompt || !hasActiveClaudeContext)
 
-	return isConsentDialog
+	if isConsentDialog {
+		return "1", true
+	}
+	return "", false
 }

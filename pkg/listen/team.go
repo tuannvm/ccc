@@ -50,7 +50,7 @@ func HandleTeamCreateCommand(cfg *configpkg.Config, chatID, threadID int64, text
 			var buttons [][]telegram.InlineKeyboardButton
 			providerNames := providerpkg.GetProviderNames(cfg)
 			for _, name := range providerNames {
-				label := name
+				label := agentOptionLabel(name)
 				if cfg.ActiveProvider == name {
 					label += " ⭐"
 				}
@@ -60,7 +60,7 @@ func HandleTeamCreateCommand(cfg *configpkg.Config, chatID, threadID int64, text
 				})
 			}
 
-			msg := fmt.Sprintf("🤖 Select provider for team '%s':", teamName)
+			msg := fmt.Sprintf("🤖 Select agent for team '%s':", teamName)
 			telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
 			return
 		}
@@ -154,7 +154,7 @@ func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, 
 		return
 	}
 
-	if err := EnsureHooks(cfg, teamName, sessInfo); err != nil {
+	if err := EnsureAgentHooks(cfg, teamName, sessInfo); err != nil {
 		loggingpkg.ListenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
 	}
 

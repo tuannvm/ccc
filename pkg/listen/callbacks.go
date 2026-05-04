@@ -156,10 +156,8 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
-	if !isCodexProviderName(providerName) {
-		if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-			loggingpkg.ListenLog("[callback:new] Failed to install hooks for %s: %v", sessionName, err)
-		}
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		loggingpkg.ListenLog("[callback:new] Failed to install hooks for %s: %v", sessionName, err)
 	}
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
@@ -285,7 +283,7 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 		return
 	}
 
-	if err := EnsureHooks(cfg, teamName, sessInfo); err != nil {
+	if err := EnsureAgentHooks(cfg, teamName, sessInfo); err != nil {
 		loggingpkg.ListenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
 	}
 

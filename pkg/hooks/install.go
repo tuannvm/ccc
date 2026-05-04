@@ -43,6 +43,13 @@ func RemoveCccHooks(hookArray []any) []any {
 	return result
 }
 
+func cccHookPath() string {
+	if tmux.CCCPath != "" {
+		return tmux.CCCPath
+	}
+	return "ccc"
+}
+
 // InstallHooksForProject installs ccc hooks to a project's .claude/settings.local.json
 func InstallHooksForProject(projectPath string) error {
 	settingsLocalPath := filepath.Join(projectPath, ".claude", "settings.local.json")
@@ -107,6 +114,15 @@ func VerifyHooksForProject(projectPath string) bool {
 	return hasCccHooks
 }
 
+func hasCccHookCommand(hookEntries []any) bool {
+	for _, entry := range hookEntries {
+		if IsCccHook(entry) {
+			return true
+		}
+	}
+	return false
+}
+
 // InstallHooksToPath installs ccc hooks to a settings.json file
 func InstallHooksToPath(settingsPath string, isLocal bool) error {
 	// Ensure directory exists
@@ -130,7 +146,7 @@ func InstallHooksToPath(settingsPath string, isLocal bool) error {
 		hooks = make(map[string]any)
 	}
 
-	cccPath := tmux.CCCPath
+	cccPath := cccHookPath()
 	cccHooks := map[string][]any{
 		"PreToolUse": {
 			map[string]any{
@@ -233,6 +249,155 @@ func InstallHooksToPath(settingsPath string, isLocal bool) error {
 
 	if err := os.WriteFile(settingsPath, newData, 0600); err != nil {
 		return fmt.Errorf("failed to write settings: %w", err)
+	}
+
+	return nil
+}
+
+// InstallCodexHooksForProject installs ccc hooks to a project's .codex/hooks.json.
+func InstallCodexHooksForProject(projectPath string) error {
+	hooksPath := filepath.Join(projectPath, ".codex", "hooks.json")
+
+	if err := InstallCodexHooksToPath(hooksPath); err != nil {
+		return fmt.Errorf("failed to install Codex hooks to %s: %w", hooksPath, err)
+	}
+
+	HookLog("install-codex-hooks: installed to %s", hooksPath)
+	return nil
+}
+
+// VerifyCodexHooksForProject checks if ccc hooks are present in a project's .codex/hooks.json.
+func VerifyCodexHooksForProject(projectPath string) bool {
+	hooksPath := filepath.Join(projectPath, ".codex", "hooks.json")
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		HookLog("verify-codex-hooks: no hooks.json at %s", hooksPath)
+		return false
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		HookLog("verify-codex-hooks: failed to parse hooks.json: %v", err)
+		return false
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		HookLog("verify-codex-hooks: no hooks in hooks.json")
+		return false
+	}
+
+	requiredHooks := []string{"PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit"}
+	for _, hookType := range requiredHooks {
+		hookEntries, exists := hooks[hookType].([]any)
+		if !exists || !hasCccHookCommand(hookEntries) {
+			HookLog("verify-codex-hooks: missing %s for %s", hookType, projectPath)
+			return false
+		}
+	}
+
+	HookLog("verify-codex-hooks: hooks present for %s", projectPath)
+	return true
+}
+
+// InstallCodexHooksToPath installs ccc hooks to a Codex hooks.json file.
+func InstallCodexHooksToPath(hooksPath string) error {
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	var settings map[string]any
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		settings = make(map[string]any)
+	} else if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("failed to parse hooks: %w", err)
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		hooks = make(map[string]any)
+	}
+
+	allHookTypes := []string{"Stop", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+	for _, hookType := range allHookTypes {
+		if existing, ok := hooks[hookType].([]any); ok {
+			filtered := RemoveCccHooks(existing)
+			if len(filtered) == 0 {
+				delete(hooks, hookType)
+			} else {
+				hooks[hookType] = filtered
+			}
+		}
+	}
+
+	cccPath := cccHookPath()
+	cccHooks := map[string][]any{
+		"PreToolUse": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-permission",
+						"timeout": 300000,
+					},
+				},
+			},
+		},
+		"PostToolUse": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-post-tool",
+					},
+				},
+			},
+		},
+		"Stop": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-stop",
+					},
+				},
+			},
+		},
+		"UserPromptSubmit": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-user-prompt",
+					},
+				},
+			},
+		},
+	}
+
+	for hookType, newHooks := range cccHooks {
+		var existingHooks []any
+		if existing, ok := hooks[hookType].([]any); ok {
+			existingHooks = existing
+		}
+		hooks[hookType] = append(newHooks, existingHooks...)
+	}
+
+	settings["hooks"] = hooks
+
+	newData, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal hooks: %w", err)
+	}
+
+	if err := os.WriteFile(hooksPath, newData, 0600); err != nil {
+		return fmt.Errorf("failed to write hooks: %w", err)
 	}
 
 	return nil
@@ -471,5 +636,36 @@ func EnsureHooksForSession(cfg *EnsureHooksForSessionConfig) error {
 	}
 
 	HookLog("ensure-hooks: hooks installed successfully for %s", projectPath)
+	return nil
+}
+
+// EnsureCodexHooksForSession ensures ccc Codex hooks are installed in the session's project directory.
+func EnsureCodexHooksForSession(cfg *EnsureHooksForSessionConfig) error {
+	if cfg.SessionInfo == nil {
+		if cfg.Config == nil || cfg.Config.Sessions == nil {
+			return nil
+		}
+		cfg.SessionInfo = cfg.Config.Sessions[cfg.SessionName]
+		if cfg.SessionInfo == nil {
+			return nil
+		}
+	}
+
+	projectPath := cfg.GetSessionWorkDir(cfg.Config, cfg.SessionName, cfg.SessionInfo)
+	if projectPath == "" {
+		return fmt.Errorf("unable to determine project path for session '%s'", cfg.SessionName)
+	}
+
+	if VerifyCodexHooksForProject(projectPath) {
+		HookLog("ensure-codex-hooks: hooks already present for %s", projectPath)
+		return nil
+	}
+
+	HookLog("ensure-codex-hooks: installing hooks to %s", projectPath)
+	if err := InstallCodexHooksForProject(projectPath); err != nil {
+		return fmt.Errorf("failed to install Codex hooks for project %s: %w", projectPath, err)
+	}
+
+	HookLog("ensure-codex-hooks: hooks installed successfully for %s", projectPath)
 	return nil
 }

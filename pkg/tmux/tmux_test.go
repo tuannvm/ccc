@@ -82,6 +82,19 @@ func TestDetectConsentDialog(t *testing.T) {
 ❯
 `
 
+	codexExternalAgentPrompt := `External agent config detected
+We found settings from another agent that you can add to this project.
+Select what to import
+Project: /Users/tuannvm/Projects/codex-test
+  [ ] Migrate hooks from /Users/tuannvm/Projects/codex-test/.claude to .codex/hooks.json
+
+Selected 0 of 1 item(s).
+  1. Proceed with selected
+› 2. Skip for now
+  3. Don't ask again
+Use ↑/↓ to move, space to toggle, 1/2/3 to choose, a/n for all/none
+`
+
 	tests := []struct {
 		name    string
 		content string
@@ -89,6 +102,7 @@ func TestDetectConsentDialog(t *testing.T) {
 	}{
 		{name: "current safety screen without visible options", content: currentClaudePrompt, want: true},
 		{name: "numbered trust dialog", content: numberedClaudePrompt, want: true},
+		{name: "codex external agent migration", content: codexExternalAgentPrompt, want: true},
 		{name: "active claude prompt", content: activePrompt, want: false},
 		{name: "shell output mentioning trust", content: "run tests before you trust this result\n$", want: false},
 	}
@@ -99,6 +113,27 @@ func TestDetectConsentDialog(t *testing.T) {
 				t.Errorf("DetectConsentDialog() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestConsentDialogChoice(t *testing.T) {
+	codexExternalAgentPrompt := `External agent config detected
+Select what to import
+[ ] Migrate hooks from /tmp/project/.claude to .codex/hooks.json
+1. Proceed with selected
+2. Skip for now
+3. Don't ask again
+`
+	if choice, ok := ConsentDialogChoice(codexExternalAgentPrompt); !ok || choice != "2" {
+		t.Fatalf("ConsentDialogChoice(codex migration) = %q, %v; want 2, true", choice, ok)
+	}
+
+	trustPrompt := `Quick safety check: Is this a project you created or one you trust?
+1. Yes, I trust this folder
+2. No, exit
+`
+	if choice, ok := ConsentDialogChoice(trustPrompt); !ok || choice != "1" {
+		t.Fatalf("ConsentDialogChoice(trust) = %q, %v; want 1, true", choice, ok)
 	}
 }
 

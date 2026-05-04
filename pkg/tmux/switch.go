@@ -6,9 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/tuannvm/ccc/pkg/shell"
 	"time"
+
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
+	"github.com/tuannvm/ccc/pkg/shell"
 )
 
 // WorktreeAutoGenerate is the sentinel value for auto-generating worktree names
@@ -62,12 +63,17 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		// Explicit session ID to resume - use --resume flag
 		runCmd += " --resume " + shell.Quote(sessionID)
 	} else if continueSession {
-		// Check if Claude is actually running before adding -c flag
-		if WindowHasAgentRunning(target, "", providerName) {
+		if providerpkg.IsCodexProviderName(providerName) {
 			runCmd += " -c"
-			fmt.Printf("Agent is running, will continue existing session\n")
+			fmt.Printf("Codex backend will resume the last session\n")
 		} else {
-			fmt.Printf("continueSession=true but agent not running, will start new session instead\n")
+			// Check if Claude is actually running before adding -c flag.
+			if WindowHasAgentRunning(target, "", providerName) {
+				runCmd += " -c"
+				fmt.Printf("Agent is running, will continue existing session\n")
+			} else {
+				fmt.Printf("continueSession=true but agent not running, will start new session instead\n")
+			}
 		}
 	}
 	// If no sessionID and not continueSession (or Claude not running), start fresh (no flags)

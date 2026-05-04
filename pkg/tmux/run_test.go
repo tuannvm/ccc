@@ -374,6 +374,23 @@ func TestBuildAgentCommandCodexResume(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandCodexContinueUsesResumeLast(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, true, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex continue) error = %v", err)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "resume --last --no-alt-screen" {
+		t.Fatalf("args = %v, want codex resume --last args", args)
+	}
+}
+
 func TestBuildAgentCommandCodexRejectsWorktree(t *testing.T) {
 	origCodexPath := CodexPath
 	CodexPath = "/usr/local/bin/codex"

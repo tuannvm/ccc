@@ -40,7 +40,7 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 		}
 		worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
-		if err := EnsureHooks(cfg, sessionName, sessionInfo); err != nil {
+		if err := EnsureAgentHooks(cfg, sessionName, sessionInfo); err != nil {
 			loggingpkg.ListenLog("[/new] Failed to verify/install hooks for %s: %v", sessionName, err)
 		}
 
@@ -159,7 +159,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		var buttons [][]telegram.InlineKeyboardButton
 		providerNames := providerpkg.GetProviderNames(cfg)
 		for _, name := range providerNames {
-			label := name
+			label := agentOptionLabel(name)
 			if cfg.ActiveProvider == name {
 				label += " ⭐"
 			}
@@ -169,7 +169,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 			})
 		}
 
-		msg := fmt.Sprintf("🤖 Select provider for '%s':", sessionName)
+		msg := fmt.Sprintf("🤖 Select agent for '%s':", sessionName)
 		telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
 		return
 	}
@@ -213,10 +213,8 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
-	if !isCodexProviderName(providerName) {
-		if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-			loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
-		}
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
 	}
 
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {

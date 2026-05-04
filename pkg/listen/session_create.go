@@ -17,11 +17,8 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 	worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
 	providerName := effectiveProviderName(cfg, sessionInfo)
-	// Ensure hooks are installed for Claude-compatible sessions.
-	if !isCodexProviderName(providerName) {
-		if err := EnsureHooks(cfg, sessionName, sessionInfo); err != nil {
-			fmt.Printf("Warning: failed to verify hooks: %v\n", err)
-		}
+	if err := EnsureAgentHooks(cfg, sessionName, sessionInfo); err != nil {
+		fmt.Printf("Warning: failed to verify hooks: %v\n", err)
 	}
 
 	// Send Telegram message before attaching (tmux attach blocks)
@@ -31,8 +28,9 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 		}
 	}
 
-	// Restart the session
-	continueSession := resumeSessionID != ""
+	// Restart the session. Codex does not persist a Claude transcript session id,
+	// so continuing maps to `codex resume --last` in the backend runner.
+	continueSession := resumeSessionID != "" || isCodexProviderName(providerName)
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, continueSession, false); err != nil {
 		return fmt.Errorf("failed to attach to session '%s': %w", sessionName, err)
 	}
@@ -67,10 +65,8 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	if !isCodexProviderName(providerName) {
-		if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-			fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
-		}
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
 	}
 
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
@@ -112,10 +108,8 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
-	if !isCodexProviderName(providerName) {
-		if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-			fmt.Printf("Warning: failed to install hooks: %v\n", err)
-		}
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		fmt.Printf("Warning: failed to install hooks: %v\n", err)
 	}
 
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
@@ -172,10 +166,8 @@ func StartSession(continueSession bool) error {
 				configpkg.Save(config)
 				pinSessionHeader(config, name, config.Sessions[name])
 
-				if !isCodexProviderName(providerName) {
-					if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
-						fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
-					}
+				if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
+					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
 				}
 
 				fmt.Printf("Created Telegram topic: %s\n%s\n", name, providerSummary(config, config.Sessions[name]))
@@ -183,8 +175,8 @@ func StartSession(continueSession bool) error {
 		}
 	}
 
-	if config.Sessions[name] != nil && !isCodexProviderName(providerName) {
-		if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
+	if config.Sessions[name] != nil {
+		if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
 			fmt.Printf("⚠️ Failed to verify/install hooks: %v\n", err)
 		}
 	}
@@ -232,10 +224,6 @@ func StartDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
-	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
-	}
-
 	config.Sessions[name] = &configpkg.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
@@ -246,10 +234,12 @@ func StartDetached(name string, workDir string, prompt string) error {
 	}
 	pinSessionHeader(config, name, config.Sessions[name])
 
-	if !isCodexProviderName(providerName) {
-		if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
-			return fmt.Errorf("failed to install hooks: %w", err)
-		}
+	if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
+		return fmt.Errorf("failed to install hooks: %w", err)
+	}
+
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
 	}
 
 	target, err := tmux.GetWindowTarget(name)

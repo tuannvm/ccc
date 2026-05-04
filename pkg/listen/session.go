@@ -42,7 +42,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 
 			worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
-			if err := EnsureHooks(cfg, sessName, sessionInfo); err != nil {
+			if err := EnsureAgentHooks(cfg, sessName, sessionInfo); err != nil {
 				loggingpkg.ListenLog("[sendToTmux] Failed to verify/install hooks for %s: %v", sessName, err)
 			}
 
