@@ -33,3 +33,24 @@ func TestProviderSource(t *testing.T) {
 		t.Fatalf("providerSource(session) = %q, want session", got)
 	}
 }
+
+func TestProviderModelOptionLabel(t *testing.T) {
+	cfg := &configpkg.Config{
+		Providers: map[string]*configpkg.ProviderConfig{
+			"openai": {SonnetModel: "gpt-5.5"},
+			"zai":    {OpusModel: "glm-4.6"},
+		},
+	}
+	if got := providerModelOptionLabel(cfg, "anthropic"); got != "Anthropic default" {
+		t.Fatalf("anthropic label = %q", got)
+	}
+	if got := providerModelOptionLabel(cfg, "codex"); got != "Codex default" {
+		t.Fatalf("codex label = %q", got)
+	}
+	if got := providerModelOptionLabel(cfg, "openai"); got != "openai · gpt-5.5" {
+		t.Fatalf("openai label = %q", got)
+	}
+	if got := providerModelOptionLabel(cfg, "zai"); got != "zai · glm-4.6" {
+		t.Fatalf("zai label = %q", got)
+	}
+}

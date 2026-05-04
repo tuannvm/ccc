@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 const builtinProviderName = "anthropic"
@@ -76,6 +77,32 @@ func agentOptionLabel(providerName string) string {
 		return "Codex"
 	}
 	return providerName
+}
+
+func providerModelOptionLabel(cfg *configpkg.Config, providerName string) string {
+	if providerName == builtinProviderName {
+		return "Anthropic default"
+	}
+	if isCodexProviderName(providerName) {
+		return "Codex default"
+	}
+	label := providerName
+	provider := providerpkg.GetProvider(cfg, providerName)
+	if provider == nil {
+		return label
+	}
+	models := provider.Models()
+	model := models.Sonnet
+	if model == "" {
+		model = models.Opus
+	}
+	if model == "" {
+		model = models.Haiku
+	}
+	if model != "" {
+		label += " · " + model
+	}
+	return label
 }
 
 func shortSessionID(id string) string {

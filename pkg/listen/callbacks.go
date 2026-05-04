@@ -36,6 +36,22 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 	}
 
 	switch parts[0] {
+	case "new-agent":
+		if len(parts) == 3 && cb.Message != nil {
+			sessionName := parts[1]
+			agentName := parts[2]
+			sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, sessionName, agentName)
+		}
+		return
+
+	case "new-provider":
+		if len(parts) == 3 {
+			sessionName := parts[1]
+			providerName := parts[2]
+			HandleNewWithProvider(cfg, cb, sessionName, providerName)
+		}
+		return
+
 	case "new":
 		if len(parts) == 3 {
 			sessionName := parts[1]

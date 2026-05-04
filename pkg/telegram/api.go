@@ -246,6 +246,25 @@ func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int, 
 	TelegramAPI(cfg, "editMessageText", params)
 }
 
+func EditMessageWithKeyboard(cfg *config.Config, chatID int64, messageID int, text string, buttons [][]InlineKeyboardButton) {
+	const maxLen = 4000
+	if len(text) > maxLen {
+		text = text[:maxLen-3] + "..."
+	}
+
+	keyboard := map[string]any{
+		"inline_keyboard": buttons,
+	}
+	keyboardJSON, _ := json.Marshal(keyboard)
+	params := url.Values{
+		"chat_id":      {fmt.Sprintf("%d", chatID)},
+		"message_id":   {fmt.Sprintf("%d", messageID)},
+		"text":         {text},
+		"reply_markup": {string(keyboardJSON)},
+	}
+	TelegramAPI(cfg, "editMessageText", params)
+}
+
 func SendTypingAction(cfg *config.Config, chatID int64, threadID int64) {
 	params := url.Values{
 		"chat_id": {fmt.Sprintf("%d", chatID)},
