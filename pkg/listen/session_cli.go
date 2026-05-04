@@ -82,7 +82,7 @@ func RestartCurrentSession(cfg *configpkg.Config, cwd string) error {
 
 func BuildCurrentSessionStatus(cfg *configpkg.Config, cwd string) string {
 	if cfg == nil {
-		return "ccc session: config unavailable\n"
+		return "ccc status: config unavailable\n"
 	}
 	sessionName, info := lookup.FindSessionForPath(cfg, cwd)
 	if sessionName == "" || info == nil {

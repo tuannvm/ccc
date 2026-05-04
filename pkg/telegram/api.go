@@ -109,6 +109,9 @@ func SendPlainMessageGetID(cfg *config.Config, chatID int64, threadID int64, tex
 func EditPlainMessage(cfg *config.Config, chatID int64, messageID int64, text string) error {
 	const maxLen = 4000
 	messages := splitMessage(text, maxLen)
+	if len(messages) > 1 {
+		return fmt.Errorf("edit text exceeds Telegram max length %d", maxLen)
+	}
 
 	params := url.Values{
 		"chat_id":    {fmt.Sprintf("%d", chatID)},

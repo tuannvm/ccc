@@ -320,7 +320,7 @@ ccc config otp disable                # Disable OTP mode
 
 ```bash
 ccc provider                 # List providers for the current session
-ccc provider <provider-name> # Change the current session provider
+ccc provider <provider-name> # Change provider when current directory maps to a session
 ```
 
 ## Environment Variables

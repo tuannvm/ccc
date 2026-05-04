@@ -262,7 +262,7 @@ Creates `myproject_experiment-x` session from the `myproject` base session.
 - **Visual grouping**: Same color icon for all worktrees of a base project
 - **Independent conversations**: Each worktree has its own Claude Code session history
 - **Provider inheritance**: Uses base session's provider and API configuration
-- **Easy switching**: `ccc status attach myproject-feature-auth` to resume
+- **Easy switching**: `ccc status attach myproject_feature-auth` to resume
 
 ## Advanced Usage
 

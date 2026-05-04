@@ -205,6 +205,8 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		}
 		if deleteErr := telegram.DeleteForumTopic(cfg, topicID); deleteErr != nil {
 			loggingpkg.ListenLog("[/new] failed to delete topic after save failure for %s: %v", sessionName, deleteErr)
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("⚠️ Failed to save config: %v\nAlso failed to clean up the new Telegram topic: %v\nA topic may have been orphaned; delete it manually or retry /new.", err, deleteErr))
+			return
 		}
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("⚠️ Failed to save config: %v", err))
 		return

@@ -65,10 +65,17 @@ func TestBuildCurrentSessionStatusNoMapping(t *testing.T) {
 	}
 }
 
+func TestBuildCurrentSessionStatusNilConfig(t *testing.T) {
+	msg := BuildCurrentSessionStatus(nil, "/tmp/unknown")
+	if !strings.Contains(msg, "ccc status: config unavailable") {
+		t.Fatalf("expected config unavailable message, got:\n%s", msg)
+	}
+}
+
 func TestRestartCurrentSessionRequiresMappedPath(t *testing.T) {
 	cfg := &configpkg.Config{Sessions: map[string]*configpkg.SessionInfo{}}
-	if err := RestartCurrentSession(cfg, "/tmp/unknown"); err == nil {
-		t.Fatal("RestartCurrentSession() error = nil, want unmapped path error")
+	if err := RestartCurrentSession(cfg, "/tmp/unknown"); err == nil || !strings.Contains(err.Error(), "no session mapped to") {
+		t.Fatalf("RestartCurrentSession() error = %v, want unmapped path guidance", err)
 	}
 }
 
