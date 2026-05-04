@@ -3,6 +3,7 @@ package hooks
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -177,6 +178,60 @@ func TestHookDataCodexCamelCaseJSON(t *testing.T) {
 	}
 	if parsed.ToolName != "Shell" {
 		t.Errorf("ToolName = %q, want Shell", parsed.ToolName)
+	}
+}
+
+func TestFormatAssistantHTMLBalancedFenceOnlyWrapsCode(t *testing.T) {
+	input := "# Minimal Working Example\n\n```go\nfmt.Println(\"hello\")\n```\n\nAfter"
+	got := FormatAssistantHTML("codex-test", "", input)
+
+	if !strings.Contains(got, "<pre><code>fmt.Println(\"hello\")</code></pre>") {
+		t.Fatalf("missing fenced code block: %s", got)
+	}
+	if strings.Contains(got, "<pre><code># Minimal Working Example") {
+		t.Fatalf("non-code markdown was captured inside code block: %s", got)
+	}
+	if !strings.Contains(got, "# Minimal Working Example") || !strings.Contains(got, "After") {
+		t.Fatalf("normal markdown text was not preserved: %s", got)
+	}
+}
+
+func TestFormatAssistantHTMLUnbalancedFenceStaysPlainText(t *testing.T) {
+	input := "Before\n```go\nfmt.Println(\"hello\")\nAfter"
+	got := FormatAssistantHTML("codex-test", "", input)
+
+	if strings.Contains(got, "<pre><code>") {
+		t.Fatalf("unbalanced fence should not become a code block: %s", got)
+	}
+	if !strings.Contains(got, "```go") || !strings.Contains(got, "fmt.Println(\"hello\")") {
+		t.Fatalf("unbalanced fenced text was not preserved: %s", got)
+	}
+}
+
+func TestFormatAssistantHTMLMarkdownFenceRendersAsText(t *testing.T) {
+	input := "```markdown\n# Title\n\n- **done**\n```"
+	got := FormatAssistantHTML("codex-test", "", input)
+
+	if strings.Contains(got, "<pre><code>") {
+		t.Fatalf("markdown fence should render as normal text: %s", got)
+	}
+	if !strings.Contains(got, "# Title") || !strings.Contains(got, "- <b>done</b>") {
+		t.Fatalf("markdown fence content was not rendered inline: %s", got)
+	}
+}
+
+func TestFormatAssistantHTMLInlineMarkdown(t *testing.T) {
+	input := "See [CommonMark](https://commonmark.org/) with **bold** and `code`."
+	got := FormatAssistantHTML("codex-test", "", input)
+
+	for _, want := range []string{
+		`<a href="https://commonmark.org/">CommonMark</a>`,
+		"<b>bold</b>",
+		"<code>code</code>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %s", want, got)
+		}
 	}
 }
 

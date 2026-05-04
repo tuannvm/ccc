@@ -386,32 +386,51 @@ func FormatAssistantHTML(sessionName, rolePrefix, text string) string {
 }
 
 func markdownSubsetToHTML(text string) string {
+	lines := strings.Split(text, "\n")
 	var out []string
-	inFence := false
-	var fence []string
-	for _, line := range strings.Split(text, "\n") {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
-			if inFence {
-				out = append(out, "<pre><code>"+HtmlEscape(strings.Join(fence, "\n"))+"</code></pre>")
-				fence = nil
-				inFence = false
-			} else {
-				inFence = true
-				fence = nil
+			fenceLang := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "```")))
+			if fields := strings.Fields(fenceLang); len(fields) > 0 {
+				fenceLang = fields[0]
 			}
-			continue
-		}
-		if inFence {
-			fence = append(fence, line)
+			closeIdx := -1
+			for j := i + 1; j < len(lines); j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j]), "```") {
+					closeIdx = j
+					break
+				}
+			}
+			if closeIdx == -1 {
+				out = append(out, inlineMarkdownToHTML(line))
+				continue
+			}
+			if isPlainTextFence(fenceLang) {
+				for _, contentLine := range lines[i+1 : closeIdx] {
+					out = append(out, inlineMarkdownToHTML(contentLine))
+				}
+				i = closeIdx
+				continue
+			}
+			code := strings.Join(lines[i+1:closeIdx], "\n")
+			out = append(out, "<pre><code>"+HtmlEscape(code)+"</code></pre>")
+			i = closeIdx
 			continue
 		}
 		out = append(out, inlineMarkdownToHTML(line))
 	}
-	if inFence {
-		out = append(out, "<pre><code>"+HtmlEscape(strings.Join(fence, "\n"))+"</code></pre>")
-	}
 	return strings.Join(out, "\n")
+}
+
+func isPlainTextFence(lang string) bool {
+	switch lang {
+	case "md", "markdown", "text", "txt", "plain", "plaintext":
+		return true
+	default:
+		return false
+	}
 }
 
 func inlineMarkdownToHTML(line string) string {
