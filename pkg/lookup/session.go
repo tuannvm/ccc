@@ -11,8 +11,8 @@ import (
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
-	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/session"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 // Session matching priority constants
@@ -329,9 +329,15 @@ func FindSessionByCwd(cfg *config.Config, cwd string) (string, int64) {
 	return "", 0
 }
 
-// FindSession matches by claude_session_id first, then tmux window name, then falls back to cwd.
+// FindSession matches by persisted session id first, then hook cwd, then the
+// currently selected tmux window as a last resort. The cwd must come before the
+// window fallback because hook subprocesses do not necessarily run while their
+// pane is the selected tmux window.
 func FindSession(cfg *config.Config, cwd string, claudeSessionID string) (string, int64) {
 	if name, topicID := FindSessionByClaudeID(cfg, claudeSessionID); name != "" {
+		return name, topicID
+	}
+	if name, topicID := FindSessionByCwd(cfg, cwd); name != "" {
 		return name, topicID
 	}
 	if windowName := GetCurrentTmuxWindowName(); windowName != "" {
@@ -339,7 +345,7 @@ func FindSession(cfg *config.Config, cwd string, claudeSessionID string) (string
 			return name, topicID
 		}
 	}
-	return FindSessionByCwd(cfg, cwd)
+	return "", 0
 }
 
 // GetWorktreeNames returns a set of existing worktree names at basePath.
@@ -593,7 +599,6 @@ func PersistClaudeSessionID(cfg *config.Config, sessName string, claudeSessionID
 		hooks.HookLog("persisted claude_session_id=%s for session=%s (duplicate cleared)", claudeSessionID, sessName)
 	}
 }
-
 
 // ClearClaudeSessionID clears the stored claude session ID for a given session name.
 // For single sessions, clears SessionInfo.ClaudeSessionID.
