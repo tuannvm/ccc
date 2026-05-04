@@ -57,6 +57,49 @@ func AppendMessage(rec *MessageRecord) error {
 	return err
 }
 
+// AppendMessageIfAbsent writes rec only when msgID has not appeared in the
+// session ledger yet. It is intentionally based on record existence, not final
+// delivery state, so concurrent hook processes reserve a reply before sending it.
+func AppendMessageIfAbsent(rec *MessageRecord) (bool, error) {
+	if rec.Timestamp == 0 {
+		rec.Timestamp = time.Now().Unix()
+	}
+	ledgerMu.Lock()
+	defer ledgerMu.Unlock()
+
+	path := ledgerPath(rec.Session)
+	if f, err := os.Open(path); err == nil {
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			var existing MessageRecord
+			if json.Unmarshal(scanner.Bytes(), &existing) != nil {
+				continue
+			}
+			if existing.ID == rec.ID {
+				f.Close()
+				return false, nil
+			}
+		}
+		f.Close()
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return false, err
+	}
+	if _, err := fmt.Fprintf(f, "%s\n", data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // updateDelivery appends an update record to the ledger
 func UpdateDelivery(session, msgID, field string, value any) error {
 	rec := &MessageRecord{

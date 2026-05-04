@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -298,7 +299,20 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 	sent := 0
 	for _, block := range blocks {
 		blockID := fmt.Sprintf("reply:%s:%s", block.RequestID, ledger.ContentHash(block.Text))
-		if cfg.IsDelivered(cfg.SessionName, blockID, "telegram") {
+		reserved, err := ledger.AppendMessageIfAbsent(&ledger.MessageRecord{
+			ID:                blockID,
+			Session:           cfg.SessionName,
+			Type:              "assistant_text",
+			Text:              Truncate(block.Text, 500),
+			Origin:            "claude",
+			TerminalDelivered: true,
+			TelegramDelivered: false,
+		})
+		if err != nil {
+			HookLog("deliver-text: reserve failed id=%s err=%v", blockID, err)
+			continue
+		}
+		if !reserved {
 			continue
 		}
 		HookLog("deliver-text: rid=%s len=%d insert=%v preview=%s", block.RequestID, len(block.Text), cfg.InsertIntoToolMsg, Truncate(block.Text, 80))
@@ -310,21 +324,11 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 			state = cfg.LoadToolState(cfg.SessionName)
 			text := cfg.FormatToolMessage(state)
 			cfg.EditMessageHTML(cfg.Config, cfg.Config.GroupID, state.MsgID, cfg.TopicID, text)
-			cfg.AppendMessage(&ledger.MessageRecord{
-				ID:                blockID,
-				Session:           cfg.SessionName,
-				Type:              "assistant_text",
-				Text:              Truncate(block.Text, 500),
-				Origin:            "claude",
-				TerminalDelivered: true,
-				TelegramDelivered: true,
-				TelegramMsgID:     state.MsgID,
-			})
+			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_delivered", true)
+			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_msg_id", state.MsgID)
 		} else {
-			// Send as plain text. Codex and Claude often emit Markdown that is not
-			// valid Telegram Markdown, so do not ask Telegram to parse it.
-			msg := fmt.Sprintf("%s: %s%s", cfg.SessionName, rolePrefix, block.Text)
-			tgMsgID, err := cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
+			msg := FormatAssistantHTML(cfg.SessionName, rolePrefix, block.Text)
+			tgMsgID, err := cfg.SendMessageHTML(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
 				if strings.Contains(err.Error(), "message thread not found") && cfg.TopicID != 0 {
@@ -337,16 +341,10 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 					tgMsgID, _ = cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
 				}
 			}
-			cfg.AppendMessage(&ledger.MessageRecord{
-				ID:                blockID,
-				Session:           cfg.SessionName,
-				Type:              "assistant_text",
-				Text:              Truncate(block.Text, 500),
-				Origin:            "claude",
-				TerminalDelivered: true,
-				TelegramDelivered: tgMsgID > 0,
-				TelegramMsgID:     tgMsgID,
-			})
+			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_delivered", tgMsgID > 0)
+			if tgMsgID > 0 {
+				ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_msg_id", tgMsgID)
+			}
 		}
 		sent++
 	}
@@ -375,6 +373,53 @@ func HookLog(format string, args ...any) {
 // parse model-authored Markdown as Telegram Markdown.
 func SendAssistantMessage(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
 	return telegram.SendPlainMessageGetID(cfg, chatID, threadID, text)
+}
+
+// FormatAssistantHTML converts a small, safe Markdown subset to Telegram HTML.
+// It avoids Telegram Markdown parsing while preserving common model output.
+func FormatAssistantHTML(sessionName, rolePrefix, text string) string {
+	prefix := "<b>" + HtmlEscape(sessionName) + ":</b> "
+	if rolePrefix != "" {
+		prefix += HtmlEscape(rolePrefix)
+	}
+	return prefix + markdownSubsetToHTML(text)
+}
+
+func markdownSubsetToHTML(text string) string {
+	var out []string
+	inFence := false
+	var fence []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if inFence {
+				out = append(out, "<pre><code>"+HtmlEscape(strings.Join(fence, "\n"))+"</code></pre>")
+				fence = nil
+				inFence = false
+			} else {
+				inFence = true
+				fence = nil
+			}
+			continue
+		}
+		if inFence {
+			fence = append(fence, line)
+			continue
+		}
+		out = append(out, inlineMarkdownToHTML(line))
+	}
+	if inFence {
+		out = append(out, "<pre><code>"+HtmlEscape(strings.Join(fence, "\n"))+"</code></pre>")
+	}
+	return strings.Join(out, "\n")
+}
+
+func inlineMarkdownToHTML(line string) string {
+	escaped := HtmlEscape(line)
+	escaped = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^\s)]+)\)`).ReplaceAllString(escaped, `<a href="$2">$1</a>`)
+	escaped = regexp.MustCompile("`([^`]+)`").ReplaceAllString(escaped, `<code>$1</code>`)
+	escaped = regexp.MustCompile(`\*\*([^*]+)\*\*`).ReplaceAllString(escaped, `<b>$1</b>`)
+	return escaped
 }
 
 // HandleStopRetryConfig holds configuration for stop retry handler
