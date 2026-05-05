@@ -31,7 +31,7 @@ COMMANDS:
     cleanup-hooks           Clean up old global hooks from pre-1.2 installations
     send <file>             Send file to current session's Telegram topic
     relay [port]            Start relay server for large files (default: 8080)
-    run                     Run Claude directly (used by tmux sessions)
+    run                     Run selected backend directly (used by tmux sessions)
 
 TELEGRAM COMMANDS:
     /new <name>             Start or restart a session

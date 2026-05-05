@@ -64,6 +64,11 @@ func TestExtractRecentAssistantTexts(t *testing.T) {
 			expected: []string{"real content"},
 		},
 		{
+			name:     "codex response item output text",
+			content:  `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Codex answer"}],"phase":"final_answer"}}`,
+			expected: []string{"Codex answer"},
+		},
+		{
 			name: "skips error entries without requestId",
 			content: `{"type":"assistant","requestId":"req_2","message":{"role":"assistant","content":[{"type":"text","text":"good"}]}}
 		{"type":"assistant","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"No response requested."}]}}`,
@@ -151,6 +156,36 @@ func TestHookDataJSON(t *testing.T) {
 	}
 	if hookData.SessionID != "abc123" {
 		t.Errorf("SessionID = %q, want %q", hookData.SessionID, "abc123")
+	}
+}
+
+func TestHookDataCodexCamelCaseJSON(t *testing.T) {
+	jsonStr := `{"cwd":"/Users/test/project","transcriptPath":"/tmp/codex.jsonl","sessionId":"codex123","hookEventName":"Stop","toolName":"Shell"}`
+
+	parsed, err := ParseHookData([]byte(jsonStr))
+	if err != nil {
+		t.Fatalf("ParseHookData failed: %v", err)
+	}
+	if parsed.TranscriptPath != "/tmp/codex.jsonl" {
+		t.Errorf("TranscriptPath = %q, want /tmp/codex.jsonl", parsed.TranscriptPath)
+	}
+	if parsed.SessionID != "codex123" {
+		t.Errorf("SessionID = %q, want codex123", parsed.SessionID)
+	}
+	if parsed.HookEventName != "Stop" {
+		t.Errorf("HookEventName = %q, want Stop", parsed.HookEventName)
+	}
+	if parsed.ToolName != "Shell" {
+		t.Errorf("ToolName = %q, want Shell", parsed.ToolName)
+	}
+}
+
+func TestFormatAssistantMarkdownLeavesBodyUnparsed(t *testing.T) {
+	input := "# Minimal Working Example\n\n```go\nfmt.Println(\"hello\")\n```"
+	got := FormatAssistantMarkdown("codex-test", "[Planner] ", input)
+	want := "*codex-test:* [Planner] " + input
+	if got != want {
+		t.Fatalf("FormatAssistantMarkdown() = %q, want %q", got, want)
 	}
 }
 

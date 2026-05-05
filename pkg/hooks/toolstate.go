@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
@@ -94,6 +95,22 @@ func ToolInputSummary(hookData HookData) string {
 // ToolStatePath returns the path for tool call display state
 func ToolStatePath(sessionName string) string {
 	return config.CacheDir() + "/tools-" + sessionName + ".json"
+}
+
+// WithToolStateLock serializes cross-process updates for a session's live tool
+// message. Hook invocations are separate processes and may arrive concurrently.
+func WithToolStateLock(sessionName string, fn func() error) error {
+	lockPath := config.CacheDir() + "/tools-" + sessionName + ".lock"
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
 }
 
 // LoadToolState loads tool state from disk

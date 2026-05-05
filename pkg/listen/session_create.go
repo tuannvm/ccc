@@ -16,8 +16,8 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 	workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 	worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
-	// Ensure hooks are installed
-	if err := EnsureHooks(cfg, sessionName, sessionInfo); err != nil {
+	providerName := effectiveProviderName(cfg, sessionInfo)
+	if err := EnsureAgentHooks(cfg, sessionName, sessionInfo); err != nil {
 		fmt.Printf("Warning: failed to verify hooks: %v\n", err)
 	}
 
@@ -28,9 +28,9 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 		}
 	}
 
-	// Restart the session
-	continueSession := resumeSessionID != ""
-	providerName := effectiveProviderName(cfg, sessionInfo)
+	// Restart the session. Codex does not persist a Claude transcript session id,
+	// so continuing maps to `codex resume --last` in the backend runner.
+	continueSession := resumeSessionID != "" || isCodexProviderName(providerName)
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, continueSession, false); err != nil {
 		return fmt.Errorf("failed to attach to session '%s': %w", sessionName, err)
 	}
@@ -40,7 +40,7 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 		target, err := tmux.GetWindowTarget(sessionName)
 		if err != nil {
 			fmt.Printf("Warning: failed to get window for message: %v\n", err)
-		} else if err := tmux.SendKeys(target, message); err != nil {
+		} else if err := tmux.SendKeysForProvider(target, message, providerName); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -65,7 +65,7 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
 	}
 
@@ -77,7 +77,7 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 		target, err := tmux.GetWindowTarget(sessionName)
 		if err != nil {
 			fmt.Printf("Warning: failed to get window for message: %v\n", err)
-		} else if err := tmux.SendKeys(target, message); err != nil {
+		} else if err := tmux.SendKeysForProvider(target, message, providerName); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -108,7 +108,7 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
-	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		fmt.Printf("Warning: failed to install hooks: %v\n", err)
 	}
 
@@ -166,7 +166,7 @@ func StartSession(continueSession bool) error {
 				configpkg.Save(config)
 				pinSessionHeader(config, name, config.Sessions[name])
 
-				if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
+				if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
 					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
 				}
 
@@ -176,7 +176,7 @@ func StartSession(continueSession bool) error {
 	}
 
 	if config.Sessions[name] != nil {
-		if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
+		if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
 			fmt.Printf("⚠️ Failed to verify/install hooks: %v\n", err)
 		}
 	}
@@ -224,10 +224,6 @@ func StartDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
-	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
-	}
-
 	config.Sessions[name] = &configpkg.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
@@ -238,8 +234,12 @@ func StartDetached(name string, workDir string, prompt string) error {
 	}
 	pinSessionHeader(config, name, config.Sessions[name])
 
-	if err := EnsureHooks(config, name, config.Sessions[name]); err != nil {
+	if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
 		return fmt.Errorf("failed to install hooks: %w", err)
+	}
+
+	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
 	}
 
 	target, err := tmux.GetWindowTarget(name)
@@ -247,11 +247,11 @@ func StartDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
-	if err := tmux.WaitForClaude(target, 30*1e9); err != nil { // 30s
-		return fmt.Errorf("claude did not start in time: %w", err)
+	if err := tmux.WaitForAgent(target, providerName, 30*1e9); err != nil { // 30s
+		return fmt.Errorf("agent did not start in time: %w", err)
 	}
 
-	if err := tmux.SendKeys(target, prompt); err != nil {
+	if err := tmux.SendKeysForProvider(target, prompt, providerName); err != nil {
 		return fmt.Errorf("failed to send prompt: %w", err)
 	}
 

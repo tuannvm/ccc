@@ -33,3 +33,40 @@ func TestProviderSource(t *testing.T) {
 		t.Fatalf("providerSource(session) = %q, want session", got)
 	}
 }
+
+func TestProviderModelOptionLabel(t *testing.T) {
+	cfg := &configpkg.Config{
+		Providers: map[string]*configpkg.ProviderConfig{
+			"openai": {SonnetModel: "gpt-5.5"},
+			"zai":    {OpusModel: "glm-4.6"},
+		},
+	}
+	if got := providerModelOptionLabel(cfg, "anthropic"); got != "Anthropic default" {
+		t.Fatalf("anthropic label = %q", got)
+	}
+	if got := providerModelOptionLabel(cfg, "codex"); got != "Codex default" {
+		t.Fatalf("codex label = %q", got)
+	}
+	cfg.Providers["codex-anthropic"] = &configpkg.ProviderConfig{Backend: "codex", SonnetModel: "claude-opus-4-7"}
+	if got := providerModelOptionLabel(cfg, "codex-anthropic"); got != "codex-anthropic · claude-opus-4-7" {
+		t.Fatalf("codex-anthropic label = %q", got)
+	}
+	if got := providerModelOptionLabel(cfg, "openai"); got != "openai · gpt-5.5" {
+		t.Fatalf("openai label = %q", got)
+	}
+	if got := providerModelOptionLabel(cfg, "zai"); got != "zai · glm-4.6" {
+		t.Fatalf("zai label = %q", got)
+	}
+}
+
+func TestAgentOptionLabel(t *testing.T) {
+	if got := agentOptionLabel("claude"); got != "Claude CLI" {
+		t.Fatalf("claude label = %q", got)
+	}
+	if got := agentOptionLabel("codex"); got != "Codex CLI" {
+		t.Fatalf("codex label = %q", got)
+	}
+	if got := agentOptionLabel("anthropic"); got != "Claude" {
+		t.Fatalf("anthropic label = %q", got)
+	}
+}

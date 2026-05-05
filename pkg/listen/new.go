@@ -40,7 +40,7 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 		}
 		worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
-		if err := EnsureHooks(cfg, sessionName, sessionInfo); err != nil {
+		if err := EnsureAgentHooks(cfg, sessionName, sessionInfo); err != nil {
 			loggingpkg.ListenLog("[/new] Failed to verify/install hooks for %s: %v", sessionName, err)
 		}
 
@@ -156,21 +156,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 			return
 		}
 
-		var buttons [][]telegram.InlineKeyboardButton
-		providerNames := providerpkg.GetProviderNames(cfg)
-		for _, name := range providerNames {
-			label := name
-			if cfg.ActiveProvider == name {
-				label += " ⭐"
-			}
-			callbackData := fmt.Sprintf("new:%s:%s", sessionName, name)
-			buttons = append(buttons, []telegram.InlineKeyboardButton{
-				{Text: label, CallbackData: callbackData},
-			})
-		}
-
-		msg := fmt.Sprintf("🤖 Select provider for '%s':", sessionName)
-		telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
+		sendNewAgentSelection(cfg, chatID, threadID, sessionName)
 		return
 	}
 
@@ -213,7 +199,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
-	if err := EnsureHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
 	}
 
@@ -227,6 +213,111 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 	} else {
-		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with Claude.", sessionName, providerMsg))
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, providerMsg, agentDisplayName(providerName)))
 	}
+}
+
+func sendNewAgentSelection(cfg *configpkg.Config, chatID, threadID int64, sessionName string) {
+	buttons := newAgentButtons(cfg, sessionName)
+	if len(buttons) == 0 {
+		telegram.SendMessage(cfg, chatID, threadID, "❌ No agent providers are configured.")
+		return
+	}
+	msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", sessionName)
+	telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
+}
+
+func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.InlineKeyboardButton {
+	choices := []struct {
+		Agent string
+		Label string
+	}{
+		{Agent: "claude", Label: "Claude CLI"},
+		{Agent: "codex", Label: "Codex CLI"},
+	}
+	var buttons [][]telegram.InlineKeyboardButton
+	for _, choice := range choices {
+		if len(providerNamesForAgent(cfg, choice.Agent)) == 0 {
+			continue
+		}
+		callbackData := newSessionCallbackData(newSessionCallback{
+			Action:      "agent",
+			SessionName: sessionName,
+			AgentName:   choice.Agent,
+		})
+		if callbackData == "" {
+			continue
+		}
+		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: choice.Label, CallbackData: callbackData}})
+	}
+	return buttons
+}
+
+func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, messageID int, sessionName, agentName string) {
+	buttons := newProviderButtonsForAgent(cfg, sessionName, agentName)
+	if len(buttons) == 0 {
+		msg := fmt.Sprintf("❌ No %s provider/model is configured.", agentOptionLabel(agentName))
+		if messageID != 0 {
+			telegram.EditMessageRemoveKeyboard(cfg, chatID, messageID, msg)
+		} else {
+			telegram.SendMessage(cfg, chatID, threadID, msg)
+		}
+		return
+	}
+
+	backCallback := newSessionCallbackData(newSessionCallback{Action: "back", SessionName: sessionName})
+	if backCallback != "" {
+		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: "← Back", CallbackData: backCallback}})
+	}
+
+	msg := fmt.Sprintf("Create session\nsession: %s\nagent: %s\n\nStep 2/2: choose provider/model:", sessionName, agentOptionLabel(agentName))
+	if messageID != 0 {
+		telegram.EditMessageWithKeyboard(cfg, chatID, messageID, msg, buttons)
+		return
+	}
+	telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
+}
+
+func newProviderButtonsForAgent(cfg *configpkg.Config, sessionName, agentName string) [][]telegram.InlineKeyboardButton {
+	var buttons [][]telegram.InlineKeyboardButton
+	for _, name := range providerNamesForAgent(cfg, agentName) {
+		label := providerModelOptionLabel(cfg, name)
+		if cfg != nil && (cfg.ActiveProvider == name || (cfg.ActiveProvider == "" && name == builtinProviderName)) {
+			label += " ⭐"
+		}
+		callbackData := newSessionCallbackData(newSessionCallback{
+			Action:       "provider",
+			SessionName:  sessionName,
+			AgentName:    agentName,
+			ProviderName: name,
+		})
+		if callbackData == "" {
+			continue
+		}
+		buttons = append(buttons, []telegram.InlineKeyboardButton{
+			{Text: label, CallbackData: callbackData},
+		})
+	}
+	return buttons
+}
+
+func providerNamesForAgent(cfg *configpkg.Config, agentName string) []string {
+	if agentName != "claude" && agentName != "codex" {
+		return nil
+	}
+	var names []string
+	for _, name := range providerpkg.GetProviderNames(cfg) {
+		provider := providerpkg.GetProvider(cfg, name)
+		if provider == nil {
+			continue
+		}
+		if agentName == "codex" && provider.Backend() != providerpkg.BackendCodex {
+			continue
+		}
+		if agentName == "claude" && provider.Backend() != providerpkg.BackendClaude {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
 }

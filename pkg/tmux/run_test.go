@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 // TestRunClaudeRawStaleResumeRetry tests that when claude --resume fails with
@@ -332,5 +335,103 @@ echo "ARGS: $*" > %s/output.txt
 
 	if !strings.Contains(outputStr, "--worktree") {
 		t.Errorf("--worktree should be passed for auto-generate, got: %s", outputStr)
+	}
+}
+
+func TestBuildAgentCommandCodexFresh(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	cmdPath, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, false, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex) error = %v", err)
+	}
+	if cmdPath != CodexPath {
+		t.Fatalf("cmdPath = %q, want %q", cmdPath, CodexPath)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "--no-alt-screen" {
+		t.Fatalf("args = %v, want --no-alt-screen", args)
+	}
+}
+
+func TestBuildAgentCommandConfiguredCodexProvider(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	provider := providerpkg.CodexProvider{
+		ProviderName: "codex-anthropic",
+		Config: &configpkg.ProviderConfig{
+			Backend:     providerpkg.BackendCodex,
+			BaseURL:     "http://127.0.0.1:8317/v1",
+			SonnetModel: "claude-opus-4-7",
+		},
+	}
+	cmdPath, args, isCodex, err := buildAgentCommand(provider, false, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(configured codex) error = %v", err)
+	}
+	if cmdPath != CodexPath || !isCodex {
+		t.Fatalf("cmdPath=%q isCodex=%v", cmdPath, isCodex)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		`model_provider="cliproxyapi"`,
+		`model_providers.cliproxyapi.base_url="http://127.0.0.1:8317/v1"`,
+		"--model claude-opus-4-7",
+		"--no-alt-screen",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("args missing %q: %v", want, args)
+		}
+	}
+}
+
+func TestBuildAgentCommandCodexResume(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, false, "thread-id", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex resume) error = %v", err)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "resume --no-alt-screen thread-id" {
+		t.Fatalf("args = %v, want codex resume args", args)
+	}
+}
+
+func TestBuildAgentCommandCodexContinueUsesResumeLast(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, true, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex continue) error = %v", err)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "resume --last --no-alt-screen" {
+		t.Fatalf("args = %v, want codex resume --last args", args)
+	}
+}
+
+func TestBuildAgentCommandCodexRejectsWorktree(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, _, _, err := buildAgentCommand(providerpkg.CodexProvider{}, false, "", "feature", WorktreeAutoGenerate)
+	if err == nil {
+		t.Fatal("buildAgentCommand(codex worktree) error = nil, want error")
 	}
 }

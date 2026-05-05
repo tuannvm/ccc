@@ -430,7 +430,7 @@ func CloneRepo(ctx context.Context, url, targetPath string) (CloneResult, error)
 				slashIdx := strings.Index(afterAt, "/")
 				if colonIdx > 0 && (slashIdx == -1 || colonIdx < slashIdx) {
 					// SCP-style: user@host:path -> host/path
-					u = afterAt // Strip username@
+					u = afterAt                             // Strip username@
 					u = u[:colonIdx] + "/" + u[colonIdx+1:] // Replace colon with slash
 				} else {
 					// HTTPS-style or SSH-style with slash: user@host/path -> host/path
@@ -479,6 +479,9 @@ func Validate(config *Config) error {
 
 	// Validate provider configs
 	for name, provider := range config.Providers {
+		if strings.EqualFold(name, "codex") {
+			return fmt.Errorf("provider %q: reserved for the built-in Codex CLI backend; choose another provider name", name)
+		}
 		if provider == nil {
 			return fmt.Errorf("provider %q: config is nil", name)
 		}

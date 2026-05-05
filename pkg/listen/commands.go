@@ -25,6 +25,20 @@ func EnsureHooks(cfg *configpkg.Config, sessionName string, info *configpkg.Sess
 	})
 }
 
+// EnsureAgentHooks installs the project-local hook file for the session's selected agent.
+func EnsureAgentHooks(cfg *configpkg.Config, sessionName string, info *configpkg.SessionInfo) error {
+	ensureCfg := &hooks.EnsureHooksForSessionConfig{
+		Config:            cfg,
+		SessionName:       sessionName,
+		SessionInfo:       info,
+		GetSessionWorkDir: lookup.GetSessionWorkDir,
+	}
+	if isCodexProviderName(effectiveProviderName(cfg, info)) {
+		return hooks.EnsureCodexHooksForSession(ensureCfg)
+	}
+	return hooks.EnsureHooksForSession(ensureCfg)
+}
+
 func parseProviderCommand(text string) (string, string) {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {

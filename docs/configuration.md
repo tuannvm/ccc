@@ -108,7 +108,7 @@ Each session in the `sessions` map has the following structure:
 
 ## Provider Configuration
 
-ccc uses a provider abstraction to support multiple AI providers. Each provider has its own configuration.
+ccc uses a provider abstraction to support Claude-compatible providers and native CLI backends. Each configured provider has its own configuration.
 
 ### Provider Fields
 
@@ -153,7 +153,7 @@ graph TD
 
 ### Builtin Provider
 
-The builtin provider uses Claude Code's default configuration:
+The builtin `anthropic` provider uses Claude Code's default configuration:
 
 - Uses `CLAUDE_API_KEY` or Claude's OAuth
 - Respects `ANTHROPIC_BASE_URL` environment variable (if set)
@@ -161,6 +161,17 @@ The builtin provider uses Claude Code's default configuration:
 - Uses Claude Code's default config directory (`~/.claude`)
 
 This is the default option and requires no additional configuration.
+
+### Codex CLI Backend
+
+`codex` is also available as a built-in provider name. It launches the OpenAI Codex CLI instead of Claude Code:
+
+```text
+/new myproject@codex
+ccc provider codex
+```
+
+The Codex backend requires a Codex CLI version with `--no-alt-screen` and `resume` support, with the `codex` binary on `PATH` or in a common install location. It is available in the same provider picker as configured Claude-compatible providers. `codex` is reserved for the built-in backend and cannot be used as a configured provider name. Claude Code worktree sessions are not supported by the Codex backend.
 
 ### Configured Provider
 
@@ -331,7 +342,7 @@ ccc respects the following environment variables:
 |----------|-------------|
 | `CCC_CONFIG` | Override config file path |
 | `HOME` | User home directory |
-| `PATH` | Used to find claude binary |
+| `PATH` | Used to find claude and codex binaries |
 
 ## Examples
 

@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"fmt"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -18,6 +19,27 @@ func WindowHasClaudeRunning(windowID string, windowName string) bool {
 		return false
 	}
 	return TargetHasClaudeRunning(target)
+}
+
+// WindowHasAgentRunning checks if the active pane has the selected backend running.
+func WindowHasAgentRunning(windowID string, windowName string, providerName string) bool {
+	target := TargetByID(windowID, windowName)
+	if target == "" {
+		return false
+	}
+	if isCodexProviderName(providerName) {
+		return TargetHasCodexRunning(target)
+	}
+	return TargetHasClaudeRunning(target)
+}
+
+func isCodexProviderName(name string) bool {
+	return strings.EqualFold(name, "codex") || strings.EqualFold(name, "codex-anthropic")
+}
+
+// IsCodexProviderName reports whether a provider name selects the Codex backend.
+func IsCodexProviderName(name string) bool {
+	return isCodexProviderName(name)
 }
 
 // TargetHasClaudeRunning checks if a tmux target (pane or window) has Claude running
@@ -106,6 +128,150 @@ func TargetHasClaudeRunning(target string) bool {
 	}
 
 	// If we reach here, the active pane doesn't have Claude running
+	return false
+}
+
+// TargetHasCodexRunning checks if a tmux target has Codex CLI running.
+func TargetHasCodexRunning(target string) bool {
+	cmd := exec.Command(TmuxPath, "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_id}\t#{pane_current_command}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	shells := map[string]bool{
+		"sh": true, "bash": true, "zsh": true, "fish": true,
+		"dash": true, "nu": true, "elvish": true, "xonsh": true,
+		"tcsh": true, "csh": true, "ksh": true,
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var activePaneID string
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		isActive, paneID, paneCmd := parts[0], parts[1], strings.TrimSpace(parts[2])
+		if isActive != "1" {
+			continue
+		}
+		activePaneID = paneID
+		if paneCmd == "codex" {
+			return true
+		}
+		if paneCmd == "node" || paneCmd == "nodejs" {
+			if PaneIsCodexProcess(paneID) {
+				return true
+			}
+		}
+		if paneCmd == "ccc" || paneCmd == "ccc run" {
+			if PaneHasActiveCodexPrompt(paneID) {
+				return true
+			}
+			if AutoAcceptTrustDialog(paneID) {
+				return false
+			}
+		}
+		if shells[paneCmd] {
+			if PaneHasCodexChild(paneID) {
+				return true
+			}
+			if AutoAcceptTrustDialog(paneID) {
+				return false
+			}
+		}
+	}
+	return activePaneID != "" && PaneHasActiveCodexPrompt(activePaneID)
+}
+
+// PaneHasActiveCodexPrompt checks recent pane content for Codex's interactive prompt.
+func PaneHasActiveCodexPrompt(paneTarget string) bool {
+	cmd := exec.Command(TmuxPath, "capture-pane", "-t", paneTarget, "-p", "-J", "-S", "-80")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return hasActiveCodexPrompt(string(out))
+}
+
+func hasActiveCodexPrompt(content string) bool {
+	lowerContent := strings.ToLower(content)
+	if !strings.Contains(lowerContent, "codex") && !strings.Contains(lowerContent, "openai") {
+		return false
+	}
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	nonEmptySeen := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		nonEmptySeen++
+		if strings.Contains(line, "›") {
+			return true
+		}
+		if nonEmptySeen >= 5 {
+			break
+		}
+	}
+	return false
+}
+
+func PaneHasCodexChild(paneID string) bool {
+	cmd := exec.Command(TmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	panePid := strings.TrimSpace(string(out))
+	if panePid == "" || panePid == "0" {
+		return false
+	}
+	allPsOut, err := exec.Command("ps", "-axww", "-o", "pid,ppid,command").Output()
+	if err != nil {
+		psOut, psErr := exec.Command("ps", "-o", "pid,command", "--ppid", panePid, "--no-headers").Output()
+		return psErr == nil && psOutputHasCodex(psOut)
+	}
+	return psOutputHasCodex(filterDescendantProcesses(allPsOut, panePid))
+}
+
+func PaneIsCodexProcess(paneID string) bool {
+	cmd := exec.Command(TmuxPath, "display-message", "-t", paneID, "-p", "#{pane_pid}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	shellPid := strings.TrimSpace(string(out))
+	if shellPid == "" || shellPid == "0" {
+		return false
+	}
+	allPsOut, err := exec.Command("ps", "-axww", "-o", "pid,ppid,command").Output()
+	if err != nil {
+		psOut, psErr := exec.Command("ps", "-o", "pid,command", "--ppid", shellPid, "--no-headers").Output()
+		if psErr != nil {
+			return PaneHasActiveCodexPrompt(paneID)
+		}
+		return psOutputHasCodex(psOut)
+	}
+	return psOutputHasCodex(filterDescendantProcesses(allPsOut, shellPid))
+}
+
+func psOutputHasCodex(psOut []byte) bool {
+	for _, line := range strings.Split(string(psOut), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		cmdline := strings.ToLower(strings.TrimSpace(parts[1]))
+		if strings.Contains(cmdline, "codex") && !strings.Contains(cmdline, "ccc") {
+			return true
+		}
+	}
 	return false
 }
 
@@ -360,6 +526,65 @@ func filterChildProcesses(psOutput []byte, parentPid string) []byte {
 	return []byte(strings.Join(result, "\n"))
 }
 
+// filterDescendantProcesses parses ps output and returns all descendant process
+// lines for parentPid in "PID COMMAND" format. This handles shell -> ccc -> codex
+// trees where Codex is not a direct child of the tmux pane shell.
+func filterDescendantProcesses(psOutput []byte, parentPid string) []byte {
+	rootPid, err := strconv.Atoi(parentPid)
+	if err != nil {
+		return []byte{}
+	}
+
+	type proc struct {
+		pid     int
+		ppid    int
+		command string
+	}
+	var procs []proc
+	children := make(map[int][]proc)
+	for _, line := range strings.Split(string(psOutput), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "PID") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		p := proc{pid: pid, ppid: ppid, command: strings.Join(fields[2:], " ")}
+		procs = append(procs, p)
+		children[ppid] = append(children[ppid], p)
+	}
+	if len(procs) == 0 {
+		return []byte{}
+	}
+
+	var result []string
+	queue := []int{rootPid}
+	seen := map[int]bool{rootPid: true}
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		for _, child := range children[pid] {
+			if seen[child.pid] {
+				continue
+			}
+			seen[child.pid] = true
+			result = append(result, fmt.Sprintf("%d %s", child.pid, child.command))
+			queue = append(queue, child.pid)
+		}
+	}
+	return []byte(strings.Join(result, "\n"))
+}
+
 // WindowHasShellRunning checks if the target tmux window has a shell running
 // Returns true if the ACTIVE pane has a shell, which means the window is ready for input
 // This is scoped to the active pane to avoid misrouting commands in split-pane windows
@@ -409,7 +634,21 @@ func WindowHasShellRunning(windowID string, windowName string) bool {
 // DetectConsentDialog checks if the content matches a consent/trust dialog pattern.
 // Uses generic pattern detection to handle UI variations across versions.
 func DetectConsentDialog(content string) bool {
+	_, ok := ConsentDialogChoice(content)
+	return ok
+}
+
+// ConsentDialogChoice returns the numeric option ccc should select for known
+// trust/consent dialogs. Most trust prompts should proceed, but Codex's external
+// agent migration prompt should be skipped so startup does not block.
+func ConsentDialogChoice(content string) (string, bool) {
 	lowerContent := strings.ToLower(content)
+
+	if strings.Contains(lowerContent, "external agent config detected") &&
+		strings.Contains(lowerContent, "migrate hooks") &&
+		strings.Contains(lowerContent, "skip for now") {
+		return "2", true
+	}
 
 	// Claude Code 2.1.119 shows a workspace safety screen headed by
 	// "Accessing workspace:" before the numbered choices. Match this first so
@@ -417,7 +656,7 @@ func DetectConsentDialog(content string) bool {
 	if strings.Contains(lowerContent, "accessing workspace:") &&
 		strings.Contains(lowerContent, "quick safety check") &&
 		strings.Contains(lowerContent, "claude code'll be able to read") {
-		return true
+		return "1", true
 	}
 
 	// Check for numbered options - looks for patterns like "1.", "2)", "[1]", etc.
@@ -466,5 +705,8 @@ func DetectConsentDialog(content string) bool {
 	isConsentDialog := hasNumberedOptions && hasTrustKeyword && hasExitKeyword &&
 		(!hasPrompt || !hasActiveClaudeContext)
 
-	return isConsentDialog
+	if isConsentDialog {
+		return "1", true
+	}
+	return "", false
 }

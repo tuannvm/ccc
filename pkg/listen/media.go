@@ -10,8 +10,8 @@ import (
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
-	"github.com/tuannvm/ccc/pkg/lookup"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/transcribe"
@@ -50,9 +50,10 @@ func HandleVoiceMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 			})
 			workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 			worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
-			if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+			providerName := effectiveProviderName(cfg, sessionInfo)
+			if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, true); err == nil {
 				target, _ := tmux.GetWindowTarget(sessionName)
-				if err := hooks.SendFromTelegram(target, tmux.SafeName(sessionName), voiceText); err == nil {
+				if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessionName), voiceText, providerName); err == nil {
 					ledger.UpdateDelivery(sessionName, voiceLedgerID, "terminal_delivered", true)
 				}
 			}
@@ -86,7 +87,7 @@ func HandlePhotoMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 		} else {
 			prompt = fmt.Sprintf("read @%s", imgPath)
 		}
-		telegram.SendMessage(cfg, chatID, threadID, "📷 Image saved, sending to Claude...")
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("📷 Image saved, sending to %s...", agentDisplayName(effectiveProviderName(cfg, sessionInfo))))
 		photoLedgerID := fmt.Sprintf("tg:%d:photo", msg.MessageID)
 		ledger.AppendMessage(&ledger.MessageRecord{
 			ID: photoLedgerID, Session: sessionName, Type: "user_prompt",
@@ -95,9 +96,10 @@ func HandlePhotoMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 		})
 		workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 		worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
-		if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+		providerName := effectiveProviderName(cfg, sessionInfo)
+		if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, true); err == nil {
 			target, _ := tmux.GetWindowTarget(sessionName)
-			if err := hooks.SendFromTelegramWithDelay(target, tmux.SafeName(sessionName), prompt, 2*time.Second); err == nil {
+			if err := hooks.SendFromTelegramToProviderWithDelay(target, tmux.SafeName(sessionName), prompt, providerName, 2*time.Second); err == nil {
 				ledger.UpdateDelivery(sessionName, photoLedgerID, "terminal_delivered", true)
 			}
 		}
@@ -149,9 +151,10 @@ func HandleDocumentMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, 
 		})
 		workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 		worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
-		if err := tmux.SwitchSessionInWindow(sessionName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, true); err == nil {
+		providerName := effectiveProviderName(cfg, sessionInfo)
+		if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, true); err == nil {
 			target, _ := tmux.GetWindowTarget(sessionName)
-			if err := hooks.SendFromTelegram(target, tmux.SafeName(sessionName), caption); err == nil {
+			if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessionName), caption, providerName); err == nil {
 				ledger.UpdateDelivery(sessionName, docLedgerID, "terminal_delivered", true)
 			}
 		}

@@ -48,6 +48,10 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 		if providerName == "" {
 			providerName = defaultProviderName(cfg)
 		}
+		if isCodexProviderName(providerName) {
+			telegram.SendMessage(cfg, chatID, threadID, "❌ Worktree sessions require the Claude backend; Codex CLI worktrees are not supported yet.")
+			return
+		}
 
 		existingWorktrees := lookup.GetWorktreeNames(basePath)
 		if existingWorktrees == nil {
@@ -90,7 +94,7 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 		configpkg.Save(cfg)
 		pinSessionHeader(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName])
 
-		if err := EnsureHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
+		if err := EnsureAgentHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
 			loggingpkg.ListenLog("[/worktree] Failed to install hooks for %s: %v", worktreeSessionName, err)
 		}
 
@@ -147,6 +151,10 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 	if providerName == "" {
 		providerName = defaultProviderName(cfg)
 	}
+	if isCodexProviderName(providerName) {
+		telegram.SendMessage(cfg, chatID, threadID, "❌ Worktree sessions require the Claude backend; Codex CLI worktrees are not supported yet.")
+		return
+	}
 
 	topicID, err := telegram.CreateForumTopic(cfg, worktreeSessionName, providerName, baseSessionName)
 	if err != nil {
@@ -166,7 +174,7 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 	configpkg.Save(cfg)
 	pinSessionHeader(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName])
 
-	if err := EnsureHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
+	if err := EnsureAgentHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
 		loggingpkg.ListenLog("[/worktree] Failed to install hooks for %s: %v", worktreeSessionName, err)
 	}
 

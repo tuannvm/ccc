@@ -45,6 +45,26 @@ func ParseHookData(data []byte) (HookData, error) {
 	if err := json.Unmarshal(data, &hd); err != nil {
 		return hd, err
 	}
+	var aliases struct {
+		TranscriptPath string `json:"transcriptPath"`
+		SessionID      string `json:"sessionId"`
+		HookEventName  string `json:"hookEventName"`
+		ToolName       string `json:"toolName"`
+	}
+	if err := json.Unmarshal(data, &aliases); err == nil {
+		if hd.TranscriptPath == "" {
+			hd.TranscriptPath = aliases.TranscriptPath
+		}
+		if hd.SessionID == "" {
+			hd.SessionID = aliases.SessionID
+		}
+		if hd.HookEventName == "" {
+			hd.HookEventName = aliases.HookEventName
+		}
+		if hd.ToolName == "" {
+			hd.ToolName = aliases.ToolName
+		}
+	}
 	if len(hd.ToolInputRaw) > 0 {
 		json.Unmarshal(hd.ToolInputRaw, &hd.ToolInput)
 	}

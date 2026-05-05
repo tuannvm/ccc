@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -107,6 +108,22 @@ func TestConfigLoadNonExistent(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsReservedCodexProvider(t *testing.T) {
+	cfg := &Config{
+		Providers: map[string]*ProviderConfig{
+			"codex": {AuthToken: "sk-test"},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("Validate() error = nil, want reserved provider error")
+	}
+	if !strings.Contains(err.Error(), "reserved") || !strings.Contains(err.Error(), "Codex") {
+		t.Fatalf("Validate() error = %q, want reserved Codex provider error", err.Error())
+	}
+}
+
 // TestConfigSessionsInitialized tests that Sessions map is initialized on load
 func TestConfigSessionsInitialized(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "ccc-test-*")
@@ -148,9 +165,9 @@ func TestConfigLoadSplitOnly(t *testing.T) {
 
 	baseDir := filepath.Join(tmpDir, ".config", "ccc")
 	writeJSONFile(t, filepath.Join(baseDir, "config.core.json"), coreConfig{
-		BotToken:      "split-token",
-		ChatID:        42,
-		ProjectsDir:   "/tmp/projects",
+		BotToken:        "split-token",
+		ChatID:          42,
+		ProjectsDir:     "/tmp/projects",
 		EnableStreaming: true,
 	})
 	writeJSONFile(t, filepath.Join(baseDir, "config.sessions.json"), sessionsConfig{

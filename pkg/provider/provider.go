@@ -14,6 +14,7 @@ import (
 // Provider defines the interface for AI providers that can be used with ccc
 type Provider interface {
 	Name() string
+	Backend() string
 	BaseURL() string
 	AuthToken(cfg *config.Config) string
 	Models() ModelConfig
@@ -22,6 +23,11 @@ type Provider interface {
 	EnvVars(cfg *config.Config) []string
 	IsBuiltin() bool
 }
+
+const (
+	BackendClaude = "claude"
+	BackendCodex  = "codex"
+)
 
 // ModelConfig holds the model names for a provider
 type ModelConfig struct {
@@ -35,6 +41,8 @@ type ModelConfig struct {
 type BuiltinProvider struct{}
 
 func (BuiltinProvider) Name() string { return "anthropic" }
+
+func (BuiltinProvider) Backend() string { return BackendClaude }
 
 func (BuiltinProvider) BaseURL() string { return "" }
 
@@ -61,6 +69,65 @@ func (BuiltinProvider) EnvVars(cfg *config.Config) []string {
 
 func (BuiltinProvider) IsBuiltin() bool { return true }
 
+// CodexProvider represents Codex CLI as a native backend.
+type CodexProvider struct {
+	ProviderName string
+	Config       *config.ProviderConfig
+}
+
+func (p CodexProvider) Name() string {
+	if p.ProviderName != "" {
+		return p.ProviderName
+	}
+	return BackendCodex
+}
+
+func (CodexProvider) Backend() string { return BackendCodex }
+
+func (p CodexProvider) BaseURL() string {
+	if p.Config == nil {
+		return ""
+	}
+	return p.Config.BaseURL
+}
+
+func (CodexProvider) AuthToken(*config.Config) string { return "" }
+
+func (p CodexProvider) Models() ModelConfig {
+	if p.Config == nil {
+		return ModelConfig{}
+	}
+	return ModelConfig{
+		Opus:   p.Config.OpusModel,
+		Sonnet: p.Config.SonnetModel,
+		Haiku:  p.Config.HaikuModel,
+	}
+}
+
+func (p CodexProvider) ConfigDir() string {
+	if p.Config == nil {
+		return ""
+	}
+	return expandProviderConfigDir(p.Config.ConfigDir)
+}
+
+func (CodexProvider) TranscriptPath(string) string { return "" }
+
+func (p CodexProvider) EnvVars(*config.Config) []string {
+	vars := []string{"CODEX_SANDBOX_NETWORK_DISABLED=1"}
+	if configDir := p.ConfigDir(); configDir != "" {
+		vars = append(vars, "CODEX_HOME="+configDir)
+	}
+	return vars
+}
+
+func (CodexProvider) IsBuiltin() bool { return true }
+
+// IsCodexProviderName reports whether a provider name selects the Codex CLI backend.
+func IsCodexProviderName(name string) bool {
+	return strings.EqualFold(name, BackendCodex) || strings.EqualFold(name, "codex-anthropic")
+}
+
 // ConfiguredProvider represents a provider configured in config.json
 type ConfiguredProvider struct {
 	ProviderName string
@@ -68,6 +135,13 @@ type ConfiguredProvider struct {
 }
 
 func (p ConfiguredProvider) Name() string { return p.ProviderName }
+
+func (p ConfiguredProvider) Backend() string {
+	if p.Config != nil && p.Config.Backend != "" {
+		return strings.ToLower(p.Config.Backend)
+	}
+	return BackendClaude
+}
 
 func (p ConfiguredProvider) BaseURL() string {
 	if p.Config == nil {
@@ -105,7 +179,10 @@ func (p ConfiguredProvider) ConfigDir() string {
 	if p.Config == nil {
 		return ""
 	}
-	configDir := p.Config.ConfigDir
+	return expandProviderConfigDir(p.Config.ConfigDir)
+}
+
+func expandProviderConfigDir(configDir string) string {
 	if configDir == "~" || configDir == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -178,6 +255,9 @@ func (p ConfiguredProvider) IsBuiltin() bool { return false }
 
 // GetActiveProvider returns the active provider config
 func GetActiveProvider(cfg *config.Config) *config.ProviderConfig {
+	if cfg == nil {
+		return nil
+	}
 	if cfg.Providers != nil && cfg.ActiveProvider != "" {
 		if p := cfg.Providers[cfg.ActiveProvider]; p != nil {
 			return p
@@ -190,26 +270,33 @@ func GetActiveProvider(cfg *config.Config) *config.ProviderConfig {
 func GetProviderNames(cfg *config.Config) []string {
 	var names []string
 	names = append(names, "anthropic")
-	if cfg.Providers != nil {
+	names = append(names, BackendCodex)
+	if cfg != nil && cfg.Providers != nil {
 		for name := range cfg.Providers {
-			if name != "anthropic" {
+			if name != "anthropic" && !strings.EqualFold(name, BackendCodex) {
 				names = append(names, name)
 			}
 		}
 	}
-	sort.Strings(names[1:])
+	sort.Strings(names[2:])
 	return names
 }
 
 // GetProvider returns a Provider for the given name
 func GetProvider(cfg *config.Config, name string) Provider {
 	if name == "" {
-		if cfg.ActiveProvider != "" && cfg.Providers != nil {
+		if cfg != nil && cfg.ActiveProvider != "" && cfg.Providers != nil {
 			if p := cfg.Providers[cfg.ActiveProvider]; p != nil {
+				if strings.EqualFold(p.Backend, BackendCodex) {
+					return CodexProvider{ProviderName: cfg.ActiveProvider, Config: p}
+				}
 				return ConfiguredProvider{ProviderName: cfg.ActiveProvider, Config: p}
 			}
 		}
-		if cfg.Provider != nil {
+		if cfg != nil && IsCodexProviderName(cfg.ActiveProvider) {
+			return CodexProvider{ProviderName: cfg.ActiveProvider}
+		}
+		if cfg != nil && cfg.Provider != nil {
 			return ConfiguredProvider{ProviderName: "legacy", Config: cfg.Provider}
 		}
 		return BuiltinProvider{}
@@ -219,10 +306,16 @@ func GetProvider(cfg *config.Config, name string) Provider {
 		return BuiltinProvider{}
 	}
 
-	if cfg.Providers != nil {
+	if cfg != nil && cfg.Providers != nil {
 		if p := cfg.Providers[name]; p != nil {
+			if strings.EqualFold(p.Backend, BackendCodex) {
+				return CodexProvider{ProviderName: name, Config: p}
+			}
 			return ConfiguredProvider{ProviderName: name, Config: p}
 		}
+	}
+	if IsCodexProviderName(name) {
+		return CodexProvider{ProviderName: name}
 	}
 
 	return nil

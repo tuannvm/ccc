@@ -62,11 +62,8 @@ func AutoAcceptTrustDialog(target string) bool {
 		return false
 	}
 
-	if detectConsentDialog(content) {
-		// Dialog detected, explicitly choose the affirmative option. Claude Code
-		// 2.1.119 defaults to "1. Yes, I trust this folder", but sending the
-		// selection keeps this robust if focus starts elsewhere in the prompt.
-		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "1", "Enter").Run(); err != nil {
+	if choice, ok := ConsentDialogChoice(content); ok {
+		if err := exec.Command(TmuxPath, "send-keys", "-t", target, choice, "Enter").Run(); err != nil {
 			return false
 		}
 		return true
@@ -107,6 +104,59 @@ func WaitForClaude(target string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for Claude to start")
 }
 
+// WaitForAgent polls until the selected backend's input prompt appears.
+func WaitForAgent(target string, providerName string, timeout time.Duration) error {
+	if isCodexProviderName(providerName) {
+		interval := 100 * time.Millisecond
+		if timeout > 10*time.Second {
+			interval = 500 * time.Millisecond
+		}
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if AutoAcceptTrustDialog(target) {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			if PaneHasActiveCodexPrompt(target) || TargetHasCodexRunning(target) {
+				return nil
+			}
+			time.Sleep(interval)
+		}
+		return fmt.Errorf("timeout waiting for Codex to start")
+	}
+	return WaitForClaude(target, timeout)
+}
+
+// WaitForAgentInputPrompt waits until the selected backend is ready to accept
+// an input submission. Unlike WaitForAgent, this requires the prompt itself,
+// not just a running process.
+func WaitForAgentInputPrompt(target string, providerName string, timeout time.Duration) error {
+	interval := 100 * time.Millisecond
+	if timeout > 10*time.Second {
+		interval = 500 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if AutoAcceptTrustDialog(target) {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if PaneHasActiveAgentPrompt(target, providerName) {
+			return nil
+		}
+		time.Sleep(interval)
+	}
+	return fmt.Errorf("timeout waiting for %s input prompt", providerName)
+}
+
+// PaneHasActiveAgentPrompt checks recent pane content for the selected backend prompt.
+func PaneHasActiveAgentPrompt(paneTarget string, providerName string) bool {
+	if isCodexProviderName(providerName) {
+		return PaneHasActiveCodexPrompt(paneTarget)
+	}
+	return PaneHasActiveClaudePrompt(paneTarget)
+}
+
 // WindowNameFromTarget extracts the window name from a "session:window" target
 func WindowNameFromTarget(target string) string {
 	if idx := strings.LastIndex(target, ":"); idx >= 0 {
@@ -129,8 +179,29 @@ func SendKeys(target string, text string) error {
 	return SendKeysWithDelay(target, text, delay)
 }
 
+// SendKeysForProvider sends text to the selected backend's TUI.
+func SendKeysForProvider(target string, text string, providerName string) error {
+	baseDelay := 50 * time.Millisecond
+	charDelay := time.Duration(len(text)) * 500 * time.Microsecond
+	delay := baseDelay + charDelay
+	if delay > 5*time.Second {
+		delay = 5 * time.Second
+	}
+	return SendKeysForProviderWithDelay(target, text, providerName, delay)
+}
+
+// SendKeysForProviderWithDelay sends text to the selected backend's TUI with
+// an explicit minimum delay before submission.
+func SendKeysForProviderWithDelay(target string, text string, providerName string, delay time.Duration) error {
+	return sendKeysWithDelay(target, text, delay, !isCodexProviderName(providerName))
+}
+
 // SendKeysWithDelay sends text to a tmux target with a specified delay
 func SendKeysWithDelay(target string, text string, delay time.Duration) error {
+	return sendKeysWithDelay(target, text, delay, true)
+}
+
+func sendKeysWithDelay(target string, text string, delay time.Duration, claudeSubmit bool) error {
 	// Normalize line endings to LF only (handles CRLF from Telegram/Windows)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 
@@ -204,7 +275,7 @@ func SendKeysWithDelay(target string, text string, delay time.Duration) error {
 	// Dismiss autocomplete popup ONLY when Claude is at the input prompt.
 	// Sending Escape while Claude is processing a response interrupts it.
 	// Claude Code queues prompts automatically when text is typed during processing.
-	if PaneHasActiveClaudePrompt(target) {
+	if claudeSubmit && PaneHasActiveClaudePrompt(target) {
 		time.Sleep(100 * time.Millisecond)
 		if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Escape").Run(); err != nil {
 			// Ignore error
@@ -216,6 +287,9 @@ func SendKeysWithDelay(target string, text string, delay time.Duration) error {
 	time.Sleep(50 * time.Millisecond)
 	if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
 		return err
+	}
+	if !claudeSubmit {
+		return nil
 	}
 	time.Sleep(50 * time.Millisecond)
 	if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {

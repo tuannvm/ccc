@@ -92,8 +92,23 @@ debug:
 	fi
 	@echo "🐛 Debug mode: race detection enabled, optimizations disabled"
 
-# deploy: build, install, and restart the ccc service (formerly 'test')
+# deploy: build, install, stop active ccc runtime panes, and restart the ccc service
 deploy: install
+	@echo "🧹 Stopping active ccc tmux runtime..."
+	@if command -v tmux >/dev/null 2>&1 && tmux has-session -t ccc 2>/dev/null; then \
+		tmux kill-session -t ccc; \
+		echo "✅ ccc tmux session stopped"; \
+	else \
+		echo "ℹ️ No ccc tmux session running"; \
+	fi
+	@echo "🧹 Stopping stale ccc run processes..."
+	@pids=$$(pgrep -f "$$HOME/bin/ccc run" 2>/dev/null || true); \
+	if [ -n "$$pids" ]; then \
+		echo "$$pids" | xargs kill 2>/dev/null || true; \
+		echo "✅ stale ccc run processes stopped"; \
+	else \
+		echo "ℹ️ No stale ccc run processes found"; \
+	fi
 	@echo "🔄 Restarting ccc service..."
 	@if [ "$(UNAME)" = "Darwin" ]; then \
 		launchctl unload ~/Library/LaunchAgents/com.ccc.plist 2>/dev/null || true; \

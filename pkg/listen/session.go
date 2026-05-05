@@ -8,8 +8,8 @@ import (
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
-	"github.com/tuannvm/ccc/pkg/lookup"
 	loggingpkg "github.com/tuannvm/ccc/pkg/logging"
+	"github.com/tuannvm/ccc/pkg/lookup"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
@@ -32,9 +32,10 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 
 		currentSession := tmux.GetCurrentSessionName()
 		needsSwitch := currentSession != tmux.SafeName(sessName)
+		sessionInfo := cfg.Sessions[sessName]
+		providerName := effectiveProviderName(cfg, sessionInfo)
 
 		if needsSwitch {
-			sessionInfo := cfg.Sessions[sessName]
 			workDir := lookup.GetSessionWorkDir(cfg, sessName, sessionInfo)
 			if _, err := os.Stat(workDir); os.IsNotExist(err) {
 				os.MkdirAll(workDir, 0755)
@@ -42,7 +43,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 
 			worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
-			if err := EnsureHooks(cfg, sessName, sessionInfo); err != nil {
+			if err := EnsureAgentHooks(cfg, sessName, sessionInfo); err != nil {
 				loggingpkg.ListenLog("[sendToTmux] Failed to verify/install hooks for %s: %v", sessName, err)
 			}
 
@@ -51,12 +52,12 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			// skipRestart=false so SwitchSessionInWindow starts Claude.
 			skipRestart := false
 			if winTarget, err := tmux.GetWindowTarget(sessName); err == nil {
-				if tmux.WindowHasClaudeRunning(winTarget, "") {
+				if tmux.WindowHasAgentRunning(winTarget, "", providerName) {
 					skipRestart = true
 				}
 			}
 
-			if err := tmux.SwitchSessionInWindow(sessName, workDir, sessionInfo.ProviderName, resumeSessionID, worktreeName, true, skipRestart); err != nil {
+			if err := tmux.SwitchSessionInWindow(sessName, workDir, providerName, resumeSessionID, worktreeName, true, skipRestart); err != nil {
 				telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 				return
 			}
@@ -106,7 +107,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			TelegramDelivered: true,
 		})
 
-		if err := hooks.SendFromTelegram(target, tmux.SafeName(sessName), text); err != nil {
+		if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessName), text, providerName); err != nil {
 			loggingpkg.ListenLog("sendToTmux FAILED: target=%s err=%v", target, err)
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 		} else {

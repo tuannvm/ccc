@@ -10,20 +10,20 @@ import (
 
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/ledger"
-	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/session"
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // HandlerCallbacks provides callbacks for root-level dependencies
 type HandlerCallbacks struct {
 	// Config management
-	LoadConfig     func() (*config.Config, error)
-	SaveConfig     func(cfg *config.Config) error
+	LoadConfig func() (*config.Config, error)
+	SaveConfig func(cfg *config.Config) error
 
 	// Session management
-	FindSession              func(cfg *config.Config, cwd, sessionID string) (string, int64)
-	PersistClaudeSessionID   func(cfg *config.Config, sessName, claudeSessionID, transcriptPath string)
-	GetSessionWorkDir        func(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo) string
+	FindSession            func(cfg *config.Config, cwd, sessionID string) (string, int64)
+	PersistClaudeSessionID func(cfg *config.Config, sessName, claudeSessionID, transcriptPath string)
+	GetSessionWorkDir      func(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo) string
 
 	// Tool state management
 	LoadToolState      func(sessionName string) *ToolState
@@ -33,28 +33,28 @@ type HandlerCallbacks struct {
 	FormatToolMessage  func(state *ToolState) string
 
 	// Thinking indicators
-	SetThinking    func(sessionName string)
-	ClearThinking  func(sessionName string)
+	SetThinking   func(sessionName string)
+	ClearThinking func(sessionName string)
 
 	// Telegram functions
-	TelegramActiveFlag   func(tmuxName string) string
-	SendMessage          func(cfg *config.Config, chatID int64, threadID int64, text string) error
-	SendMessageHTML      func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	SendMessageGetID     func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	EditMessageHTML      func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
+	TelegramActiveFlag      func(tmuxName string) string
+	SendMessage             func(cfg *config.Config, chatID int64, threadID int64, text string) error
+	SendMessageHTML         func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
+	SendMessageGetID        func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
+	EditMessageHTML         func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
 	SendMessageWithKeyboard func(cfg *config.Config, chatID int64, threadID int64, text string, buttons [][]telegram.InlineKeyboardButton) error
 
 	// Ledger functions
-	IsDelivered      func(sessName, id, origin string) bool
-	AppendMessage    func(msg *ledger.MessageRecord)
-	UpdateDelivery   func(sessName, msgID, field string, value bool)
+	IsDelivered    func(sessName, id, origin string) bool
+	AppendMessage  func(msg *ledger.MessageRecord)
+	UpdateDelivery func(sessName, msgID, field string, value bool)
 
 	// OTP functions
-	IsOTPEnabled         func(cfg *config.Config) bool
-	HasValidOTPGrant    func(tmuxName string) bool
-	WriteOTPRequest     func(sessionID string, req *OTPPermissionRequest)
-	WriteOTPGrant       func(tmuxName string)
-	WaitForOTPResponse  func(sessionID, tmuxName string, timeout time.Duration) (bool, error)
+	IsOTPEnabled       func(cfg *config.Config) bool
+	HasValidOTPGrant   func(tmuxName string) bool
+	WriteOTPRequest    func(sessionID string, req *OTPPermissionRequest)
+	WriteOTPGrant      func(tmuxName string)
+	WaitForOTPResponse func(sessionID, tmuxName string, timeout time.Duration) (bool, error)
 
 	// Misc
 	TmuxSafeName                func(name string) string
@@ -123,23 +123,21 @@ func HandleStopHook(callbacks *HandlerCallbacks) error {
 	// Deliver unsent texts as separate messages (these come after all tools)
 	HookLog("stop-hook: delivering unsent texts")
 	deliverCfg := &DeliverUnsentTextsConfig{
-		Config:              cfg,
-		SessionName:         sessName,
-		TopicID:             topicID,
-		TranscriptPath:      hookData.TranscriptPath,
-		InsertIntoToolMsg:   false,
-		ClaudeSessionID:     hookData.SessionID,
-		LoadToolState:       callbacks.LoadToolState,
-		AddTextToToolState:  callbacks.AddTextToToolState,
-		SaveToolState:       callbacks.SaveToolState,
-		FormatToolMessage:   callbacks.FormatToolMessage,
-		EditMessageHTML:     callbacks.EditMessageHTML,
-		SendMessageHTML:     callbacks.SendMessageHTML,
-		SendMessageGetID:    callbacks.SendMessageGetID,
-		SendMessage:         callbacks.SendMessage,
-		IsDelivered:         callbacks.IsDelivered,
-		AppendMessage:       callbacks.AppendMessage,
-		ClearToolState:      callbacks.ClearToolState,
+		Config:             cfg,
+		SessionName:        sessName,
+		TopicID:            topicID,
+		TranscriptPath:     hookData.TranscriptPath,
+		InsertIntoToolMsg:  false,
+		ClaudeSessionID:    hookData.SessionID,
+		LoadToolState:      callbacks.LoadToolState,
+		AddTextToToolState: callbacks.AddTextToToolState,
+		SaveToolState:      callbacks.SaveToolState,
+		FormatToolMessage:  callbacks.FormatToolMessage,
+		EditMessageHTML:    callbacks.EditMessageHTML,
+		SendMessageGetID:   callbacks.SendMessageGetID,
+		IsDelivered:        callbacks.IsDelivered,
+		AppendMessage:      callbacks.AppendMessage,
+		ClearToolState:     callbacks.ClearToolState,
 		InferRoleFromTranscriptPath: func(path string) session.PaneRole {
 			role := callbacks.InferRoleFromTranscriptPath(path)
 			return session.PaneRole(role)
@@ -189,23 +187,21 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	// Deliver any unsent assistant text before showing tool calls
 	if topicID != 0 && hookData.TranscriptPath != "" {
 		deliverCfg := &DeliverUnsentTextsConfig{
-			Config:              cfg,
-			SessionName:         sessName,
-			TopicID:             topicID,
-			TranscriptPath:      hookData.TranscriptPath,
-			InsertIntoToolMsg:   true,
-			ClaudeSessionID:     hookData.SessionID,
-			LoadToolState:       callbacks.LoadToolState,
-			AddTextToToolState:  callbacks.AddTextToToolState,
-			SaveToolState:       callbacks.SaveToolState,
-			FormatToolMessage:   callbacks.FormatToolMessage,
-			EditMessageHTML:     callbacks.EditMessageHTML,
-			SendMessageHTML:     callbacks.SendMessageHTML,
-			SendMessageGetID:    callbacks.SendMessageGetID,
-			SendMessage:         callbacks.SendMessage,
-			IsDelivered:         callbacks.IsDelivered,
-			AppendMessage:       callbacks.AppendMessage,
-			ClearToolState:      callbacks.ClearToolState,
+			Config:             cfg,
+			SessionName:        sessName,
+			TopicID:            topicID,
+			TranscriptPath:     hookData.TranscriptPath,
+			InsertIntoToolMsg:  true,
+			ClaudeSessionID:    hookData.SessionID,
+			LoadToolState:      callbacks.LoadToolState,
+			AddTextToToolState: callbacks.AddTextToToolState,
+			SaveToolState:      callbacks.SaveToolState,
+			FormatToolMessage:  callbacks.FormatToolMessage,
+			EditMessageHTML:    callbacks.EditMessageHTML,
+			SendMessageGetID:   callbacks.SendMessageGetID,
+			IsDelivered:        callbacks.IsDelivered,
+			AppendMessage:      callbacks.AppendMessage,
+			ClearToolState:     callbacks.ClearToolState,
 			InferRoleFromTranscriptPath: func(path string) session.PaneRole {
 				role := callbacks.InferRoleFromTranscriptPath(path)
 				return session.PaneRole(role)
@@ -216,22 +212,26 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 	// Update tool call display
 	if hookData.ToolName != "" && hookData.ToolName != "AskUserQuestion" && topicID != 0 {
-		state := callbacks.LoadToolState(sessName)
-		state.Tools = append(state.Tools, ToolCall{
-			Name:  hookData.ToolName,
-			Input: callbacks.ToolInputSummary(hookData),
-			Time:  time.Now().UnixMilli(),
-		})
-		text := callbacks.FormatToolMessage(state)
-		if state.MsgID == 0 {
-			msgID, err := callbacks.SendMessageHTML(cfg, cfg.GroupID, topicID, text)
-			if err == nil && msgID > 0 {
-				state.MsgID = msgID
+		_ = WithToolStateLock(sessName, func() error {
+			state := callbacks.LoadToolState(sessName)
+			state.Tools = append(state.Tools, ToolCall{
+				Name:  hookData.ToolName,
+				Input: callbacks.ToolInputSummary(hookData),
+				Time:  time.Now().UnixMilli(),
+			})
+			text := callbacks.FormatToolMessage(state)
+			if state.MsgID == 0 {
+				msgID, err := callbacks.SendMessageHTML(cfg, cfg.GroupID, topicID, text)
+				if err == nil && msgID > 0 {
+					state.MsgID = msgID
+				}
+			} else {
+				callbacks.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text)
 			}
-		} else {
-			callbacks.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text)
-		}
-		callbacks.SaveToolState(sessName, state)
+			callbacks.SaveToolState(sessName, state)
+			return nil
+		})
+		state := callbacks.LoadToolState(sessName)
 
 		// Record tool call in ledger
 		callbacks.AppendMessage(&ledger.MessageRecord{
