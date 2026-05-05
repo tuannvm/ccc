@@ -47,6 +47,10 @@ func TestProviderModelOptionLabel(t *testing.T) {
 	if got := providerModelOptionLabel(cfg, "codex"); got != "Codex default" {
 		t.Fatalf("codex label = %q", got)
 	}
+	cfg.Providers["codex-anthropic"] = &configpkg.ProviderConfig{Backend: "codex", SonnetModel: "claude-opus-4-7"}
+	if got := providerModelOptionLabel(cfg, "codex-anthropic"); got != "codex-anthropic · claude-opus-4-7" {
+		t.Fatalf("codex-anthropic label = %q", got)
+	}
 	if got := providerModelOptionLabel(cfg, "openai"); got != "openai · gpt-5.5" {
 		t.Fatalf("openai label = %q", got)
 	}
@@ -56,7 +60,7 @@ func TestProviderModelOptionLabel(t *testing.T) {
 }
 
 func TestAgentOptionLabel(t *testing.T) {
-	if got := agentOptionLabel("claude"); got != "Claude Code" {
+	if got := agentOptionLabel("claude"); got != "Claude CLI" {
 		t.Fatalf("claude label = %q", got)
 	}
 	if got := agentOptionLabel("codex"); got != "Codex CLI" {

@@ -79,3 +79,32 @@ func TestCodexProviderResolution(t *testing.T) {
 		t.Fatalf("explicit codex provider = %#v, want codex backend", p)
 	}
 }
+
+func TestConfiguredCodexProviderResolution(t *testing.T) {
+	cfg := &configpkg.Config{
+		Providers: map[string]*configpkg.ProviderConfig{
+			"codex-anthropic": {
+				Backend:     BackendCodex,
+				BaseURL:     "http://127.0.0.1:8317/v1",
+				SonnetModel: "claude-opus-4-7",
+				ConfigDir:   "~/.codex-anthropic",
+			},
+		},
+	}
+	p := GetProvider(cfg, "codex-anthropic")
+	if p == nil {
+		t.Fatal("GetProvider(codex-anthropic) returned nil")
+	}
+	if p.Name() != "codex-anthropic" || p.Backend() != BackendCodex {
+		t.Fatalf("provider = %s/%s, want codex-anthropic/%s", p.Name(), p.Backend(), BackendCodex)
+	}
+	if p.BaseURL() != "http://127.0.0.1:8317/v1" {
+		t.Fatalf("BaseURL = %q", p.BaseURL())
+	}
+	if p.Models().Sonnet != "claude-opus-4-7" {
+		t.Fatalf("Sonnet = %q", p.Models().Sonnet)
+	}
+	if !slices.Contains(GetProviderNames(cfg), "codex-anthropic") {
+		t.Fatalf("codex-anthropic missing from provider names: %v", GetProviderNames(cfg))
+	}
+}

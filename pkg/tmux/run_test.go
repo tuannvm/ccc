@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	configpkg "github.com/tuannvm/ccc/pkg/config"
 	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
@@ -354,6 +355,39 @@ func TestBuildAgentCommandCodexFresh(t *testing.T) {
 	}
 	if strings.Join(args, " ") != "--no-alt-screen" {
 		t.Fatalf("args = %v, want --no-alt-screen", args)
+	}
+}
+
+func TestBuildAgentCommandConfiguredCodexProvider(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	provider := providerpkg.CodexProvider{
+		ProviderName: "codex-anthropic",
+		Config: &configpkg.ProviderConfig{
+			Backend:     providerpkg.BackendCodex,
+			BaseURL:     "http://127.0.0.1:8317/v1",
+			SonnetModel: "claude-opus-4-7",
+		},
+	}
+	cmdPath, args, isCodex, err := buildAgentCommand(provider, false, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(configured codex) error = %v", err)
+	}
+	if cmdPath != CodexPath || !isCodex {
+		t.Fatalf("cmdPath=%q isCodex=%v", cmdPath, isCodex)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		`model_provider="cliproxyapi"`,
+		`model_providers.cliproxyapi.base_url="http://127.0.0.1:8317/v1"`,
+		"--model claude-opus-4-7",
+		"--no-alt-screen",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("args missing %q: %v", want, args)
+		}
 	}
 }
 

@@ -59,7 +59,7 @@ func activeDefaultProviderSummary(cfg *configpkg.Config) string {
 }
 
 func isCodexProviderName(providerName string) bool {
-	return strings.EqualFold(providerName, "codex")
+	return providerpkg.IsCodexProviderName(providerName)
 }
 
 func agentDisplayName(providerName string) string {
@@ -71,7 +71,7 @@ func agentDisplayName(providerName string) string {
 
 func agentOptionLabel(providerName string) string {
 	if strings.EqualFold(providerName, "claude") {
-		return "Claude Code"
+		return "Claude CLI"
 	}
 	if providerName == builtinProviderName {
 		return "Claude"
@@ -86,7 +86,7 @@ func providerModelOptionLabel(cfg *configpkg.Config, providerName string) string
 	if providerName == builtinProviderName {
 		return "Anthropic default"
 	}
-	if isCodexProviderName(providerName) {
+	if strings.EqualFold(providerName, "codex") {
 		return "Codex default"
 	}
 	label := providerName

@@ -195,12 +195,12 @@ func buildAgentCommand(p providerpkg.Provider, continueSession bool, resumeSessi
 			return "", nil, true, fmt.Errorf("codex backend does not support Claude Code worktree sessions")
 		}
 		if resumeSessionID != "" {
-			return CodexPath, []string{"resume", "--no-alt-screen", resumeSessionID}, true, nil
+			return CodexPath, codexArgsForProvider(p, []string{"resume", "--no-alt-screen", resumeSessionID}), true, nil
 		}
 		if continueSession {
-			return CodexPath, []string{"resume", "--last", "--no-alt-screen"}, true, nil
+			return CodexPath, codexArgsForProvider(p, []string{"resume", "--last", "--no-alt-screen"}), true, nil
 		}
-		return CodexPath, []string{"--no-alt-screen"}, true, nil
+		return CodexPath, codexArgsForProvider(p, []string{"--no-alt-screen"}), true, nil
 	}
 
 	if ClaudePath == "" {
@@ -220,4 +220,35 @@ func buildAgentCommand(p providerpkg.Provider, continueSession bool, resumeSessi
 		}
 	}
 	return ClaudePath, args, false, nil
+}
+
+func codexArgsForProvider(p providerpkg.Provider, base []string) []string {
+	if p == nil || p.Name() == providerpkg.BackendCodex {
+		return base
+	}
+	var args []string
+	if p.BaseURL() != "" {
+		args = append(args,
+			"-c", `model_provider="cliproxyapi"`,
+			"-c", `model_providers.cliproxyapi.name="CLIProxyAPI"`,
+			"-c", fmt.Sprintf(`model_providers.cliproxyapi.base_url="%s"`, p.BaseURL()),
+			"-c", `model_providers.cliproxyapi.wire_api="responses"`,
+			"-c", `model_providers.cliproxyapi.experimental_bearer_token="sk-dummy"`,
+			"-c", `model_context_window=200000`,
+			"-c", `model_reasoning_effort="medium"`,
+			"-c", `web_search="disabled"`,
+		)
+	}
+	models := p.Models()
+	model := models.Sonnet
+	if model == "" {
+		model = models.Opus
+	}
+	if model == "" {
+		model = models.Haiku
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return append(args, base...)
 }

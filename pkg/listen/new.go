@@ -232,7 +232,7 @@ func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.Inl
 		Agent string
 		Label string
 	}{
-		{Agent: "claude", Label: "Claude Code"},
+		{Agent: "claude", Label: "Claude CLI"},
 		{Agent: "codex", Label: "Codex CLI"},
 	}
 	var buttons [][]telegram.InlineKeyboardButton

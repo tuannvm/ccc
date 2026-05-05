@@ -34,7 +34,7 @@ func WindowHasAgentRunning(windowID string, windowName string, providerName stri
 }
 
 func isCodexProviderName(name string) bool {
-	return strings.EqualFold(name, "codex")
+	return strings.EqualFold(name, "codex") || strings.EqualFold(name, "codex-anthropic")
 }
 
 // IsCodexProviderName reports whether a provider name selects the Codex backend.

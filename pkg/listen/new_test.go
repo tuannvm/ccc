@@ -12,8 +12,9 @@ func TestNewProviderButtonsForAgent(t *testing.T) {
 	cfg := &configpkg.Config{
 		ActiveProvider: "openai",
 		Providers: map[string]*configpkg.ProviderConfig{
-			"openai": {SonnetModel: "gpt-5.5"},
-			"zai":    {SonnetModel: "glm-4.6"},
+			"codex-anthropic": {Backend: "codex", SonnetModel: "claude-opus-4-7", BaseURL: "http://127.0.0.1:8317/v1", ConfigDir: "~/.codex-anthropic"},
+			"openai":          {SonnetModel: "gpt-5.5"},
+			"zai":             {SonnetModel: "glm-4.6"},
 		},
 	}
 
@@ -33,11 +34,14 @@ func TestNewProviderButtonsForAgent(t *testing.T) {
 	}
 
 	codexButtons := newProviderButtonsForAgent(cfg, "demo", "codex")
-	if len(codexButtons) != 1 {
-		t.Fatalf("codex buttons len = %d, want 1", len(codexButtons))
+	if len(codexButtons) != 2 {
+		t.Fatalf("codex buttons len = %d, want 2", len(codexButtons))
 	}
 	if got := codexButtons[0][0].Text; got != "Codex default" {
 		t.Fatalf("codex button label = %q, want Codex default", got)
+	}
+	if got := codexButtons[1][0].Text; got != "codex-anthropic · claude-opus-4-7" {
+		t.Fatalf("codex-anthropic button label = %q", got)
 	}
 	callback := codexButtons[0][0].CallbackData
 	if !strings.HasPrefix(callback, "new:") || len(callback) > 64 {

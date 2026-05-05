@@ -61,7 +61,7 @@ func BuildCLIProviderStatus(cfg *configpkg.Config, sessionName string, info *con
 		} else if cfg.ActiveProvider == name || (cfg.ActiveProvider == "" && name == builtinProviderName) {
 			active = " (active)"
 		}
-		if name == builtinProviderName || isCodexProviderName(name) {
+		if name == builtinProviderName || strings.EqualFold(name, "codex") {
 			lines = append(lines, fmt.Sprintf("  - %s%s (builtin)", name, active))
 		} else {
 			lines = append(lines, fmt.Sprintf("  - %s%s", name, active))
