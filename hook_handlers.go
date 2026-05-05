@@ -28,7 +28,7 @@ func newHandlerCallbacks() *hooks.HandlerCallbacks {
 		TelegramActiveFlag:      hooks.TelegramActiveFlag,
 		SendMessage:             telegram.SendMessage,
 		SendMessageHTML:         telegram.SendMessageHTMLGetID,
-		SendMessageGetID:        telegram.SendPlainMessageGetID,
+		SendMessageGetID:        telegram.SendMessageGetID,
 		EditMessageHTML:         telegram.EditMessageHTML,
 		SendMessageWithKeyboard: telegram.SendMessageWithKeyboard,
 		IsDelivered:             ledger.IsDelivered,
@@ -66,7 +66,7 @@ func deliverUnsentTexts(cfg *configpkg.Config, sessName string, topicID int64, t
 		FormatToolMessage:  hooks.FormatToolMessage,
 		EditMessageHTML:    telegram.EditMessageHTML,
 		SendMessageHTML:    telegram.SendMessageHTMLGetID,
-		SendMessageGetID:   telegram.SendPlainMessageGetID,
+		SendMessageGetID:   telegram.SendMessageGetID,
 		SendMessage:        telegram.SendMessage,
 		IsDelivered:        ledger.IsDelivered,
 		AppendMessage: func(msg *ledger.MessageRecord) {

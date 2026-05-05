@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -327,8 +326,8 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_delivered", true)
 			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_msg_id", state.MsgID)
 		} else {
-			msg := FormatAssistantHTML(cfg.SessionName, rolePrefix, block.Text)
-			tgMsgID, err := cfg.SendMessageHTML(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
+			msg := FormatAssistantMarkdown(cfg.SessionName, rolePrefix, block.Text)
+			tgMsgID, err := cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
 			if err != nil {
 				// If thread not found, retry without thread_id
 				if strings.Contains(err.Error(), "message thread not found") && cfg.TopicID != 0 {
@@ -369,76 +368,19 @@ func HookLog(format string, args ...any) {
 	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
-// SendAssistantMessage sends assistant text as plain text so Telegram does not
-// parse model-authored Markdown as Telegram Markdown.
+// SendAssistantMessage sends assistant text through Telegram's native Markdown parse mode.
 func SendAssistantMessage(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
-	return telegram.SendPlainMessageGetID(cfg, chatID, threadID, text)
+	return telegram.SendMessageGetID(cfg, chatID, threadID, text)
 }
 
-// FormatAssistantHTML converts a small, safe Markdown subset to Telegram HTML.
-// It avoids Telegram Markdown parsing while preserving common model output.
-func FormatAssistantHTML(sessionName, rolePrefix, text string) string {
-	prefix := "<b>" + HtmlEscape(sessionName) + ":</b> "
+// FormatAssistantMarkdown adds the session prefix and leaves Markdown parsing
+// to Telegram's native Markdown parse mode.
+func FormatAssistantMarkdown(sessionName, rolePrefix, text string) string {
+	prefix := "*" + sessionName + ":* "
 	if rolePrefix != "" {
-		prefix += HtmlEscape(rolePrefix)
+		prefix += rolePrefix
 	}
-	return prefix + markdownSubsetToHTML(text)
-}
-
-func markdownSubsetToHTML(text string) string {
-	lines := strings.Split(text, "\n")
-	var out []string
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			fenceLang := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "```")))
-			if fields := strings.Fields(fenceLang); len(fields) > 0 {
-				fenceLang = fields[0]
-			}
-			closeIdx := -1
-			for j := i + 1; j < len(lines); j++ {
-				if strings.HasPrefix(strings.TrimSpace(lines[j]), "```") {
-					closeIdx = j
-					break
-				}
-			}
-			if closeIdx == -1 {
-				out = append(out, inlineMarkdownToHTML(line))
-				continue
-			}
-			if isPlainTextFence(fenceLang) {
-				for _, contentLine := range lines[i+1 : closeIdx] {
-					out = append(out, inlineMarkdownToHTML(contentLine))
-				}
-				i = closeIdx
-				continue
-			}
-			code := strings.Join(lines[i+1:closeIdx], "\n")
-			out = append(out, "<pre><code>"+HtmlEscape(code)+"</code></pre>")
-			i = closeIdx
-			continue
-		}
-		out = append(out, inlineMarkdownToHTML(line))
-	}
-	return strings.Join(out, "\n")
-}
-
-func isPlainTextFence(lang string) bool {
-	switch lang {
-	case "md", "markdown", "text", "txt", "plain", "plaintext":
-		return true
-	default:
-		return false
-	}
-}
-
-func inlineMarkdownToHTML(line string) string {
-	escaped := HtmlEscape(line)
-	escaped = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^\s)]+)\)`).ReplaceAllString(escaped, `<a href="$2">$1</a>`)
-	escaped = regexp.MustCompile("`([^`]+)`").ReplaceAllString(escaped, `<code>$1</code>`)
-	escaped = regexp.MustCompile(`\*\*([^*]+)\*\*`).ReplaceAllString(escaped, `<b>$1</b>`)
-	return escaped
+	return prefix + text
 }
 
 // HandleStopRetryConfig holds configuration for stop retry handler
