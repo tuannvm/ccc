@@ -65,9 +65,7 @@ func deliverUnsentTexts(cfg *configpkg.Config, sessName string, topicID int64, t
 		SaveToolState:      hooks.SaveToolState,
 		FormatToolMessage:  hooks.FormatToolMessage,
 		EditMessageHTML:    telegram.EditMessageHTML,
-		SendMessageHTML:    telegram.SendMessageHTMLGetID,
 		SendMessageGetID:   telegram.SendMessageGetID,
-		SendMessage:        telegram.SendMessage,
 		IsDelivered:        ledger.IsDelivered,
 		AppendMessage: func(msg *ledger.MessageRecord) {
 			ledger.AppendMessage(msg)

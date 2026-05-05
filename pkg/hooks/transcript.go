@@ -13,7 +13,6 @@ import (
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/ledger"
 	"github.com/tuannvm/ccc/pkg/session"
-	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // AssistantTextBlock pairs extracted text with its requestId for dedup
@@ -205,9 +204,7 @@ type DeliverUnsentTextsConfig struct {
 	SaveToolState               func(sessionName string, state *ToolState)
 	FormatToolMessage           func(state *ToolState) string
 	EditMessageHTML             func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
-	SendMessageHTML             func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
 	SendMessageGetID            func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	SendMessage                 func(cfg *config.Config, chatID int64, threadID int64, text string) error
 	IsDelivered                 func(sessName, id, origin string) bool
 	AppendMessage               func(msg *ledger.MessageRecord)
 	ClearToolState              func(sessionName string)
@@ -366,11 +363,6 @@ func HookLog(format string, args ...any) {
 	}
 	defer f.Close()
 	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
-}
-
-// SendAssistantMessage sends assistant text through Telegram's native Markdown parse mode.
-func SendAssistantMessage(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error) {
-	return telegram.SendMessageGetID(cfg, chatID, threadID, text)
 }
 
 // FormatAssistantMarkdown adds the session prefix and leaves Markdown parsing
