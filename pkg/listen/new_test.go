@@ -8,6 +8,7 @@ import (
 )
 
 func TestNewProviderButtonsForAgent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	cfg := &configpkg.Config{
 		ActiveProvider: "openai",
 		Providers: map[string]*configpkg.ProviderConfig{
@@ -38,8 +39,34 @@ func TestNewProviderButtonsForAgent(t *testing.T) {
 	if got := codexButtons[0][0].Text; got != "Codex default" {
 		t.Fatalf("codex button label = %q, want Codex default", got)
 	}
-	if got := codexButtons[0][0].CallbackData; got != "new-provider:demo:codex" {
-		t.Fatalf("codex callback = %q", got)
+	callback := codexButtons[0][0].CallbackData
+	if !strings.HasPrefix(callback, "new:") || len(callback) > 64 {
+		t.Fatalf("codex callback = %q, want compact new callback", callback)
+	}
+	record, ok := loadNewSessionCallback(strings.TrimPrefix(callback, "new:"))
+	if !ok {
+		t.Fatalf("callback token was not persisted: %q", callback)
+	}
+	if record.Action != "provider" || record.SessionName != "demo" || record.AgentName != "codex" || record.ProviderName != "codex" {
+		t.Fatalf("callback record = %#v", record)
+	}
+}
+
+func TestNewAgentButtonsUseCompactCallbacks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &configpkg.Config{}
+	buttons := newAgentButtons(cfg, strings.Repeat("long-session-name-", 8))
+	if len(buttons) != 2 {
+		t.Fatalf("agent buttons len = %d, want 2", len(buttons))
+	}
+	for _, row := range buttons {
+		if len(row) != 1 {
+			t.Fatalf("agent row has %d buttons, want 1", len(row))
+		}
+		callback := row[0].CallbackData
+		if !strings.HasPrefix(callback, "new:") || len(callback) > 64 {
+			t.Fatalf("agent callback = %q, want compact callback", callback)
+		}
 	}
 }
 

@@ -218,12 +218,39 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 }
 
 func sendNewAgentSelection(cfg *configpkg.Config, chatID, threadID int64, sessionName string) {
-	buttons := [][]telegram.InlineKeyboardButton{
-		{{Text: "Claude", CallbackData: fmt.Sprintf("new-agent:%s:claude", sessionName)}},
-		{{Text: "Codex", CallbackData: fmt.Sprintf("new-agent:%s:codex", sessionName)}},
+	buttons := newAgentButtons(cfg, sessionName)
+	if len(buttons) == 0 {
+		telegram.SendMessage(cfg, chatID, threadID, "❌ No agent providers are configured.")
+		return
 	}
-	msg := fmt.Sprintf("🤖 Step 1/2: select agent for '%s':", sessionName)
+	msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", sessionName)
 	telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
+}
+
+func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.InlineKeyboardButton {
+	choices := []struct {
+		Agent string
+		Label string
+	}{
+		{Agent: "claude", Label: "Claude Code"},
+		{Agent: "codex", Label: "Codex CLI"},
+	}
+	var buttons [][]telegram.InlineKeyboardButton
+	for _, choice := range choices {
+		if len(providerNamesForAgent(cfg, choice.Agent)) == 0 {
+			continue
+		}
+		callbackData := newSessionCallbackData(newSessionCallback{
+			Action:      "agent",
+			SessionName: sessionName,
+			AgentName:   choice.Agent,
+		})
+		if callbackData == "" {
+			continue
+		}
+		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: choice.Label, CallbackData: callbackData}})
+	}
+	return buttons
 }
 
 func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, messageID int, sessionName, agentName string) {
@@ -238,7 +265,12 @@ func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, mes
 		return
 	}
 
-	msg := fmt.Sprintf("🤖 Step 2/2: select %s provider/model for '%s':", agentOptionLabel(agentName), sessionName)
+	backCallback := newSessionCallbackData(newSessionCallback{Action: "back", SessionName: sessionName})
+	if backCallback != "" {
+		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: "← Back", CallbackData: backCallback}})
+	}
+
+	msg := fmt.Sprintf("Create session\nsession: %s\nagent: %s\n\nStep 2/2: choose provider/model:", sessionName, agentOptionLabel(agentName))
 	if messageID != 0 {
 		telegram.EditMessageWithKeyboard(cfg, chatID, messageID, msg, buttons)
 		return
@@ -247,10 +279,33 @@ func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, mes
 }
 
 func newProviderButtonsForAgent(cfg *configpkg.Config, sessionName, agentName string) [][]telegram.InlineKeyboardButton {
+	var buttons [][]telegram.InlineKeyboardButton
+	for _, name := range providerNamesForAgent(cfg, agentName) {
+		label := providerModelOptionLabel(cfg, name)
+		if cfg != nil && (cfg.ActiveProvider == name || (cfg.ActiveProvider == "" && name == builtinProviderName)) {
+			label += " ⭐"
+		}
+		callbackData := newSessionCallbackData(newSessionCallback{
+			Action:       "provider",
+			SessionName:  sessionName,
+			AgentName:    agentName,
+			ProviderName: name,
+		})
+		if callbackData == "" {
+			continue
+		}
+		buttons = append(buttons, []telegram.InlineKeyboardButton{
+			{Text: label, CallbackData: callbackData},
+		})
+	}
+	return buttons
+}
+
+func providerNamesForAgent(cfg *configpkg.Config, agentName string) []string {
 	if agentName != "claude" && agentName != "codex" {
 		return nil
 	}
-	var buttons [][]telegram.InlineKeyboardButton
+	var names []string
 	for _, name := range providerpkg.GetProviderNames(cfg) {
 		provider := providerpkg.GetProvider(cfg, name)
 		if provider == nil {
@@ -262,14 +317,7 @@ func newProviderButtonsForAgent(cfg *configpkg.Config, sessionName, agentName st
 		if agentName == "claude" && provider.Backend() != providerpkg.BackendClaude {
 			continue
 		}
-		label := providerModelOptionLabel(cfg, name)
-		if cfg.ActiveProvider == name || (cfg.ActiveProvider == "" && name == builtinProviderName) {
-			label += " ⭐"
-		}
-		callbackData := fmt.Sprintf("new-provider:%s:%s", sessionName, name)
-		buttons = append(buttons, []telegram.InlineKeyboardButton{
-			{Text: label, CallbackData: callbackData},
-		})
+		names = append(names, name)
 	}
-	return buttons
+	return names
 }

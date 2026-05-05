@@ -28,8 +28,6 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 	}
 
-	telegram.AnswerCallbackQuery(cfg, cb.ID)
-
 	parts := strings.Split(cb.Data, ":")
 	if len(parts) == 0 {
 		return
@@ -37,6 +35,7 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 
 	switch parts[0] {
 	case "new-agent":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose provider/model", false)
 		if len(parts) == 3 && cb.Message != nil {
 			sessionName := parts[1]
 			agentName := parts[2]
@@ -45,6 +44,7 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	case "new-provider":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Creating session", false)
 		if len(parts) == 3 {
 			sessionName := parts[1]
 			providerName := parts[2]
@@ -53,6 +53,11 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	case "new":
+		if len(parts) == 2 {
+			handleNewSessionCallbackToken(cfg, cb, parts[1])
+			return
+		}
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		if len(parts) == 3 {
 			sessionName := parts[1]
 			providerName := parts[2]
@@ -61,6 +66,7 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	case "team":
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		if len(parts) == 3 {
 			teamName := parts[1]
 			providerName := parts[2]
@@ -69,6 +75,7 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	case "provider":
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		if len(parts) == 3 {
 			sessionName := parts[1]
 			providerName := parts[2]
@@ -77,7 +84,39 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	default:
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		HandleQuestionCallback(cfg, cb, parts)
+	}
+}
+
+func handleNewSessionCallbackToken(cfg *configpkg.Config, cb *telegram.CallbackQuery, token string) {
+	callback, ok := loadNewSessionCallback(token)
+	if !ok {
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "This selection expired. Send /new again.", true)
+		if cb.Message != nil {
+			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "Selection expired. Send /new again.")
+		}
+		return
+	}
+	if cb.Message == nil {
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
+		return
+	}
+
+	switch callback.Action {
+	case "agent":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose provider/model", false)
+		sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, callback.SessionName, callback.AgentName)
+	case "provider":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Creating session", false)
+		HandleNewWithProvider(cfg, cb, callback.SessionName, callback.ProviderName)
+	case "back":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose agent", false)
+		buttons := newAgentButtons(cfg, callback.SessionName)
+		msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", callback.SessionName)
+		telegram.EditMessageWithKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, msg, buttons)
+	default:
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Unsupported selection. Send /new again.", true)
 	}
 }
 

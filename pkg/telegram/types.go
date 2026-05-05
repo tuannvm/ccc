@@ -4,8 +4,8 @@ import "encoding/json"
 
 // TelegramMessage represents a Telegram message
 type TelegramMessage struct {
-	MessageID       int             `json:"message_id"`
-	MessageThreadID int64           `json:"message_thread_id,omitempty"` // Topic ID
+	MessageID       int   `json:"message_id"`
+	MessageThreadID int64 `json:"message_thread_id,omitempty"` // Topic ID
 	Chat            struct {
 		ID   int64  `json:"id"`
 		Type string `json:"type"` // "private", "group", "supergroup"
@@ -78,5 +78,5 @@ type TopicResult struct {
 // InlineKeyboardButton represents a Telegram inline keyboard button
 type InlineKeyboardButton struct {
 	Text         string `json:"text"`
-	CallbackData string `json:"callback_data"`
+	CallbackData string `json:"callback_data,omitempty"`
 }

@@ -54,3 +54,15 @@ func TestProviderModelOptionLabel(t *testing.T) {
 		t.Fatalf("zai label = %q", got)
 	}
 }
+
+func TestAgentOptionLabel(t *testing.T) {
+	if got := agentOptionLabel("claude"); got != "Claude Code" {
+		t.Fatalf("claude label = %q", got)
+	}
+	if got := agentOptionLabel("codex"); got != "Codex CLI" {
+		t.Fatalf("codex label = %q", got)
+	}
+	if got := agentOptionLabel("anthropic"); got != "Claude" {
+		t.Fatalf("anthropic label = %q", got)
+	}
+}

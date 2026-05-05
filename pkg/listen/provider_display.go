@@ -70,11 +70,14 @@ func agentDisplayName(providerName string) string {
 }
 
 func agentOptionLabel(providerName string) string {
+	if strings.EqualFold(providerName, "claude") {
+		return "Claude Code"
+	}
 	if providerName == builtinProviderName {
 		return "Claude"
 	}
 	if isCodexProviderName(providerName) {
-		return "Codex"
+		return "Codex CLI"
 	}
 	return providerName
 }
