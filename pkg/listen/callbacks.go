@@ -20,7 +20,7 @@ import (
 
 // HandleCallbackQuery processes callback queries from inline keyboard button presses
 func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
-	if cb == nil {
+	if cfg == nil || cb == nil {
 		return
 	}
 
@@ -94,7 +94,9 @@ func handleNewSessionCallbackToken(cfg *configpkg.Config, cb *telegram.CallbackQ
 	if !ok {
 		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "This selection expired. Send /new again.", true)
 		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "Selection expired. Send /new again.")
+			if err := telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "Selection expired. Send /new again."); err != nil {
+				loggingpkg.ListenLog("[callback:new] failed to remove expired selection keyboard: %v", err)
+			}
 		}
 		return
 	}
@@ -114,7 +116,15 @@ func handleNewSessionCallbackToken(cfg *configpkg.Config, cb *telegram.CallbackQ
 		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose agent", false)
 		buttons := newAgentButtons(cfg, callback.SessionName)
 		msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", callback.SessionName)
-		telegram.EditMessageWithKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, msg, buttons)
+		if len(buttons) == 0 {
+			if err := telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "No agent providers are configured. Send /new again."); err != nil {
+				loggingpkg.ListenLog("[callback:new] failed to remove back selection keyboard: %v", err)
+			}
+			return
+		}
+		if err := telegram.EditMessageWithKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, msg, buttons); err != nil {
+			loggingpkg.ListenLog("[callback:new] failed to edit back selection keyboard: %v", err)
+		}
 	default:
 		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Unsupported selection. Send /new again.", true)
 	}
@@ -122,6 +132,9 @@ func handleNewSessionCallbackToken(cfg *configpkg.Config, cb *telegram.CallbackQ
 
 // HandleQuestionCallback handles legacy question selection callbacks
 func HandleQuestionCallback(cfg *configpkg.Config, cb *telegram.CallbackQuery, parts []string) {
+	if cfg == nil {
+		return
+	}
 	if len(parts) < 3 {
 		return
 	}
@@ -171,6 +184,11 @@ func HandleQuestionCallback(cfg *configpkg.Config, cb *telegram.CallbackQuery, p
 
 // HandleNewWithProvider creates a session after provider selection via inline keyboard
 func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, sessionName, providerName string) {
+	if cfg == nil {
+		return
+	}
+	ensureNewSessionsMap(cfg)
+
 	existing, exists := cfg.Sessions[sessionName]
 	if exists && existing != nil && existing.TopicID != 0 {
 		if cb.Message != nil {
@@ -194,9 +212,6 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		workDir = existing.Path
 	}
 
-	if cfg.Sessions == nil {
-		cfg.Sessions = make(map[string]*configpkg.SessionInfo)
-	}
 	cfg.Sessions[sessionName] = &configpkg.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,

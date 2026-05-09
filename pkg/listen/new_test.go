@@ -2,6 +2,7 @@ package listen
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
@@ -71,6 +72,67 @@ func TestNewAgentButtonsUseCompactCallbacks(t *testing.T) {
 		if !strings.HasPrefix(callback, "new:") || len(callback) > 64 {
 			t.Fatalf("agent callback = %q, want compact callback", callback)
 		}
+	}
+}
+
+func TestEnsureNewSessionsMapInitializesMissingMap(t *testing.T) {
+	cfg := &configpkg.Config{}
+	ensureNewSessionsMap(cfg)
+	if cfg.Sessions == nil {
+		t.Fatal("Sessions map was not initialized")
+	}
+}
+
+func TestSaveNewSessionCallbackConcurrent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const count = 25
+	tokens := make(chan string, count)
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, err := saveNewSessionCallback(newSessionCallback{
+				Action:      "agent",
+				SessionName: "demo",
+				AgentName:   "codex",
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			tokens <- token
+		}()
+	}
+	wg.Wait()
+	close(tokens)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("saveNewSessionCallback failed: %v", err)
+		}
+	}
+
+	seen := make(map[string]bool)
+	for token := range tokens {
+		if seen[token] {
+			t.Fatalf("duplicate token saved: %s", token)
+		}
+		seen[token] = true
+		record, ok := loadNewSessionCallback(token)
+		if !ok {
+			t.Fatalf("token was not persisted: %s", token)
+		}
+		if record.Action != "agent" || record.SessionName != "demo" || record.AgentName != "codex" {
+			t.Fatalf("callback record = %#v", record)
+		}
+	}
+	if len(seen) != count {
+		t.Fatalf("saved %d tokens, want %d", len(seen), count)
 	}
 }
 

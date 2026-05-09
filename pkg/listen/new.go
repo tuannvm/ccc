@@ -18,7 +18,16 @@ import (
 
 // HandleNewCommand handles the /new command - create/restart session
 func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string) {
-	cfg, _ = configpkg.Load()
+	fresh, err := configpkg.Load()
+	if err != nil || fresh == nil {
+		loggingpkg.ListenLog("[/new] failed to load config: %v", err)
+		if cfg != nil {
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to load config: %v", err))
+		}
+		return
+	}
+	cfg = fresh
+	ensureNewSessionsMap(cfg)
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/new"))
 
 	if arg != "" {
@@ -34,6 +43,10 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 			return
 		}
 		sessionInfo := cfg.Sessions[sessionName]
+		if sessionInfo == nil {
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Session '%s' is missing config. Use /new <name> to create it again.", sessionName))
+			return
+		}
 		workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 		if _, err := os.Stat(workDir); os.IsNotExist(err) {
 			os.MkdirAll(workDir, 0755)
@@ -57,6 +70,12 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 
 // HandleNewWithArg handles /new <name> with arguments
 func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string) {
+	if cfg == nil {
+		loggingpkg.ListenLog("[/new] ignored request with nil config")
+		return
+	}
+	ensureNewSessionsMap(cfg)
+
 	providerName := ""
 	sessionInput := arg
 	providerWasExplicit := false
@@ -220,11 +239,14 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 func sendNewAgentSelection(cfg *configpkg.Config, chatID, threadID int64, sessionName string) {
 	buttons := newAgentButtons(cfg, sessionName)
 	if len(buttons) == 0 {
-		telegram.SendMessage(cfg, chatID, threadID, "❌ No agent providers are configured.")
+		telegram.SendMessage(cfg, chatID, threadID, "❌ No agent providers are configured, or Telegram selection controls could not be created. Try /new again.")
 		return
 	}
 	msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", sessionName)
-	telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
+	if err := telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons); err != nil {
+		loggingpkg.ListenLog("[/new] failed to send agent selection for %s: %v", sessionName, err)
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to show agent choices: %v", err))
+	}
 }
 
 func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.InlineKeyboardButton {
@@ -258,7 +280,9 @@ func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, mes
 	if len(buttons) == 0 {
 		msg := fmt.Sprintf("❌ No %s provider/model is configured.", agentOptionLabel(agentName))
 		if messageID != 0 {
-			telegram.EditMessageRemoveKeyboard(cfg, chatID, messageID, msg)
+			if err := telegram.EditMessageRemoveKeyboard(cfg, chatID, messageID, msg); err != nil {
+				loggingpkg.ListenLog("[/new] failed to edit empty provider selection for %s: %v", sessionName, err)
+			}
 		} else {
 			telegram.SendMessage(cfg, chatID, threadID, msg)
 		}
@@ -272,10 +296,21 @@ func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, mes
 
 	msg := fmt.Sprintf("Create session\nsession: %s\nagent: %s\n\nStep 2/2: choose provider/model:", sessionName, agentOptionLabel(agentName))
 	if messageID != 0 {
-		telegram.EditMessageWithKeyboard(cfg, chatID, messageID, msg, buttons)
+		if err := telegram.EditMessageWithKeyboard(cfg, chatID, messageID, msg, buttons); err != nil {
+			loggingpkg.ListenLog("[/new] failed to edit provider selection for %s: %v", sessionName, err)
+		}
 		return
 	}
-	telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons)
+	if err := telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons); err != nil {
+		loggingpkg.ListenLog("[/new] failed to send provider selection for %s: %v", sessionName, err)
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to show provider choices: %v", err))
+	}
+}
+
+func ensureNewSessionsMap(cfg *configpkg.Config) {
+	if cfg != nil && cfg.Sessions == nil {
+		cfg.Sessions = make(map[string]*configpkg.SessionInfo)
+	}
 }
 
 func newProviderButtonsForAgent(cfg *configpkg.Config, sessionName, agentName string) [][]telegram.InlineKeyboardButton {

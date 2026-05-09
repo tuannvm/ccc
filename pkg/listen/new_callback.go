@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 )
 
 const newSessionCallbackTTL = 24 * time.Hour
+
+var newSessionCallbackMu sync.Mutex
 
 type newSessionCallback struct {
 	Action       string `json:"action"`
@@ -35,6 +38,9 @@ func newSessionCallbackData(record newSessionCallback) string {
 }
 
 func saveNewSessionCallback(record newSessionCallback) (string, error) {
+	newSessionCallbackMu.Lock()
+	defer newSessionCallbackMu.Unlock()
+
 	callbacks, err := loadNewSessionCallbacks()
 	if err != nil {
 		callbacks = make(map[string]newSessionCallback)
@@ -63,6 +69,9 @@ func saveNewSessionCallback(record newSessionCallback) (string, error) {
 }
 
 func loadNewSessionCallback(token string) (newSessionCallback, bool) {
+	newSessionCallbackMu.Lock()
+	defer newSessionCallbackMu.Unlock()
+
 	callbacks, err := loadNewSessionCallbacks()
 	if err != nil {
 		return newSessionCallback{}, false
