@@ -435,3 +435,62 @@ func TestBuildAgentCommandCodexRejectsWorktree(t *testing.T) {
 		t.Fatal("buildAgentCommand(codex worktree) error = nil, want error")
 	}
 }
+
+func TestRunClaudeRawInstallsHooksForCodexProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	projectWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockCodex := filepath.Join(tmpDir, "codex")
+	if err := os.WriteFile(mockCodex, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origCodexPath := CodexPath
+	CodexPath = mockCodex
+	defer func() { CodexPath = origCodexPath }()
+
+	called := false
+	var gotSessionName, gotProviderName, gotPath string
+	err = RunClaudeRaw(false, "", "codex", "", "", func(_ *configpkg.Config, sessionName string, info *configpkg.SessionInfo) error {
+		called = true
+		gotSessionName = sessionName
+		if info != nil {
+			gotProviderName = info.ProviderName
+			gotPath = info.Path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunClaudeRaw(codex) error = %v", err)
+	}
+	if !called {
+		t.Fatal("ensureHooks was not called for codex provider")
+	}
+	if gotSessionName != "project" {
+		t.Fatalf("sessionName = %q, want project", gotSessionName)
+	}
+	if gotProviderName != "codex" {
+		t.Fatalf("ProviderName = %q, want codex", gotProviderName)
+	}
+	if gotPath != projectWd {
+		t.Fatalf("Path = %q, want %q", gotPath, projectWd)
+	}
+}

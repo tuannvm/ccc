@@ -279,7 +279,7 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	// OTP permission check for all other tools
 	if !callbacks.IsOTPEnabled(cfg) {
 		// No OTP configured, auto-allow everything
-		OutputPermissionDecision("allow", "OTP not configured")
+		OutputPermissionDecisionForHook(hookData, "allow", "OTP not configured")
 		return nil
 	}
 
@@ -294,7 +294,7 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 	// Check for a valid OTP grant (approved within the last 5 minutes)
 	if callbacks.HasValidOTPGrant(tmuxName) {
-		OutputPermissionDecision("allow", "OTP grant still valid")
+		OutputPermissionDecisionForHook(hookData, "allow", "OTP grant still valid")
 		return nil
 	}
 
@@ -354,17 +354,17 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	if err != nil {
 		HookLog("otp-request: timeout or error: %v", err)
 		callbacks.SendMessage(cfg, cfg.GroupID, topicID, "⏰ OTP timeout - permission denied")
-		OutputPermissionDecision("deny", "OTP approval timed out")
+		OutputPermissionDecisionForHook(hookData, "deny", "OTP approval timed out")
 		return nil
 	}
 
 	if approved {
 		HookLog("otp-request: approved for session=%s tool=%s", sessName, hookData.ToolName)
 		callbacks.WriteOTPGrant(tmuxName)
-		OutputPermissionDecision("allow", "Approved via OTP")
+		OutputPermissionDecisionForHook(hookData, "allow", "Approved via OTP")
 	} else {
 		HookLog("otp-request: denied for session=%s tool=%s", sessName, hookData.ToolName)
-		OutputPermissionDecision("deny", "Denied via OTP")
+		OutputPermissionDecisionForHook(hookData, "deny", "Denied via OTP")
 	}
 
 	return nil
@@ -372,15 +372,40 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 // OutputPermissionDecision writes the PreToolUse hook response to stdout
 func OutputPermissionDecision(decision, reason string) {
-	response := map[string]any{
+	response := ClaudePermissionDecisionResponse(decision, reason)
+	if response == nil {
+		return
+	}
+	data, _ := json.Marshal(response)
+	fmt.Println(string(data))
+}
+
+// OutputPermissionDecisionForHook writes the permission response appropriate for
+// the agent that invoked the hook.
+func OutputPermissionDecisionForHook(hookData HookData, decision, reason string) {
+	response := PermissionDecisionResponseForHook(hookData, decision, reason)
+	if response == nil {
+		return
+	}
+	data, _ := json.Marshal(response)
+	fmt.Println(string(data))
+}
+
+func PermissionDecisionResponseForHook(hookData HookData, decision, reason string) map[string]any {
+	if hookData.InputFormat == "codex" && hookData.HookEventName == "PreToolUse" && decision == "allow" {
+		return nil
+	}
+	return ClaudePermissionDecisionResponse(decision, reason)
+}
+
+func ClaudePermissionDecisionResponse(decision, reason string) map[string]any {
+	return map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName":            "PreToolUse",
 			"permissionDecision":       decision,
 			"permissionDecisionReason": reason,
 		},
 	}
-	data, _ := json.Marshal(response)
-	fmt.Println(string(data))
 }
 
 // HandleUserPromptHook handles the UserPromptSubmit hook event

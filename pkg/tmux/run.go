@@ -83,13 +83,25 @@ func RunClaudeRaw(continueSession bool, resumeSessionID string, providerOverride
 		if provider == nil {
 			provider = providerpkg.BuiltinProvider{}
 		}
-		if ensureHooks != nil && provider.Backend() == providerpkg.BackendClaude {
-			if err := ensureHooks(config, sessionName, sessionInfo); err != nil {
+		if ensureHooks != nil && (provider.Backend() == providerpkg.BackendClaude || provider.Backend() == providerpkg.BackendCodex) {
+			hookSessionInfo := *sessionInfo
+			if providerOverride != "" {
+				hookSessionInfo.ProviderName = provider.Name()
+			} else if hookSessionInfo.ProviderName == "" && config.ActiveProvider != "" {
+				hookSessionInfo.ProviderName = config.ActiveProvider
+			}
+			if err := ensureHooks(config, sessionName, &hookSessionInfo); err != nil {
 				loggingpkg.ListenLog("Warning: Failed to ensure hooks in %s: %v", cwd, err)
 			}
 		}
 	} else if providerpkg.IsCodexProviderName(providerOverride) {
-		provider = providerpkg.CodexProvider{}
+		provider = providerpkg.CodexProvider{ProviderName: providerOverride}
+		if ensureHooks != nil {
+			fallbackInfo := &configpkg.SessionInfo{Path: effectiveCwd, ProviderName: provider.Name()}
+			if err := ensureHooks(&configpkg.Config{}, filepath.Base(cwd), fallbackInfo); err != nil {
+				loggingpkg.ListenLog("Warning: Failed to ensure hooks in %s: %v", cwd, err)
+			}
+		}
 	} else {
 		provider = providerpkg.BuiltinProvider{}
 	}

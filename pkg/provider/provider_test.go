@@ -108,3 +108,32 @@ func TestConfiguredCodexProviderResolution(t *testing.T) {
 		t.Fatalf("codex-anthropic missing from provider names: %v", GetProviderNames(cfg))
 	}
 }
+
+func TestBackendForNameUsesConfiguredBackend(t *testing.T) {
+	cfg := &configpkg.Config{
+		ActiveProvider: "custom-codex",
+		Providers: map[string]*configpkg.ProviderConfig{
+			"custom-codex": {Backend: BackendCodex},
+			"zai":          {Backend: BackendClaude},
+		},
+	}
+
+	if got := BackendForName(cfg, "custom-codex"); got != BackendCodex {
+		t.Fatalf("BackendForName(custom-codex) = %q, want %q", got, BackendCodex)
+	}
+	if got := BackendForName(cfg, "zai"); got != BackendClaude {
+		t.Fatalf("BackendForName(zai) = %q, want %q", got, BackendClaude)
+	}
+	if got := BackendForName(cfg, ""); got != BackendCodex {
+		t.Fatalf("BackendForName(active default) = %q, want %q", got, BackendCodex)
+	}
+	if got := BackendForName(cfg, "missing"); got != BackendClaude {
+		t.Fatalf("BackendForName(missing) = %q, want %q", got, BackendClaude)
+	}
+	if got := BackendForName(nil, "some-name"); got != BackendClaude {
+		t.Fatalf("BackendForName(nil, some-name) = %q, want %q", got, BackendClaude)
+	}
+	if got := BackendForName(nil, "codex"); got != BackendCodex {
+		t.Fatalf("BackendForName(nil, codex) = %q, want %q", got, BackendCodex)
+	}
+}

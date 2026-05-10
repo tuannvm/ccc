@@ -19,6 +19,7 @@ const WorktreeAutoGenerate = "AUTO"
 // Each project gets its own named window within the main "ccc" session
 // If skipRestart is true and the requested session is already active, it will skip restarting
 func SwitchSessionInWindow(sessionName string, workDir string, providerName string, sessionID string, worktreeName string, continueSession bool, skipRestart bool) error {
+	providerBackend := ResolveAgentBackend(providerName)
 	existingTarget, err := FindExistingWindow(sessionName)
 	if err != nil {
 		return err
@@ -37,7 +38,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	if skipRestart && !createdWindow {
 		// Check if the target window already has Claude or a shell running
 		// A shell means the window is ready for input and we can send commands directly
-		if WindowHasAgentRunning(target, "", providerName) || WindowHasShellRunning(target, "") {
+		if WindowHasAgentBackendRunning(target, "", providerBackend) || WindowHasShellRunning(target, "") {
 			// Target window already has Claude or shell running - skip respawn
 			// We can send commands directly without restarting
 			shouldRestart = false
@@ -45,7 +46,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 			// When skipRestart=true but we don't detect Claude or shell, be extra cautious
 			// This handles false negatives in detection where Claude is actually running
 			// Check for Claude prompt in the pane content as a fallback
-			if PaneHasActiveAgentPrompt(target, providerName) {
+			if PaneHasActiveAgentBackendPrompt(target, providerBackend) {
 				fmt.Printf("skipRestart=true: agent prompt detected in pane content (fallback detection)\n")
 				shouldRestart = false
 			}
@@ -63,12 +64,12 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		// Explicit session ID to resume - use --resume flag
 		runCmd += " --resume " + shell.Quote(sessionID)
 	} else if continueSession {
-		if providerpkg.IsCodexProviderName(providerName) {
+		if providerpkg.IsCodexBackend(providerBackend) {
 			runCmd += " -c"
 			fmt.Printf("Codex backend will resume the last session\n")
 		} else {
 			// Check if Claude is actually running before adding -c flag.
-			if WindowHasAgentRunning(target, "", providerName) {
+			if WindowHasAgentBackendRunning(target, "", providerBackend) {
 				runCmd += " -c"
 				fmt.Printf("Agent is running, will continue existing session\n")
 			} else {
@@ -123,19 +124,19 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		respawnComplete := false
 		for time.Now().Before(deadline) {
 			time.Sleep(200 * time.Millisecond)
-			if !WindowHasAgentRunning(target, "", providerName) {
+			if !WindowHasAgentBackendRunning(target, "", providerBackend) {
 				respawnComplete = true
 				fmt.Printf("Pane respawn complete, shell is ready\n")
 				break
 			}
 		}
 
-		if !respawnComplete && WindowHasAgentRunning(target, "", providerName) {
+		if !respawnComplete && WindowHasAgentBackendRunning(target, "", providerBackend) {
 			return fmt.Errorf("pane respawn timed out - still shows agent running after 5 seconds")
 		}
 
 		// Verify we have a shell running now
-		if WindowHasAgentRunning(target, "", providerName) {
+		if WindowHasAgentBackendRunning(target, "", providerBackend) {
 			return fmt.Errorf("pane still shows agent running after respawn - cannot proceed safely")
 		}
 
@@ -146,7 +147,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 		}
 	} else {
 		// Not restarting - check what's running in the target window
-		if WindowHasAgentRunning(target, "", providerName) {
+		if WindowHasAgentBackendRunning(target, "", providerBackend) {
 			// The selected backend is already running in this window - don't send any command
 			// The user can continue their existing session
 			fmt.Printf("Agent already running in target window, skipping command send\n")
@@ -210,7 +211,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	// polling during resume can interfere with message delivery by sending keys.
 	if shouldRestart && sessionID == "" {
 		fmt.Printf("Waiting for agent startup...\n")
-		if err := WaitForAgent(target, providerName, 60*time.Second); err != nil {
+		if err := WaitForAgentBackend(target, providerBackend, 60*time.Second); err != nil {
 			return fmt.Errorf("agent did not start in time: %w", err)
 		}
 		fmt.Printf("Agent prompt detected, startup complete\n")
@@ -232,7 +233,7 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 			// Wait for Claude to exit (pane transitions from Claude to shell)
 			for i := 0; i < 120; i++ { // up to ~4 minutes (2s * 120)
 				time.Sleep(2 * time.Second)
-				if !WindowHasAgentRunning(target, "", providerName) && WindowHasShellRunning(target, "") {
+				if !WindowHasAgentBackendRunning(target, "", providerBackend) && WindowHasShellRunning(target, "") {
 					// Claude exited, shell is back — safe to send cd
 					time.Sleep(500 * time.Millisecond) // let shell prompt settle
 					cdCmd := "cd " + shell.Quote(newWorktreePath)

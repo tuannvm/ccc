@@ -1,11 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/tuannvm/ccc/pkg/auth"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
 	"github.com/tuannvm/ccc/pkg/lookup"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/session"
 	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/tmux"
@@ -86,14 +90,72 @@ func handleStopRetry(sessName string, topicID int64, transcriptPath string) erro
 }
 
 func installHooksToCurrentDir() error {
-	return hooks.InstallHooksToCurrentDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+	cfg, err := configpkg.Load()
+	if err != nil || cfg == nil {
+		return hooks.InstallHooksToCurrentDir()
+	}
+
+	sessionName, sessionInfo := lookup.FindSessionForPath(cfg, cwd)
+	providerName := ""
+	if sessionInfo != nil {
+		providerName = sessionInfo.ProviderName
+	}
+	if providerName == "" {
+		providerName = cfg.ActiveProvider
+	}
+	if !providerpkg.IsCodexBackend(providerpkg.BackendForName(cfg, providerName)) {
+		return hooks.InstallHooksToCurrentDir()
+	}
+
+	if sessionName == "" {
+		sessionName = "current"
+	}
+	effectiveInfo := &configpkg.SessionInfo{Path: cwd, ProviderName: providerName}
+	if sessionInfo != nil {
+		sessionCopy := *sessionInfo
+		if sessionCopy.ProviderName == "" {
+			sessionCopy.ProviderName = providerName
+		}
+		if sessionCopy.Path == "" {
+			sessionCopy.Path = cwd
+		}
+		effectiveInfo = &sessionCopy
+	}
+
+	ensureCfg := &hooks.EnsureHooksForSessionConfig{
+		Config:            cfg,
+		SessionName:       sessionName,
+		SessionInfo:       effectiveInfo,
+		GetSessionWorkDir: lookup.GetSessionWorkDir,
+	}
+	if err := hooks.EnsureCodexHooksForSession(ensureCfg); err != nil {
+		return err
+	}
+	projectPath := lookup.GetSessionWorkDir(cfg, sessionName, effectiveInfo)
+	fmt.Printf("Codex hooks installed/trusted in %s/.codex/hooks.json\n", projectPath)
+	return nil
 }
 
 func ensureHooksForSession(config *configpkg.Config, sessionName string, sessionInfo *configpkg.SessionInfo) error {
-	return hooks.EnsureHooksForSession(&hooks.EnsureHooksForSessionConfig{
+	cfg := &hooks.EnsureHooksForSessionConfig{
 		Config:            config,
 		SessionName:       sessionName,
 		SessionInfo:       sessionInfo,
 		GetSessionWorkDir: lookup.GetSessionWorkDir,
-	})
+	}
+	providerName := ""
+	if sessionInfo != nil {
+		providerName = sessionInfo.ProviderName
+	}
+	if providerName == "" && config != nil {
+		providerName = config.ActiveProvider
+	}
+	if providerpkg.IsCodexBackend(providerpkg.BackendForName(config, providerName)) {
+		return hooks.EnsureCodexHooksForSession(cfg)
+	}
+	return hooks.EnsureHooksForSession(cfg)
 }

@@ -88,7 +88,8 @@ func buildStatusMessage(cfg *configpkg.Config, threadID int64) string {
 func buildSessionStatus(cfg *configpkg.Config, sessionName string, info *configpkg.SessionInfo) string {
 	state := "stopped"
 	if target, err := tmux.FindExistingWindow(sessionName); err == nil && target != "" {
-		if tmux.WindowHasAgentRunning(target, "", effectiveProviderName(cfg, info)) {
+		providerName := effectiveProviderName(cfg, info)
+		if tmux.WindowHasAgentBackendRunning(target, "", providerBackend(cfg, providerName)) {
 			state = "running"
 		} else {
 			state = "ready"

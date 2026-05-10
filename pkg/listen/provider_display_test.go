@@ -60,13 +60,32 @@ func TestProviderModelOptionLabel(t *testing.T) {
 }
 
 func TestAgentOptionLabel(t *testing.T) {
-	if got := agentOptionLabel("claude"); got != "Claude CLI" {
+	if got := agentOptionLabel(nil, "claude"); got != "Claude CLI" {
 		t.Fatalf("claude label = %q", got)
 	}
-	if got := agentOptionLabel("codex"); got != "Codex CLI" {
+	if got := agentOptionLabel(nil, "codex"); got != "Codex CLI" {
 		t.Fatalf("codex label = %q", got)
 	}
-	if got := agentOptionLabel("anthropic"); got != "Claude" {
+	if got := agentOptionLabel(nil, "anthropic"); got != "Claude" {
 		t.Fatalf("anthropic label = %q", got)
+	}
+}
+
+func TestAgentDisplayNameUsesConfiguredBackend(t *testing.T) {
+	cfg := &configpkg.Config{
+		Providers: map[string]*configpkg.ProviderConfig{
+			"custom-codex": {Backend: "codex"},
+			"zai":          {Backend: "claude"},
+		},
+	}
+
+	if got := agentDisplayName(cfg, "custom-codex"); got != "Codex" {
+		t.Fatalf("custom codex agent display = %q, want Codex", got)
+	}
+	if got := agentOptionLabel(cfg, "custom-codex"); got != "Codex CLI" {
+		t.Fatalf("custom codex agent option = %q, want Codex CLI", got)
+	}
+	if got := agentDisplayName(cfg, "zai"); got != "Claude" {
+		t.Fatalf("claude provider agent display = %q, want Claude", got)
 	}
 }

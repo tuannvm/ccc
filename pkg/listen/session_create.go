@@ -30,7 +30,7 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 
 	// Restart the session. Codex does not persist a Claude transcript session id,
 	// so continuing maps to `codex resume --last` in the backend runner.
-	continueSession := resumeSessionID != "" || isCodexProviderName(providerName)
+	continueSession := resumeSessionID != "" || isCodexProvider(cfg, providerName)
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, continueSession, false); err != nil {
 		return fmt.Errorf("failed to attach to session '%s': %w", sessionName, err)
 	}
@@ -40,7 +40,7 @@ func AttachToExistingSession(cfg *configpkg.Config, sessionName string, sessionI
 		target, err := tmux.GetWindowTarget(sessionName)
 		if err != nil {
 			fmt.Printf("Warning: failed to get window for message: %v\n", err)
-		} else if err := tmux.SendKeysForProvider(target, message, providerName); err != nil {
+		} else if err := tmux.SendKeysForBackend(target, message, providerBackend(cfg, providerName)); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -77,7 +77,7 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 		target, err := tmux.GetWindowTarget(sessionName)
 		if err != nil {
 			fmt.Printf("Warning: failed to get window for message: %v\n", err)
-		} else if err := tmux.SendKeysForProvider(target, message, providerName); err != nil {
+		} else if err := tmux.SendKeysForBackend(target, message, providerBackend(cfg, providerName)); err != nil {
 			fmt.Printf("Warning: failed to send message: %v\n", err)
 		}
 	}
@@ -247,11 +247,11 @@ func StartDetached(name string, workDir string, prompt string) error {
 		return fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
-	if err := tmux.WaitForAgent(target, providerName, 30*1e9); err != nil { // 30s
+	if err := tmux.WaitForAgentBackend(target, providerBackend(config, providerName), 30*1e9); err != nil { // 30s
 		return fmt.Errorf("agent did not start in time: %w", err)
 	}
 
-	if err := tmux.SendKeysForProvider(target, prompt, providerName); err != nil {
+	if err := tmux.SendKeysForBackend(target, prompt, providerBackend(config, providerName)); err != nil {
 		return fmt.Errorf("failed to send prompt: %w", err)
 	}
 

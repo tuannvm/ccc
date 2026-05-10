@@ -50,7 +50,7 @@ func HandleTeamCreateCommand(cfg *configpkg.Config, chatID, threadID int64, text
 			var buttons [][]telegram.InlineKeyboardButton
 			providerNames := providerpkg.GetProviderNames(cfg)
 			for _, name := range providerNames {
-				label := agentOptionLabel(name)
+				label := agentOptionLabel(cfg, name)
 				if cfg.ActiveProvider == name {
 					label += " ⭐"
 				}

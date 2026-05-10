@@ -33,7 +33,7 @@ func EnsureAgentHooks(cfg *configpkg.Config, sessionName string, info *configpkg
 		SessionInfo:       info,
 		GetSessionWorkDir: lookup.GetSessionWorkDir,
 	}
-	if isCodexProviderName(effectiveProviderName(cfg, info)) {
+	if isCodexProvider(cfg, effectiveProviderName(cfg, info)) {
 		return hooks.EnsureCodexHooksForSession(ensureCfg)
 	}
 	return hooks.EnsureHooksForSession(ensureCfg)

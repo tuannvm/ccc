@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 // WindowHasClaudeRunning checks if the tmux window has a functional Claude/ccc process running
@@ -22,24 +25,46 @@ func WindowHasClaudeRunning(windowID string, windowName string) bool {
 }
 
 // WindowHasAgentRunning checks if the active pane has the selected backend running.
+// Deprecated: callers with loaded config should resolve the backend once and
+// call WindowHasAgentBackendRunning.
 func WindowHasAgentRunning(windowID string, windowName string, providerName string) bool {
+	return WindowHasAgentBackendRunning(windowID, windowName, ResolveAgentBackend(providerName))
+}
+
+// WindowHasAgentBackendRunning checks if the active pane has the selected backend running.
+func WindowHasAgentBackendRunning(windowID string, windowName string, backend string) bool {
 	target := TargetByID(windowID, windowName)
 	if target == "" {
 		return false
 	}
-	if isCodexProviderName(providerName) {
+	if providerpkg.IsCodexBackend(backend) {
 		return TargetHasCodexRunning(target)
 	}
 	return TargetHasClaudeRunning(target)
 }
 
 func isCodexProviderName(name string) bool {
-	return strings.EqualFold(name, "codex") || strings.EqualFold(name, "codex-anthropic")
+	return providerpkg.IsCodexProviderName(name)
 }
 
-// IsCodexProviderName reports whether a provider name selects the Codex backend.
+// IsCodexProviderName reports whether a provider name is one of the built-in
+// Codex provider names. Use ResolveAgentBackend for configured providers.
 func IsCodexProviderName(name string) bool {
 	return isCodexProviderName(name)
+}
+
+// IsCodexBackend reports whether a backend name selects the Codex runtime.
+func IsCodexBackend(backend string) bool {
+	return providerpkg.IsCodexBackend(backend)
+}
+
+// ResolveAgentBackend resolves a provider name to the backend used by its TUI.
+func ResolveAgentBackend(providerName string) string {
+	cfg, err := configpkg.Load()
+	if err == nil {
+		return providerpkg.BackendForName(cfg, providerName)
+	}
+	return providerpkg.BackendForName(nil, providerName)
 }
 
 // TargetHasClaudeRunning checks if a tmux target (pane or window) has Claude running

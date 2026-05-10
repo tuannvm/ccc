@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/tuannvm/ccc/pkg/config"
 )
 
 func TestInstallCodexHooksToPathMergesAndVerifies(t *testing.T) {
@@ -54,5 +57,138 @@ func TestInstallCodexHooksToPathMergesAndVerifies(t *testing.T) {
 	preEntries := hooksMap["PreToolUse"].([]any)
 	if len(preEntries) != 1 {
 		t.Fatalf("PreToolUse hooks len = %d, want 1", len(preEntries))
+	}
+}
+
+func TestCodexCommandHookHashMatchesCodexTrustIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		spec codexHookTrustSpec
+		want string
+	}{
+		{
+			name: "pre tool use",
+			spec: codexHookTrustSpec{
+				EventName: "pre_tool_use",
+				Matcher:   "*",
+				Command:   "/Users/tuannvm/bin/ccc hook-permission",
+				Timeout:   300000,
+			},
+			want: "sha256:31a226e3617d1ce95213a671c98d062d882f281945ca93c175bf823ec7d1b6db",
+		},
+		{
+			name: "post tool use",
+			spec: codexHookTrustSpec{
+				EventName: "post_tool_use",
+				Matcher:   "*",
+				Command:   "/Users/tuannvm/bin/ccc hook-post-tool",
+				Timeout:   600,
+			},
+			want: "sha256:bf989ca96c9121d6af05f052c835dfd8ad814c1a510c842b4fd9aa25a47a631c",
+		},
+		{
+			name: "stop",
+			spec: codexHookTrustSpec{
+				EventName: "stop",
+				Command:   "/Users/tuannvm/bin/ccc hook-stop",
+				Timeout:   600,
+			},
+			want: "sha256:ad26e4e5ec80008dffb7c9598dccb7ad08283956e7e477f217cb17570c272caf",
+		},
+		{
+			name: "user prompt submit",
+			spec: codexHookTrustSpec{
+				EventName: "user_prompt_submit",
+				Command:   "/Users/tuannvm/bin/ccc hook-user-prompt",
+				Timeout:   600,
+			},
+			want: "sha256:5b1ece6ed7c85fa32359a68fb502b6e7a1a09a3dbfbc47d1e9b3585a9e959df5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexCommandHookHash(tt.spec); got != tt.want {
+				t.Fatalf("codexCommandHookHash() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpsertCodexHookTrustStatesReplacesExistingState(t *testing.T) {
+	input := "[profile]\n" +
+		"model = \"gpt-5.5\"\n\n" +
+		"[hooks.state]\n\n" +
+		"[hooks.state.\"/tmp/project/.codex/hooks.json:pre_tool_use:0:0\"]\n" +
+		"trusted_hash = \"sha256:old\"\n\n" +
+		"[hooks.state.\"/tmp/other/.codex/hooks.json:stop:0:0\"]\n" +
+		"trusted_hash = \"sha256:keep\"\n"
+
+	got := upsertCodexHookTrustStates(input, map[string]string{
+		"/tmp/project/.codex/hooks.json:pre_tool_use:0:0": "sha256:new",
+		"/tmp/project/.codex/hooks.json:stop:0:0":         "sha256:stop",
+	})
+
+	for _, want := range []string{
+		"[hooks.state.\"/tmp/project/.codex/hooks.json:pre_tool_use:0:0\"]",
+		"trusted_hash = \"sha256:new\"",
+		"[hooks.state.\"/tmp/project/.codex/hooks.json:stop:0:0\"]",
+		"trusted_hash = \"sha256:stop\"",
+		"[hooks.state.\"/tmp/other/.codex/hooks.json:stop:0:0\"]",
+		"trusted_hash = \"sha256:keep\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("updated TOML missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "sha256:old") {
+		t.Fatalf("old trusted hash was not replaced:\n%s", got)
+	}
+}
+
+func TestEnsureCodexHooksUsesActiveProviderConfigDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	codexHome := filepath.Join(tmpDir, "codex-home")
+	defaultHome := filepath.Join(tmpDir, "home")
+	t.Setenv("HOME", defaultHome)
+
+	cfg := &config.Config{
+		ActiveProvider: "work-codex",
+		Providers: map[string]*config.ProviderConfig{
+			"work-codex": {
+				Backend:   "codex",
+				ConfigDir: codexHome,
+			},
+		},
+		Sessions: map[string]*config.SessionInfo{
+			"project": {Path: projectDir},
+		},
+	}
+
+	err := EnsureCodexHooksForSession(&EnsureHooksForSessionConfig{
+		Config:      cfg,
+		SessionName: "project",
+		SessionInfo: cfg.Sessions["project"],
+		GetSessionWorkDir: func(_ *config.Config, _ string, info *config.SessionInfo) string {
+			return info.Path
+		},
+	})
+	if err != nil {
+		t.Fatalf("EnsureCodexHooksForSession: %v", err)
+	}
+
+	if !VerifyCodexHooksForProject(projectDir) {
+		t.Fatalf("Codex hooks were not installed for project")
+	}
+	configData, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read Codex config.toml: %v", err)
+	}
+	if !strings.Contains(string(configData), filepath.Join(projectDir, ".codex", "hooks.json")+":pre_tool_use:0:0") {
+		t.Fatalf("active provider config did not receive project hook trust state:\n%s", string(configData))
+	}
+	if _, err := os.Stat(filepath.Join(defaultHome, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("default Codex config should not be used when active provider has ConfigDir, stat err=%v", err)
 	}
 }

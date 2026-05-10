@@ -157,6 +157,9 @@ func TestHookDataJSON(t *testing.T) {
 	if hookData.SessionID != "abc123" {
 		t.Errorf("SessionID = %q, want %q", hookData.SessionID, "abc123")
 	}
+	if hookData.InputFormat != "claude" {
+		t.Errorf("InputFormat = %q, want claude", hookData.InputFormat)
+	}
 }
 
 func TestHookDataCodexCamelCaseJSON(t *testing.T) {
@@ -177,6 +180,46 @@ func TestHookDataCodexCamelCaseJSON(t *testing.T) {
 	}
 	if parsed.ToolName != "Shell" {
 		t.Errorf("ToolName = %q, want Shell", parsed.ToolName)
+	}
+	if parsed.InputFormat != "codex" {
+		t.Errorf("InputFormat = %q, want codex", parsed.InputFormat)
+	}
+}
+
+func TestPermissionDecisionResponseForCodexPreToolUseAllowIsEmpty(t *testing.T) {
+	hookData := HookData{HookEventName: "PreToolUse", InputFormat: "codex"}
+	if got := PermissionDecisionResponseForHook(hookData, "allow", "OTP not configured"); got != nil {
+		t.Fatalf("Codex PreToolUse allow response = %#v, want nil", got)
+	}
+}
+
+func TestPermissionDecisionResponseForCodexPreToolUseDenyUsesReason(t *testing.T) {
+	hookData := HookData{HookEventName: "PreToolUse", InputFormat: "codex"}
+	got := PermissionDecisionResponseForHook(hookData, "deny", "Denied via OTP")
+	if got == nil {
+		t.Fatal("Codex PreToolUse deny response = nil, want response")
+	}
+	specific := got["hookSpecificOutput"].(map[string]any)
+	if specific["hookEventName"] != "PreToolUse" {
+		t.Fatalf("hookEventName = %q, want PreToolUse", specific["hookEventName"])
+	}
+	if specific["permissionDecision"] != "deny" {
+		t.Fatalf("permissionDecision = %q, want deny", specific["permissionDecision"])
+	}
+	if specific["permissionDecisionReason"] != "Denied via OTP" {
+		t.Fatalf("permissionDecisionReason = %q, want Denied via OTP", specific["permissionDecisionReason"])
+	}
+}
+
+func TestPermissionDecisionResponseForClaudeAllowIsPreserved(t *testing.T) {
+	hookData := HookData{HookEventName: "PreToolUse", InputFormat: "claude"}
+	got := PermissionDecisionResponseForHook(hookData, "allow", "OTP not configured")
+	if got == nil {
+		t.Fatal("Claude PreToolUse allow response = nil, want response")
+	}
+	specific := got["hookSpecificOutput"].(map[string]any)
+	if specific["permissionDecision"] != "allow" {
+		t.Fatalf("permissionDecision = %q, want allow", specific["permissionDecision"])
 	}
 }
 

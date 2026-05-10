@@ -128,6 +128,26 @@ func IsCodexProviderName(name string) bool {
 	return strings.EqualFold(name, BackendCodex) || strings.EqualFold(name, "codex-anthropic")
 }
 
+// IsCodexBackend reports whether a backend name selects the Codex runtime.
+func IsCodexBackend(backend string) bool {
+	return strings.EqualFold(backend, BackendCodex)
+}
+
+// BackendForName resolves a provider name to its runtime backend.
+// Unknown providers default to Claude so legacy configs keep their previous behavior.
+func BackendForName(cfg *config.Config, name string) string {
+	if p := GetProvider(cfg, name); p != nil {
+		backend := p.Backend()
+		if backend != "" {
+			return backend
+		}
+	}
+	if IsCodexProviderName(name) {
+		return BackendCodex
+	}
+	return BackendClaude
+}
+
 // ConfiguredProvider represents a provider configured in config.json
 type ConfiguredProvider struct {
 	ProviderName string

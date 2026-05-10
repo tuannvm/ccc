@@ -58,25 +58,29 @@ func activeDefaultProviderSummary(cfg *configpkg.Config) string {
 	return fmt.Sprintf("provider: %s\nsource: %s", defaultProviderName(cfg), providerSource(cfg, nil))
 }
 
-func isCodexProviderName(providerName string) bool {
-	return providerpkg.IsCodexProviderName(providerName)
+func providerBackend(cfg *configpkg.Config, providerName string) string {
+	return providerpkg.BackendForName(cfg, providerName)
 }
 
-func agentDisplayName(providerName string) string {
-	if isCodexProviderName(providerName) {
+func isCodexProvider(cfg *configpkg.Config, providerName string) bool {
+	return providerpkg.IsCodexBackend(providerBackend(cfg, providerName))
+}
+
+func agentDisplayName(cfg *configpkg.Config, providerName string) string {
+	if isCodexProvider(cfg, providerName) {
 		return "Codex"
 	}
 	return "Claude"
 }
 
-func agentOptionLabel(providerName string) string {
+func agentOptionLabel(cfg *configpkg.Config, providerName string) string {
 	if strings.EqualFold(providerName, "claude") {
 		return "Claude CLI"
 	}
 	if providerName == builtinProviderName {
 		return "Claude"
 	}
-	if isCodexProviderName(providerName) {
+	if isCodexProvider(cfg, providerName) {
 		return "Codex CLI"
 	}
 	return providerName

@@ -167,7 +167,8 @@ func buildCLISessionRow(cfg *configpkg.Config, name string, info *configpkg.Sess
 	}
 	state := "stopped"
 	if target, err := tmux.FindExistingWindow(name); err == nil && target != "" {
-		if tmux.WindowHasAgentRunning(target, "", effectiveProviderName(cfg, info)) {
+		providerName := effectiveProviderName(cfg, info)
+		if tmux.WindowHasAgentBackendRunning(target, "", providerBackend(cfg, providerName)) {
 			state = "running"
 		} else {
 			state = "ready"

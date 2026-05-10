@@ -232,7 +232,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 	} else {
-		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, providerMsg, agentDisplayName(providerName)))
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, providerMsg, agentDisplayName(cfg, providerName)))
 	}
 }
 
@@ -278,7 +278,7 @@ func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.Inl
 func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, messageID int, sessionName, agentName string) {
 	buttons := newProviderButtonsForAgent(cfg, sessionName, agentName)
 	if len(buttons) == 0 {
-		msg := fmt.Sprintf("❌ No %s provider/model is configured.", agentOptionLabel(agentName))
+		msg := fmt.Sprintf("❌ No %s provider/model is configured.", agentOptionLabel(cfg, agentName))
 		if messageID != 0 {
 			if err := telegram.EditMessageRemoveKeyboard(cfg, chatID, messageID, msg); err != nil {
 				loggingpkg.ListenLog("[/new] failed to edit empty provider selection for %s: %v", sessionName, err)
@@ -294,7 +294,7 @@ func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, mes
 		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: "← Back", CallbackData: backCallback}})
 	}
 
-	msg := fmt.Sprintf("Create session\nsession: %s\nagent: %s\n\nStep 2/2: choose provider/model:", sessionName, agentOptionLabel(agentName))
+	msg := fmt.Sprintf("Create session\nsession: %s\nagent: %s\n\nStep 2/2: choose provider/model:", sessionName, agentOptionLabel(cfg, agentName))
 	if messageID != 0 {
 		if err := telegram.EditMessageWithKeyboard(cfg, chatID, messageID, msg, buttons); err != nil {
 			loggingpkg.ListenLog("[/new] failed to edit provider selection for %s: %v", sessionName, err)

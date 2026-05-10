@@ -52,7 +52,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			// skipRestart=false so SwitchSessionInWindow starts Claude.
 			skipRestart := false
 			if winTarget, err := tmux.GetWindowTarget(sessName); err == nil {
-				if tmux.WindowHasAgentRunning(winTarget, "", providerName) {
+				if tmux.WindowHasAgentBackendRunning(winTarget, "", providerBackend(cfg, providerName)) {
 					skipRestart = true
 				}
 			}
@@ -107,7 +107,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			TelegramDelivered: true,
 		})
 
-		if err := hooks.SendFromTelegramToProvider(target, tmux.SafeName(sessName), text, providerName); err != nil {
+		if err := hooks.SendFromTelegramToBackend(target, tmux.SafeName(sessName), text, providerBackend(cfg, providerName)); err != nil {
 			loggingpkg.ListenLog("sendToTmux FAILED: target=%s err=%v", target, err)
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to send: %v", err))
 		} else {

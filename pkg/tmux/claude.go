@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 // detectConsentDialog delegates to the exported DetectConsentDialog in pane.go
@@ -105,8 +107,15 @@ func WaitForClaude(target string, timeout time.Duration) error {
 }
 
 // WaitForAgent polls until the selected backend's input prompt appears.
+// Deprecated: callers with loaded config should resolve the backend once and
+// call WaitForAgentBackend.
 func WaitForAgent(target string, providerName string, timeout time.Duration) error {
-	if isCodexProviderName(providerName) {
+	return WaitForAgentBackend(target, ResolveAgentBackend(providerName), timeout)
+}
+
+// WaitForAgentBackend polls until the selected backend has started.
+func WaitForAgentBackend(target string, backend string, timeout time.Duration) error {
+	if providerpkg.IsCodexBackend(backend) {
 		interval := 100 * time.Millisecond
 		if timeout > 10*time.Second {
 			interval = 500 * time.Millisecond
@@ -130,7 +139,14 @@ func WaitForAgent(target string, providerName string, timeout time.Duration) err
 // WaitForAgentInputPrompt waits until the selected backend is ready to accept
 // an input submission. Unlike WaitForAgent, this requires the prompt itself,
 // not just a running process.
+// Deprecated: callers with loaded config should resolve the backend once and
+// call WaitForAgentBackendInputPrompt.
 func WaitForAgentInputPrompt(target string, providerName string, timeout time.Duration) error {
+	return WaitForAgentBackendInputPrompt(target, ResolveAgentBackend(providerName), timeout)
+}
+
+// WaitForAgentBackendInputPrompt waits until the selected backend is ready to accept input.
+func WaitForAgentBackendInputPrompt(target string, backend string, timeout time.Duration) error {
 	interval := 100 * time.Millisecond
 	if timeout > 10*time.Second {
 		interval = 500 * time.Millisecond
@@ -141,17 +157,24 @@ func WaitForAgentInputPrompt(target string, providerName string, timeout time.Du
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		if PaneHasActiveAgentPrompt(target, providerName) {
+		if PaneHasActiveAgentBackendPrompt(target, backend) {
 			return nil
 		}
 		time.Sleep(interval)
 	}
-	return fmt.Errorf("timeout waiting for %s input prompt", providerName)
+	return fmt.Errorf("timeout waiting for %s input prompt", backend)
 }
 
 // PaneHasActiveAgentPrompt checks recent pane content for the selected backend prompt.
+// Deprecated: callers with loaded config should resolve the backend once and
+// call PaneHasActiveAgentBackendPrompt.
 func PaneHasActiveAgentPrompt(paneTarget string, providerName string) bool {
-	if isCodexProviderName(providerName) {
+	return PaneHasActiveAgentBackendPrompt(paneTarget, ResolveAgentBackend(providerName))
+}
+
+// PaneHasActiveAgentBackendPrompt checks recent pane content for the selected backend prompt.
+func PaneHasActiveAgentBackendPrompt(paneTarget string, backend string) bool {
+	if providerpkg.IsCodexBackend(backend) {
 		return PaneHasActiveCodexPrompt(paneTarget)
 	}
 	return PaneHasActiveClaudePrompt(paneTarget)
@@ -180,20 +203,35 @@ func SendKeys(target string, text string) error {
 }
 
 // SendKeysForProvider sends text to the selected backend's TUI.
+// Deprecated: callers with loaded config should resolve the backend once and
+// call SendKeysForBackend.
 func SendKeysForProvider(target string, text string, providerName string) error {
+	return SendKeysForBackend(target, text, ResolveAgentBackend(providerName))
+}
+
+// SendKeysForProviderWithDelay sends text to the selected backend's TUI with
+// an explicit minimum delay before submission.
+// Deprecated: callers with loaded config should resolve the backend once and
+// call SendKeysForBackendWithDelay.
+func SendKeysForProviderWithDelay(target string, text string, providerName string, delay time.Duration) error {
+	return SendKeysForBackendWithDelay(target, text, ResolveAgentBackend(providerName), delay)
+}
+
+// SendKeysForBackend sends text to the selected backend's TUI.
+func SendKeysForBackend(target string, text string, backend string) error {
 	baseDelay := 50 * time.Millisecond
 	charDelay := time.Duration(len(text)) * 500 * time.Microsecond
 	delay := baseDelay + charDelay
 	if delay > 5*time.Second {
 		delay = 5 * time.Second
 	}
-	return SendKeysForProviderWithDelay(target, text, providerName, delay)
+	return SendKeysForBackendWithDelay(target, text, backend, delay)
 }
 
-// SendKeysForProviderWithDelay sends text to the selected backend's TUI with
+// SendKeysForBackendWithDelay sends text to the selected backend's TUI with
 // an explicit minimum delay before submission.
-func SendKeysForProviderWithDelay(target string, text string, providerName string, delay time.Duration) error {
-	return sendKeysWithDelay(target, text, delay, !isCodexProviderName(providerName))
+func SendKeysForBackendWithDelay(target string, text string, backend string, delay time.Duration) error {
+	return sendKeysWithDelay(target, text, delay, !providerpkg.IsCodexBackend(backend))
 }
 
 // SendKeysWithDelay sends text to a tmux target with a specified delay

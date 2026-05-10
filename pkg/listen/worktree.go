@@ -48,7 +48,7 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 		if providerName == "" {
 			providerName = defaultProviderName(cfg)
 		}
-		if isCodexProviderName(providerName) {
+		if isCodexProvider(cfg, providerName) {
 			telegram.SendMessage(cfg, chatID, threadID, "❌ Worktree sessions require the Claude backend; Codex CLI worktrees are not supported yet.")
 			return
 		}
@@ -151,7 +151,7 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 	if providerName == "" {
 		providerName = defaultProviderName(cfg)
 	}
-	if isCodexProviderName(providerName) {
+	if isCodexProvider(cfg, providerName) {
 		telegram.SendMessage(cfg, chatID, threadID, "❌ Worktree sessions require the Claude backend; Codex CLI worktrees are not supported yet.")
 		return
 	}
