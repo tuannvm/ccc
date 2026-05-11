@@ -212,7 +212,7 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 	// Update tool call display
 	if hookData.ToolName != "" && hookData.ToolName != "AskUserQuestion" && topicID != 0 {
-		_ = WithToolStateLock(sessName, func() error {
+		if err := WithToolStateLock(sessName, func() error {
 			state := callbacks.LoadToolState(sessName)
 			state.Tools = append(state.Tools, ToolCall{
 				Name:  hookData.ToolName,
@@ -222,28 +222,35 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 			text := callbacks.FormatToolMessage(state)
 			if state.MsgID == 0 {
 				msgID, err := callbacks.SendMessageHTML(cfg, cfg.GroupID, topicID, text)
-				if err == nil && msgID > 0 {
+				if err != nil {
+					return err
+				}
+				if msgID > 0 {
 					state.MsgID = msgID
 				}
 			} else {
-				callbacks.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text)
+				if err := callbacks.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text); err != nil {
+					return err
+				}
 			}
 			callbacks.SaveToolState(sessName, state)
-			return nil
-		})
-		state := callbacks.LoadToolState(sessName)
 
-		// Record tool call in ledger
-		callbacks.AppendMessage(&ledger.MessageRecord{
-			ID:                fmt.Sprintf("tool:%s:%s:%d", hookData.SessionID, ledger.ContentHash(hookData.ToolName+callbacks.ToolInputSummary(hookData)), time.Now().UnixNano()),
-			Session:           sessName,
-			Type:              "tool_call",
-			Text:              hookData.ToolName + ": " + callbacks.ToolInputSummary(hookData),
-			Origin:            "claude",
-			TerminalDelivered: true,
-			TelegramDelivered: state.MsgID != 0,
-			TelegramMsgID:     state.MsgID,
-		})
+			// Record tool call in ledger only after the tool display state was updated.
+			callbacks.AppendMessage(&ledger.MessageRecord{
+				ID:                fmt.Sprintf("tool:%s:%s:%d", hookData.SessionID, ledger.ContentHash(hookData.ToolName+callbacks.ToolInputSummary(hookData)), time.Now().UnixNano()),
+				Session:           sessName,
+				Type:              "tool_call",
+				Text:              hookData.ToolName + ": " + callbacks.ToolInputSummary(hookData),
+				Origin:            "claude",
+				TerminalDelivered: true,
+				TelegramDelivered: state.MsgID != 0,
+				TelegramMsgID:     state.MsgID,
+			})
+			return nil
+		}); err != nil {
+			HookLog("pre-tool: failed to update tool state for session=%s tool=%s err=%v", sessName, hookData.ToolName, err)
+			return nil
+		}
 	}
 
 	// Handle AskUserQuestion - forward to Telegram with buttons

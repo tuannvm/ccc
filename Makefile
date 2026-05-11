@@ -102,7 +102,7 @@ deploy: install
 		echo "ℹ️ No ccc tmux session running"; \
 	fi
 	@echo "🧹 Stopping stale ccc run processes..."
-	@pids=$$(pgrep -f "$$HOME/bin/ccc run" 2>/dev/null || true); \
+	@pids=$$(pgrep -f "[/ ]ccc run" 2>/dev/null || true); \
 	if [ -n "$$pids" ]; then \
 		echo "$$pids" | xargs kill 2>/dev/null || true; \
 		echo "✅ stale ccc run processes stopped"; \

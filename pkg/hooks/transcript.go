@@ -295,49 +295,68 @@ func DeliverUnsentTexts(cfg *DeliverUnsentTextsConfig) int {
 	sent := 0
 	for _, block := range blocks {
 		blockID := fmt.Sprintf("reply:%s:%s", block.RequestID, ledger.ContentHash(block.Text))
-		reserved, err := ledger.AppendMessageIfAbsent(&ledger.MessageRecord{
+		if ledger.IsDelivered(cfg.SessionName, blockID, "telegram") {
+			continue
+		}
+		HookLog("deliver-text: rid=%s len=%d insert=%v preview=%s", block.RequestID, len(block.Text), cfg.InsertIntoToolMsg, Truncate(block.Text, 80))
+
+		state := cfg.LoadToolState(cfg.SessionName)
+		telegramDelivered := false
+		var tgMsgID int64
+		if cfg.InsertIntoToolMsg && state.MsgID != 0 {
+			if err := WithToolStateLock(cfg.SessionName, func() error {
+				// Insert into tool blockquote at correct time position.
+				cfg.AddTextToToolState(cfg.SessionName, block.Text, time.Now().UnixMilli())
+				state = cfg.LoadToolState(cfg.SessionName)
+				text := cfg.FormatToolMessage(state)
+				if err := cfg.EditMessageHTML(cfg.Config, cfg.Config.GroupID, state.MsgID, cfg.TopicID, text); err != nil {
+					return err
+				}
+				telegramDelivered = true
+				tgMsgID = state.MsgID
+				return nil
+			}); err != nil {
+				HookLog("deliver-text: edit failed id=%s err=%v", blockID, err)
+				continue
+			}
+		} else {
+			msg := FormatAssistantMarkdown(cfg.SessionName, rolePrefix, block.Text)
+			var err error
+			tgMsgID, err = cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
+			if err != nil {
+				// If thread not found, retry without thread_id
+				if strings.Contains(err.Error(), "message thread not found") && cfg.TopicID != 0 {
+					HookLog("deliver-text: thread not found, retrying without thread_id")
+					time.Sleep(500 * time.Millisecond)
+					tgMsgID, err = cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, 0, msg)
+				} else {
+					HookLog("deliver-text: send failed, retrying: %v", err)
+					time.Sleep(500 * time.Millisecond)
+					tgMsgID, err = cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
+				}
+			}
+			if err != nil || tgMsgID == 0 {
+				HookLog("deliver-text: send failed id=%s err=%v", blockID, err)
+				continue
+			}
+			telegramDelivered = true
+		}
+		inserted, err := ledger.AppendMessageIfAbsent(&ledger.MessageRecord{
 			ID:                blockID,
 			Session:           cfg.SessionName,
 			Type:              "assistant_text",
 			Text:              Truncate(block.Text, 500),
 			Origin:            "claude",
 			TerminalDelivered: true,
-			TelegramDelivered: false,
+			TelegramDelivered: telegramDelivered,
+			TelegramMsgID:     tgMsgID,
 		})
 		if err != nil {
-			HookLog("deliver-text: reserve failed id=%s err=%v", blockID, err)
+			HookLog("deliver-text: ledger append failed id=%s err=%v", blockID, err)
 			continue
 		}
-		if !reserved {
-			continue
-		}
-		HookLog("deliver-text: rid=%s len=%d insert=%v preview=%s", block.RequestID, len(block.Text), cfg.InsertIntoToolMsg, Truncate(block.Text, 80))
-
-		state := cfg.LoadToolState(cfg.SessionName)
-		if cfg.InsertIntoToolMsg && state.MsgID != 0 {
-			// Insert into tool blockquote at correct time position
-			cfg.AddTextToToolState(cfg.SessionName, block.Text, time.Now().UnixMilli())
-			state = cfg.LoadToolState(cfg.SessionName)
-			text := cfg.FormatToolMessage(state)
-			cfg.EditMessageHTML(cfg.Config, cfg.Config.GroupID, state.MsgID, cfg.TopicID, text)
+		if !inserted && telegramDelivered {
 			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_delivered", true)
-			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_msg_id", state.MsgID)
-		} else {
-			msg := FormatAssistantMarkdown(cfg.SessionName, rolePrefix, block.Text)
-			tgMsgID, err := cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
-			if err != nil {
-				// If thread not found, retry without thread_id
-				if strings.Contains(err.Error(), "message thread not found") && cfg.TopicID != 0 {
-					HookLog("deliver-text: thread not found, retrying without thread_id")
-					time.Sleep(500 * time.Millisecond)
-					tgMsgID, _ = cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, 0, msg)
-				} else {
-					HookLog("deliver-text: send failed, retrying: %v", err)
-					time.Sleep(500 * time.Millisecond)
-					tgMsgID, _ = cfg.SendMessageGetID(cfg.Config, cfg.Config.GroupID, cfg.TopicID, msg)
-				}
-			}
-			ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_delivered", tgMsgID > 0)
 			if tgMsgID > 0 {
 				ledger.UpdateDelivery(cfg.SessionName, blockID, "telegram_msg_id", tgMsgID)
 			}

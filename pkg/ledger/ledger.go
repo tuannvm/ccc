@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
@@ -17,6 +18,23 @@ var ledgerMu sync.Mutex
 
 func ledgerPath(session string) string {
 	return filepath.Join(config.CacheDir(), "ledger-"+session+".jsonl")
+}
+
+func withLedgerFileLock(session string, fn func() error) error {
+	lockPath := filepath.Join(config.CacheDir(), "ledger-"+session+".lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
 }
 
 // MessageRecord tracks the delivery state of a single message
@@ -43,18 +61,20 @@ func AppendMessage(rec *MessageRecord) error {
 	ledgerMu.Lock()
 	defer ledgerMu.Unlock()
 
-	f, err := os.OpenFile(ledgerPath(rec.Session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	return withLedgerFileLock(rec.Session, func() error {
+		f, err := os.OpenFile(ledgerPath(rec.Session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 
-	data, err := json.Marshal(rec)
-	if err != nil {
+		data, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(f, "%s\n", data)
 		return err
-	}
-	_, err = fmt.Fprintf(f, "%s\n", data)
-	return err
+	})
 }
 
 // AppendMessageIfAbsent writes rec only when msgID has not appeared in the
@@ -67,37 +87,49 @@ func AppendMessageIfAbsent(rec *MessageRecord) (bool, error) {
 	ledgerMu.Lock()
 	defer ledgerMu.Unlock()
 
-	path := ledgerPath(rec.Session)
-	if f, err := os.Open(path); err == nil {
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			var existing MessageRecord
-			if json.Unmarshal(scanner.Bytes(), &existing) != nil {
-				continue
+	reserved := false
+	err := withLedgerFileLock(rec.Session, func() error {
+		path := ledgerPath(rec.Session)
+		if f, err := os.Open(path); err == nil {
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+			for scanner.Scan() {
+				var existing MessageRecord
+				if err := json.Unmarshal(scanner.Bytes(), &existing); err != nil {
+					f.Close()
+					return err
+				}
+				if existing.ID == rec.ID {
+					f.Close()
+					return nil
+				}
 			}
-			if existing.ID == rec.ID {
+			if err := scanner.Err(); err != nil {
 				f.Close()
-				return false, nil
+				return err
 			}
+			f.Close()
+		} else if !os.IsNotExist(err) {
+			return err
 		}
-		f.Close()
-	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return false, err
-	}
-	if _, err := fmt.Fprintf(f, "%s\n", data); err != nil {
-		return false, err
-	}
-	return true, nil
+		data, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(f, "%s\n", data); err != nil {
+			return err
+		}
+		reserved = true
+		return nil
+	})
+	return reserved, err
 }
 
 // updateDelivery appends an update record to the ledger
@@ -112,18 +144,20 @@ func UpdateDelivery(session, msgID, field string, value any) error {
 	ledgerMu.Lock()
 	defer ledgerMu.Unlock()
 
-	f, err := os.OpenFile(ledgerPath(session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	return withLedgerFileLock(session, func() error {
+		f, err := os.OpenFile(ledgerPath(session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 
-	data, err := json.Marshal(rec)
-	if err != nil {
+		data, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(f, "%s\n", data)
 		return err
-	}
-	_, err = fmt.Fprintf(f, "%s\n", data)
-	return err
+	})
 }
 
 // ReadLedger reads all records from a session's ledger and merges updates
@@ -131,38 +165,41 @@ func ReadLedger(session string) []*MessageRecord {
 	ledgerMu.Lock()
 	defer ledgerMu.Unlock()
 
-	f, err := os.Open(ledgerPath(session))
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
 	byID := make(map[string]*MessageRecord)
 	var order []string
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		var rec MessageRecord
-		if json.Unmarshal(scanner.Bytes(), &rec) != nil {
-			continue
+	_ = withLedgerFileLock(session, func() error {
+		f, err := os.Open(ledgerPath(session))
+		if err != nil {
+			return err
 		}
-		// Update record: apply to existing
-		if rec.Update != "" {
-			if orig, ok := byID[rec.Update]; ok {
-				applyUpdate(orig, rec.UpdateField, rec.UpdateValue)
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			var rec MessageRecord
+			if json.Unmarshal(scanner.Bytes(), &rec) != nil {
+				continue
 			}
-			continue
+			// Update record: apply to existing
+			if rec.Update != "" {
+				if orig, ok := byID[rec.Update]; ok {
+					applyUpdate(orig, rec.UpdateField, rec.UpdateValue)
+				}
+				continue
+			}
+			if rec.ID == "" {
+				continue
+			}
+			if _, exists := byID[rec.ID]; !exists {
+				order = append(order, rec.ID)
+			}
+			r := rec // copy
+			byID[rec.ID] = &r
 		}
-		if rec.ID == "" {
-			continue
-		}
-		if _, exists := byID[rec.ID]; !exists {
-			order = append(order, rec.ID)
-		}
-		r := rec // copy
-		byID[rec.ID] = &r
-	}
+		return scanner.Err()
+	})
 
 	var result []*MessageRecord
 	for _, id := range order {

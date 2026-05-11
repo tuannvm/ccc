@@ -250,9 +250,10 @@ func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int, 
 	}
 
 	params := url.Values{
-		"chat_id":    {fmt.Sprintf("%d", chatID)},
-		"message_id": {fmt.Sprintf("%d", messageID)},
-		"text":       {newText},
+		"chat_id":      {fmt.Sprintf("%d", chatID)},
+		"message_id":   {fmt.Sprintf("%d", messageID)},
+		"text":         {newText},
+		"reply_markup": {"{\"inline_keyboard\":[]}"},
 	}
 	result, err := TelegramAPI(cfg, "editMessageText", params)
 	if err != nil {
