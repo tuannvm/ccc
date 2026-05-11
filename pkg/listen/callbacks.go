@@ -229,12 +229,13 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		loggingpkg.ListenLog("[callback:new] Failed to create workdir for %s: %v", sessionName, err)
+		editCallbackMessageRemoveKeyboard(cfg, cb, fmt.Sprintf("❌ Failed to create workdir: %v", err))
+		return
+	}
 	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		loggingpkg.ListenLog("[callback:new] Failed to install hooks for %s: %v", sessionName, err)
-	}
-
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		os.MkdirAll(workDir, 0755)
 	}
 
 	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, selectedProviderSummary(providerName), agentDisplayName(cfg, providerName))

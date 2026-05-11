@@ -217,14 +217,16 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		loggingpkg.ListenLog("[/new] Failed to create workdir for %s: %v", sessionName, err)
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to create workdir: %v", err))
+		return
+	}
 
 	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
 		loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
 	}
 
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		os.MkdirAll(workDir, 0755)
-	}
 	providerMsg := activeDefaultProviderSummary(cfg)
 	if providerWasExplicit {
 		providerMsg = explicitProviderSummary(providerName)

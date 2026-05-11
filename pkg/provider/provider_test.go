@@ -59,6 +59,9 @@ func TestProviderResolution(t *testing.T) {
 	if !slices.Contains(names, "codex") {
 		t.Error("'codex' not in provider names (should always be included)")
 	}
+	if !slices.Contains(names, "custom-provider") {
+		t.Error("'custom-provider' not in provider names")
+	}
 }
 
 func TestCodexProviderResolution(t *testing.T) {

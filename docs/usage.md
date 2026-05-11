@@ -101,7 +101,7 @@ Replace `provider-name` with your configured provider.
 
 Use `codex` to start the session with OpenAI Codex CLI:
 
-```
+```text
 /new myproject@codex
 ```
 

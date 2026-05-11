@@ -10,6 +10,7 @@ import (
 
 	"github.com/tuannvm/ccc/pkg/auth"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/transcribe"
 )
@@ -131,6 +132,7 @@ func Doctor() {
 	fmt.Println()
 
 	allGood := true
+	config, configErr := configpkg.Load()
 
 	// Check tmux
 	fmt.Print("tmux.............. ")
@@ -159,7 +161,10 @@ func Doctor() {
 		fmt.Println("   Install Codex CLI or keep using a Claude-compatible backend")
 	}
 
-	if tmux.ClaudePath == "" && tmux.CodexPath == "" {
+	requiredBackend := providerpkg.BackendForName(config, "")
+	if providerpkg.IsCodexBackend(requiredBackend) && tmux.CodexPath == "" {
+		allGood = false
+	} else if !providerpkg.IsCodexBackend(requiredBackend) && tmux.ClaudePath == "" {
 		allGood = false
 	}
 
@@ -187,8 +192,7 @@ func Doctor() {
 
 	// Check config
 	fmt.Print("config............ ")
-	config, err := configpkg.Load()
-	if err != nil {
+	if configErr != nil {
 		fmt.Println("❌ not found")
 		fmt.Println("   Run: ccc setup <bot_token>")
 		allGood = false
@@ -224,7 +228,7 @@ func Doctor() {
 
 	// Check Claude hooks (Stop, Notification, PreToolUse)
 	fmt.Print("claude hooks...... ")
-	if config != nil && strings.EqualFold(config.ActiveProvider, "codex") {
+	if config != nil && providerpkg.IsCodexBackend(providerpkg.BackendForName(config, "")) {
 		fmt.Println("⚠️  skipped (active backend is codex)")
 	} else {
 		settingsPath := filepath.Join(home, ".claude", "settings.json")
@@ -256,10 +260,12 @@ func Doctor() {
 					allGood = false
 				}
 			} else {
-				fmt.Println("⚠️  settings.json parse error")
+				fmt.Println("❌ settings.json parse error")
+				allGood = false
 			}
 		} else {
-			fmt.Println("⚠️  ~/.claude/settings.json not found")
+			fmt.Println("❌ ~/.claude/settings.json not found")
+			allGood = false
 		}
 	}
 
