@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
+	lockpkg "github.com/tuannvm/ccc/pkg/lock"
 )
 
 // HtmlEscape escapes special HTML characters
@@ -94,6 +95,18 @@ func ToolInputSummary(hookData HookData) string {
 // ToolStatePath returns the path for tool call display state
 func ToolStatePath(sessionName string) string {
 	return config.CacheDir() + "/tools-" + sessionName + ".json"
+}
+
+// WithToolStateLock serializes cross-process updates for a session's live tool
+// message. Hook invocations are separate processes and may arrive concurrently.
+func WithToolStateLock(sessionName string, fn func() error) error {
+	lockPath := config.CacheDir() + "/tools-" + sessionName + ".lock"
+	release, err := lockpkg.AcquireFileLock(lockPath)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn()
 }
 
 // LoadToolState loads tool state from disk

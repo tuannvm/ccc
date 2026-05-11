@@ -7,13 +7,17 @@ import (
 	"strings"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 const builtinProviderName = "anthropic"
 
 func effectiveProviderName(cfg *configpkg.Config, info *configpkg.SessionInfo) string {
-	if info != nil && info.ProviderName != "" {
-		return info.ProviderName
+	if info != nil {
+		if info.ProviderName != "" {
+			return info.ProviderName
+		}
+		return builtinProviderName
 	}
 	if cfg != nil && cfg.ActiveProvider != "" {
 		return cfg.ActiveProvider
@@ -22,8 +26,11 @@ func effectiveProviderName(cfg *configpkg.Config, info *configpkg.SessionInfo) s
 }
 
 func providerSource(cfg *configpkg.Config, info *configpkg.SessionInfo) string {
-	if info != nil && info.ProviderName != "" {
-		return "session"
+	if info != nil {
+		if info.ProviderName != "" {
+			return "session"
+		}
+		return "builtin default"
 	}
 	if cfg != nil && cfg.ActiveProvider != "" {
 		return "active default"
@@ -55,6 +62,60 @@ func selectedProviderSummary(providerName string) string {
 
 func activeDefaultProviderSummary(cfg *configpkg.Config) string {
 	return fmt.Sprintf("provider: %s\nsource: %s", defaultProviderName(cfg), providerSource(cfg, nil))
+}
+
+func providerBackend(cfg *configpkg.Config, providerName string) string {
+	return providerpkg.BackendForName(cfg, providerName)
+}
+
+func isCodexProvider(cfg *configpkg.Config, providerName string) bool {
+	return providerpkg.IsCodexBackend(providerBackend(cfg, providerName))
+}
+
+func agentDisplayName(cfg *configpkg.Config, providerName string) string {
+	if isCodexProvider(cfg, providerName) {
+		return "Codex"
+	}
+	return "Claude"
+}
+
+func agentOptionLabel(cfg *configpkg.Config, providerName string) string {
+	if strings.EqualFold(providerName, "claude") {
+		return "Claude CLI"
+	}
+	if providerName == builtinProviderName {
+		return "Claude"
+	}
+	if isCodexProvider(cfg, providerName) {
+		return "Codex CLI"
+	}
+	return providerName
+}
+
+func providerModelOptionLabel(cfg *configpkg.Config, providerName string) string {
+	if providerName == builtinProviderName {
+		return "Anthropic default"
+	}
+	if strings.EqualFold(providerName, "codex") {
+		return "Codex default"
+	}
+	label := providerName
+	provider := providerpkg.GetProvider(cfg, providerName)
+	if provider == nil {
+		return label
+	}
+	models := provider.Models()
+	model := models.Sonnet
+	if model == "" {
+		model = models.Opus
+	}
+	if model == "" {
+		model = models.Haiku
+	}
+	if model != "" {
+		label += " · " + model
+	}
+	return label
 }
 
 func shortSessionID(id string) string {

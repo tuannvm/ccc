@@ -20,7 +20,7 @@ import (
 
 // HandleCallbackQuery processes callback queries from inline keyboard button presses
 func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
-	if cb == nil {
+	if cfg == nil || cb == nil {
 		return
 	}
 
@@ -28,15 +28,36 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 	}
 
-	telegram.AnswerCallbackQuery(cfg, cb.ID)
-
 	parts := strings.Split(cb.Data, ":")
 	if len(parts) == 0 {
 		return
 	}
 
 	switch parts[0] {
+	case "new-agent":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose provider/model", false)
+		if len(parts) == 3 && cb.Message != nil {
+			sessionName := parts[1]
+			agentName := parts[2]
+			sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, sessionName, agentName)
+		}
+		return
+
+	case "new-provider":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Creating session", false)
+		if len(parts) == 3 {
+			sessionName := parts[1]
+			providerName := parts[2]
+			HandleNewWithProvider(cfg, cb, sessionName, providerName)
+		}
+		return
+
 	case "new":
+		if len(parts) == 2 {
+			handleNewSessionCallbackToken(cfg, cb, parts[1])
+			return
+		}
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		if len(parts) == 3 {
 			sessionName := parts[1]
 			providerName := parts[2]
@@ -45,6 +66,7 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	case "team":
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		if len(parts) == 3 {
 			teamName := parts[1]
 			providerName := parts[2]
@@ -53,6 +75,7 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	case "provider":
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		if len(parts) == 3 {
 			sessionName := parts[1]
 			providerName := parts[2]
@@ -61,12 +84,66 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 		return
 
 	default:
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
 		HandleQuestionCallback(cfg, cb, parts)
+	}
+}
+
+func editCallbackMessageRemoveKeyboard(cfg *configpkg.Config, cb *telegram.CallbackQuery, text string) {
+	if cb == nil || cb.Message == nil {
+		return
+	}
+	if err := telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, text); err != nil {
+		loggingpkg.ListenLog("[callback] failed to edit callback message %d: %v", cb.Message.MessageID, err)
+	}
+}
+
+func handleNewSessionCallbackToken(cfg *configpkg.Config, cb *telegram.CallbackQuery, token string) {
+	callback, ok := loadNewSessionCallback(token)
+	if !ok {
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "This selection expired. Send /new again.", true)
+		if cb.Message != nil {
+			if err := telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "Selection expired. Send /new again."); err != nil {
+				loggingpkg.ListenLog("[callback:new] failed to remove expired selection keyboard: %v", err)
+			}
+		}
+		return
+	}
+	if cb.Message == nil {
+		telegram.AnswerCallbackQuery(cfg, cb.ID)
+		return
+	}
+
+	switch callback.Action {
+	case "agent":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose provider/model", false)
+		sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, callback.SessionName, callback.AgentName)
+	case "provider":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Creating session", false)
+		HandleNewWithProvider(cfg, cb, callback.SessionName, callback.ProviderName)
+	case "back":
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose agent", false)
+		buttons := newAgentButtons(cfg, callback.SessionName)
+		msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", callback.SessionName)
+		if len(buttons) == 0 {
+			if err := telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "No agent providers are configured. Send /new again."); err != nil {
+				loggingpkg.ListenLog("[callback:new] failed to remove back selection keyboard: %v", err)
+			}
+			return
+		}
+		if err := telegram.EditMessageWithKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, msg, buttons); err != nil {
+			loggingpkg.ListenLog("[callback:new] failed to edit back selection keyboard: %v", err)
+		}
+	default:
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Unsupported selection. Send /new again.", true)
 	}
 }
 
 // HandleQuestionCallback handles legacy question selection callbacks
 func HandleQuestionCallback(cfg *configpkg.Config, cb *telegram.CallbackQuery, parts []string) {
+	if cfg == nil {
+		return
+	}
 	if len(parts) < 3 {
 		return
 	}
@@ -84,7 +161,7 @@ func HandleQuestionCallback(cfg *configpkg.Config, cb *telegram.CallbackQuery, p
 	if cb.Message != nil {
 		originalText := cb.Message.Text
 		newText := fmt.Sprintf("%s\n\n✓ Selected option %d", originalText, optionIndex+1)
-		telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, newText)
+		editCallbackMessageRemoveKeyboard(cfg, cb, newText)
 	}
 
 	sessionInfo, exists := cfg.Sessions[sessionName]
@@ -116,21 +193,22 @@ func HandleQuestionCallback(cfg *configpkg.Config, cb *telegram.CallbackQuery, p
 
 // HandleNewWithProvider creates a session after provider selection via inline keyboard
 func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, sessionName, providerName string) {
+	if cfg == nil {
+		return
+	}
+	ensureNewSessionsMap(cfg)
+
 	existing, exists := cfg.Sessions[sessionName]
 	if exists && existing != nil && existing.TopicID != 0 {
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("⚠️ Session '%s' already exists.\n\nUse /new without args in that topic to restart.", sessionName))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("⚠️ Session '%s' already exists.\n\nUse /new without args in that topic to restart.", sessionName))
 		return
 	}
 
 	topicID, err := telegram.CreateForumTopic(cfg, sessionName, providerName, "")
 	if err != nil {
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Failed to create topic: %v", err))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Failed to create topic: %v", err))
 		return
 	}
 
@@ -139,9 +217,6 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		workDir = existing.Path
 	}
 
-	if cfg.Sessions == nil {
-		cfg.Sessions = make(map[string]*configpkg.SessionInfo)
-	}
 	cfg.Sessions[sessionName] = &configpkg.SessionInfo{
 		TopicID:      topicID,
 		Path:         workDir,
@@ -149,45 +224,41 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 	}
 	if err := configpkg.Save(cfg); err != nil {
 		delete(cfg.Sessions, sessionName) // rollback on failure
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("⚠️ Failed to save config: %v", err))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("⚠️ Failed to save config: %v", err))
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
-
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		os.MkdirAll(workDir, 0755)
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		loggingpkg.ListenLog("[callback:new] Failed to create workdir for %s: %v", sessionName, err)
+		editCallbackMessageRemoveKeyboard(cfg, cb, fmt.Sprintf("❌ Failed to create workdir: %v", err))
+		return
+	}
+	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		loggingpkg.ListenLog("[callback:new] Failed to install hooks for %s: %v", sessionName, err)
 	}
 
-	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with Claude.", sessionName, selectedProviderSummary(providerName))
+	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, selectedProviderSummary(providerName), agentDisplayName(cfg, providerName))
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		resultMsg = fmt.Sprintf("❌ Failed to start session: %v", err)
 	}
 
-	if cb.Message != nil {
-		telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
-	}
+	editCallbackMessageRemoveKeyboard(cfg, cb, resultMsg)
 }
 
 // HandleProviderChange changes provider for an existing session via inline keyboard
 func HandleProviderChange(cfg *configpkg.Config, cb *telegram.CallbackQuery, sessionName, providerName string) {
 	sess, exists := cfg.Sessions[sessionName]
 	if !exists || sess == nil {
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Session '%s' not found.", sessionName))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Session '%s' not found.", sessionName))
 		return
 	}
 
 	provider := providerpkg.GetProvider(cfg, providerName)
 	if provider == nil {
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Provider '%s' not found. Available: %v", providerName, providerpkg.GetProviderNames(cfg)))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Provider '%s' not found. Available: %v", providerName, providerpkg.GetProviderNames(cfg)))
 		return
 	}
 
@@ -195,18 +266,14 @@ func HandleProviderChange(cfg *configpkg.Config, cb *telegram.CallbackQuery, ses
 	sess.ProviderName = providerName
 	if err := configpkg.Save(cfg); err != nil {
 		sess.ProviderName = previousProvider
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("⚠️ Failed to save config: %v", err))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("⚠️ Failed to save config: %v", err))
 		return
 	}
 	pinSessionHeader(cfg, sessionName, sess)
 
 	resultMsg := fmt.Sprintf("provider changed\nsession: %s\nprovider: %s\nsource: session\n\nRestart with /new to apply.", sessionName, provider.Name())
-	if cb.Message != nil {
-		telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
-	}
+	editCallbackMessageRemoveKeyboard(cfg, cb, resultMsg)
 }
 
 // HandleTeamWithProvider creates a team session after provider selection via inline keyboard
@@ -215,10 +282,8 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 		if sessInfo != nil {
 			sessName := getSessionNameFromInfo(sessInfo)
 			if sessName == teamName {
-				if cb.Message != nil {
-					telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-						fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d).\n\nUse /team without args in that topic to restart.", teamName, topicID))
-				}
+				editCallbackMessageRemoveKeyboard(cfg, cb,
+					fmt.Sprintf("⚠️ Team session '%s' already exists (topic: %d).\n\nUse /team without args in that topic to restart.", teamName, topicID))
 				return
 			}
 		}
@@ -243,28 +308,21 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 
 	runtime := session.GetRuntime(session.SessionKindTeam)
 	if runtime == nil {
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				"❌ Team runtime not available. Check your installation.")
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb, "❌ Team runtime not available. Check your installation.")
 		return
 	}
 
 	if err := runtime.EnsureLayout(sessInfo, workDir); err != nil {
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Failed to create team layout: %v", err))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Failed to create team layout: %v", err))
 		return
 	}
 
 	topicID, err := telegram.CreateForumTopic(cfg, teamName, providerName, "")
 	if err != nil {
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Failed to create topic: %v", err))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Failed to create topic: %v", err))
 		return
 	}
 
@@ -273,14 +331,12 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 	if err := configpkg.Save(cfg); err != nil {
 		telegram.DeleteForumTopic(cfg, topicID)
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
-		if cb.Message != nil {
-			telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID,
-				fmt.Sprintf("❌ Failed to save config: %v", err))
-		}
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Failed to save config: %v", err))
 		return
 	}
 
-	if err := EnsureHooks(cfg, teamName, sessInfo); err != nil {
+	if err := EnsureAgentHooks(cfg, teamName, sessInfo); err != nil {
 		loggingpkg.ListenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
 	}
 
@@ -298,9 +354,7 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 	resultMsg += "  /reviewer <msg>  - Send to reviewer\n"
 	resultMsg += "  <msg> (no cmd)   - Send to executor (default)"
 
-	if cb.Message != nil {
-		telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, resultMsg)
-	}
+	editCallbackMessageRemoveKeyboard(cfg, cb, resultMsg)
 }
 
 // getSessionNameFromInfo extracts session name from SessionInfo

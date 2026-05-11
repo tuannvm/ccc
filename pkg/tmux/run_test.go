@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 )
 
 // TestRunClaudeRawStaleResumeRetry tests that when claude --resume fails with
@@ -332,5 +335,162 @@ echo "ARGS: $*" > %s/output.txt
 
 	if !strings.Contains(outputStr, "--worktree") {
 		t.Errorf("--worktree should be passed for auto-generate, got: %s", outputStr)
+	}
+}
+
+func TestBuildAgentCommandCodexFresh(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	cmdPath, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, false, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex) error = %v", err)
+	}
+	if cmdPath != CodexPath {
+		t.Fatalf("cmdPath = %q, want %q", cmdPath, CodexPath)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "--no-alt-screen" {
+		t.Fatalf("args = %v, want --no-alt-screen", args)
+	}
+}
+
+func TestBuildAgentCommandConfiguredCodexProvider(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	provider := providerpkg.CodexProvider{
+		ProviderName: "codex-anthropic",
+		Config: &configpkg.ProviderConfig{
+			Backend:     providerpkg.BackendCodex,
+			BaseURL:     "http://127.0.0.1:8317/v1",
+			SonnetModel: "claude-opus-4-7",
+		},
+	}
+	cmdPath, args, isCodex, err := buildAgentCommand(provider, false, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(configured codex) error = %v", err)
+	}
+	if cmdPath != CodexPath || !isCodex {
+		t.Fatalf("cmdPath=%q isCodex=%v", cmdPath, isCodex)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		`model_provider="cliproxyapi"`,
+		`model_providers.cliproxyapi.base_url="http://127.0.0.1:8317/v1"`,
+		"--model claude-opus-4-7",
+		"--no-alt-screen",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("args missing %q: %v", want, args)
+		}
+	}
+}
+
+func TestBuildAgentCommandCodexResume(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, false, "thread-id", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex resume) error = %v", err)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "resume --no-alt-screen thread-id" {
+		t.Fatalf("args = %v, want codex resume args", args)
+	}
+}
+
+func TestBuildAgentCommandCodexContinueUsesResumeLast(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, args, isCodex, err := buildAgentCommand(providerpkg.CodexProvider{}, true, "", "", WorktreeAutoGenerate)
+	if err != nil {
+		t.Fatalf("buildAgentCommand(codex continue) error = %v", err)
+	}
+	if !isCodex {
+		t.Fatal("isCodex = false, want true")
+	}
+	if strings.Join(args, " ") != "resume --last --no-alt-screen" {
+		t.Fatalf("args = %v, want codex resume --last args", args)
+	}
+}
+
+func TestBuildAgentCommandCodexRejectsWorktree(t *testing.T) {
+	origCodexPath := CodexPath
+	CodexPath = "/usr/local/bin/codex"
+	defer func() { CodexPath = origCodexPath }()
+
+	_, _, _, err := buildAgentCommand(providerpkg.CodexProvider{}, false, "", "feature", WorktreeAutoGenerate)
+	if err == nil {
+		t.Fatal("buildAgentCommand(codex worktree) error = nil, want error")
+	}
+}
+
+func TestRunClaudeRawInstallsHooksForCodexProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	projectWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockCodex := filepath.Join(tmpDir, "codex")
+	if err := os.WriteFile(mockCodex, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origCodexPath := CodexPath
+	CodexPath = mockCodex
+	defer func() { CodexPath = origCodexPath }()
+
+	called := false
+	var gotSessionName, gotProviderName, gotPath string
+	err = RunClaudeRaw(false, "", "codex", "", "", func(_ *configpkg.Config, sessionName string, info *configpkg.SessionInfo) error {
+		called = true
+		gotSessionName = sessionName
+		if info != nil {
+			gotProviderName = info.ProviderName
+			gotPath = info.Path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunClaudeRaw(codex) error = %v", err)
+	}
+	if !called {
+		t.Fatal("ensureHooks was not called for codex provider")
+	}
+	if gotSessionName != "project" {
+		t.Fatalf("sessionName = %q, want project", gotSessionName)
+	}
+	if gotProviderName != "codex" {
+		t.Fatalf("ProviderName = %q, want codex", gotProviderName)
+	}
+	if gotPath != projectWd {
+		t.Fatalf("Path = %q, want %q", gotPath, projectWd)
 	}
 }

@@ -14,7 +14,45 @@ func SendFromTelegram(target string, windowName string, text string) error {
 	if err := os.WriteFile(TelegramActiveFlag(windowName), []byte("1"), 0600); err != nil {
 		return fmt.Errorf("failed to set telegram flag: %w", err)
 	}
-	return tmux.SendKeys(target, text)
+	return clearTelegramFlagOnSendError(windowName, tmux.SendKeys(target, text))
+}
+
+// SendFromTelegramToProvider sends text using backend-specific TUI submission behavior.
+func SendFromTelegramToProvider(target string, windowName string, text string, providerName string) error {
+	return SendFromTelegramToBackend(target, windowName, text, tmux.ResolveAgentBackend(providerName))
+}
+
+// SendFromTelegramToBackend sends text using backend-specific TUI submission behavior.
+func SendFromTelegramToBackend(target string, windowName string, text string, backend string) error {
+	if tmux.IsCodexBackend(backend) {
+		if err := tmux.WaitForAgentBackendInputPrompt(target, backend, 60*time.Second); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(TelegramActiveFlag(windowName), []byte("1"), 0600); err != nil {
+		return fmt.Errorf("failed to set telegram flag: %w", err)
+	}
+	return clearTelegramFlagOnSendError(windowName, tmux.SendKeysForBackend(target, text, backend))
+}
+
+// SendFromTelegramToProviderWithDelay sends text using backend-specific TUI
+// submission behavior after the requested settling delay.
+func SendFromTelegramToProviderWithDelay(target string, windowName string, text string, providerName string, delay time.Duration) error {
+	return SendFromTelegramToBackendWithDelay(target, windowName, text, tmux.ResolveAgentBackend(providerName), delay)
+}
+
+// SendFromTelegramToBackendWithDelay sends text using backend-specific TUI
+// submission behavior after the requested settling delay.
+func SendFromTelegramToBackendWithDelay(target string, windowName string, text string, backend string, delay time.Duration) error {
+	if tmux.IsCodexBackend(backend) {
+		if err := tmux.WaitForAgentBackendInputPrompt(target, backend, 60*time.Second); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(TelegramActiveFlag(windowName), []byte("1"), 0600); err != nil {
+		return fmt.Errorf("failed to set telegram flag: %w", err)
+	}
+	return clearTelegramFlagOnSendError(windowName, tmux.SendKeysForBackendWithDelay(target, text, backend, delay))
 }
 
 // SendFromTelegramWithDelay sets the Telegram active flag before sending with a delay.
@@ -22,5 +60,12 @@ func SendFromTelegramWithDelay(target string, windowName string, text string, de
 	if err := os.WriteFile(TelegramActiveFlag(windowName), []byte("1"), 0600); err != nil {
 		return fmt.Errorf("failed to set telegram flag: %w", err)
 	}
-	return tmux.SendKeysWithDelay(target, text, delay)
+	return clearTelegramFlagOnSendError(windowName, tmux.SendKeysWithDelay(target, text, delay))
+}
+
+func clearTelegramFlagOnSendError(windowName string, err error) error {
+	if err != nil {
+		_ = os.Remove(TelegramActiveFlag(windowName))
+	}
+	return err
 }

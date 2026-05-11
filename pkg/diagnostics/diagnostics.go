@@ -8,8 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/auth"
+	configpkg "github.com/tuannvm/ccc/pkg/config"
+	providerpkg "github.com/tuannvm/ccc/pkg/provider"
 	"github.com/tuannvm/ccc/pkg/tmux"
 	"github.com/tuannvm/ccc/pkg/transcribe"
 )
@@ -131,6 +132,7 @@ func Doctor() {
 	fmt.Println()
 
 	allGood := true
+	config, configErr := configpkg.Load()
 
 	// Check tmux
 	fmt.Print("tmux.............. ")
@@ -142,13 +144,27 @@ func Doctor() {
 		allGood = false
 	}
 
-	// Check claude
+	// Check backends
 	fmt.Print("claude............ ")
 	if tmux.ClaudePath != "" {
 		fmt.Printf("✅ %s\n", tmux.ClaudePath)
 	} else {
-		fmt.Println("❌ not found")
+		fmt.Println("⚠️  not found")
 		fmt.Println("   Install: npm install -g @anthropic-ai/claude-code")
+	}
+
+	fmt.Print("codex............. ")
+	if tmux.CodexPath != "" {
+		fmt.Printf("✅ %s\n", tmux.CodexPath)
+	} else {
+		fmt.Println("⚠️  not found")
+		fmt.Println("   Install Codex CLI or keep using a Claude-compatible backend")
+	}
+
+	requiredBackend := providerpkg.BackendForName(config, "")
+	if providerpkg.IsCodexBackend(requiredBackend) && tmux.CodexPath == "" {
+		allGood = false
+	} else if !providerpkg.IsCodexBackend(requiredBackend) && tmux.ClaudePath == "" {
 		allGood = false
 	}
 
@@ -176,8 +192,7 @@ func Doctor() {
 
 	// Check config
 	fmt.Print("config............ ")
-	config, err := configpkg.Load()
-	if err != nil {
+	if configErr != nil {
 		fmt.Println("❌ not found")
 		fmt.Println("   Run: ccc setup <bot_token>")
 		allGood = false
@@ -213,38 +228,45 @@ func Doctor() {
 
 	// Check Claude hooks (Stop, Notification, PreToolUse)
 	fmt.Print("claude hooks...... ")
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
-	if data, err := os.ReadFile(settingsPath); err == nil {
-		var settings map[string]any
-		if json.Unmarshal(data, &settings) == nil {
-			if hooks, ok := settings["hooks"].(map[string]any); ok {
-				var installed []string
-				if stop, has := hooks["Stop"].([]any); has && len(stop) > 0 {
-					installed = append(installed, "Stop")
-				}
-				if pre, has := hooks["PreToolUse"].([]any); has && len(pre) > 0 {
-					installed = append(installed, "PreToolUse")
-				}
-				if notif, has := hooks["Notification"].([]any); has && len(notif) > 0 {
-					installed = append(installed, "Notification")
-				}
-				if len(installed) == 3 {
-					fmt.Printf("✅ installed (%s)\n", strings.Join(installed, ", "))
-				} else if len(installed) > 0 {
-					fmt.Printf("⚠️  partial (%s) - run: ccc install\n", strings.Join(installed, ", "))
-					allGood = false
+	if config != nil && providerpkg.IsCodexBackend(providerpkg.BackendForName(config, "")) {
+		fmt.Println("⚠️  skipped (active backend is codex)")
+	} else {
+		settingsPath := filepath.Join(home, ".claude", "settings.json")
+		if data, err := os.ReadFile(settingsPath); err == nil {
+			var settings map[string]any
+			if json.Unmarshal(data, &settings) == nil {
+				if hooks, ok := settings["hooks"].(map[string]any); ok {
+					var installed []string
+					if stop, has := hooks["Stop"].([]any); has && len(stop) > 0 {
+						installed = append(installed, "Stop")
+					}
+					if pre, has := hooks["PreToolUse"].([]any); has && len(pre) > 0 {
+						installed = append(installed, "PreToolUse")
+					}
+					if notif, has := hooks["Notification"].([]any); has && len(notif) > 0 {
+						installed = append(installed, "Notification")
+					}
+					if len(installed) == 3 {
+						fmt.Printf("✅ installed (%s)\n", strings.Join(installed, ", "))
+					} else if len(installed) > 0 {
+						fmt.Printf("⚠️  partial (%s) - run: ccc install\n", strings.Join(installed, ", "))
+						allGood = false
+					} else {
+						fmt.Println("❌ not installed (run: ccc install)")
+						allGood = false
+					}
 				} else {
 					fmt.Println("❌ not installed (run: ccc install)")
 					allGood = false
 				}
 			} else {
-				fmt.Println("❌ not installed (run: ccc install)")
+				fmt.Println("❌ settings.json parse error")
+				allGood = false
 			}
 		} else {
-			fmt.Println("⚠️  settings.json parse error")
+			fmt.Println("❌ ~/.claude/settings.json not found")
+			allGood = false
 		}
-	} else {
-		fmt.Println("⚠️  ~/.claude/settings.json not found")
 	}
 
 	// Check service

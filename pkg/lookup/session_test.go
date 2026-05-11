@@ -123,3 +123,26 @@ func TestFindSession(t *testing.T) {
 		t.Errorf("FindSession with cwd='': got %q, want 'project2'", sessName)
 	}
 }
+
+func TestFindSessionPrefersCwdBeforeSelectedWindowFallback(t *testing.T) {
+	config := &configpkg.Config{
+		Sessions: map[string]*configpkg.SessionInfo{
+			"selected-window": {
+				TopicID: 1001,
+				Path:    "/home/user/selected-window",
+			},
+			"hook-cwd": {
+				TopicID: 1002,
+				Path:    "/home/user/hook-cwd",
+			},
+		},
+	}
+
+	sessName, topicID := FindSession(config, "/home/user/hook-cwd", "new-codex-session-id")
+	if sessName != "hook-cwd" {
+		t.Fatalf("FindSession should prefer hook cwd before tmux window fallback: got %q", sessName)
+	}
+	if topicID != 1002 {
+		t.Fatalf("FindSession topicID = %d, want 1002", topicID)
+	}
+}

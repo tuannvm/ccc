@@ -103,6 +103,8 @@ func (s *SessionInfo) GetPanes() map[session.PaneRole]*session.PaneInfo {
 
 // ProviderConfig configures Claude provider (API keys, models, etc.)
 type ProviderConfig struct {
+	Backend string `json:"backend,omitempty"` // Backend runtime: claude (default) or codex
+
 	// API settings
 	AuthToken  string `json:"auth_token,omitempty"`   // API key/token
 	AuthEnvVar string `json:"auth_env_var,omitempty"` // Env var to read auth token from (e.g., "MY_API_KEY")

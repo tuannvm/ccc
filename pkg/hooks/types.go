@@ -16,6 +16,7 @@ type HookData struct {
 	StopHookActive   bool            `json:"stop_hook_active"`  // For Stop hook
 	ToolInputRaw     json.RawMessage `json:"tool_input"`        // Raw tool input JSON
 	ToolInput        HookToolInput   `json:"-"`                 // Parsed from ToolInputRaw
+	InputFormat      string          `json:"-"`                 // "claude" for snake_case, "codex" for camelCase
 }
 
 // HookToolInput holds parsed tool input for known tool types
@@ -44,6 +45,32 @@ func ParseHookData(data []byte) (HookData, error) {
 	var hd HookData
 	if err := json.Unmarshal(data, &hd); err != nil {
 		return hd, err
+	}
+	var aliases struct {
+		TranscriptPath *string `json:"transcriptPath"`
+		SessionID      *string `json:"sessionId"`
+		HookEventName  *string `json:"hookEventName"`
+		ToolName       *string `json:"toolName"`
+	}
+	if err := json.Unmarshal(data, &aliases); err == nil {
+		if aliases.TranscriptPath != nil || aliases.SessionID != nil || aliases.HookEventName != nil || aliases.ToolName != nil {
+			hd.InputFormat = "codex"
+		}
+		if hd.TranscriptPath == "" && aliases.TranscriptPath != nil {
+			hd.TranscriptPath = *aliases.TranscriptPath
+		}
+		if hd.SessionID == "" && aliases.SessionID != nil {
+			hd.SessionID = *aliases.SessionID
+		}
+		if hd.HookEventName == "" && aliases.HookEventName != nil {
+			hd.HookEventName = *aliases.HookEventName
+		}
+		if hd.ToolName == "" && aliases.ToolName != nil {
+			hd.ToolName = *aliases.ToolName
+		}
+	}
+	if hd.InputFormat == "" {
+		hd.InputFormat = "claude"
 	}
 	if len(hd.ToolInputRaw) > 0 {
 		json.Unmarshal(hd.ToolInputRaw, &hd.ToolInput)

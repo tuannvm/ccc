@@ -36,6 +36,7 @@ func TestBuildCLIProviderStatusGlobal(t *testing.T) {
 	msg := BuildCLIProviderStatus(cfg, "", nil)
 	for _, want := range []string{
 		"providers",
+		"- codex (builtin)",
 		"- openai (active)",
 		"run inside a mapped project directory",
 	} {

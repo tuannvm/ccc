@@ -1,10 +1,12 @@
 package hooks
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tuannvm/ccc/pkg/config"
@@ -15,13 +17,13 @@ import (
 func IsCccHook(entry any) bool {
 	if m, ok := entry.(map[string]any); ok {
 		if cmd, ok := m["command"].(string); ok {
-			return strings.Contains(cmd, "ccc hook")
+			return isCccHookCommand(cmd)
 		}
 		if hooks, ok := m["hooks"].([]any); ok {
 			for _, h := range hooks {
 				if hm, ok := h.(map[string]any); ok {
 					if cmd, ok := hm["command"].(string); ok {
-						if strings.Contains(cmd, "ccc hook") {
+						if isCccHookCommand(cmd) {
 							return true
 						}
 					}
@@ -32,15 +34,71 @@ func IsCccHook(entry any) bool {
 	return false
 }
 
+func isCccHookCommand(cmd string) bool {
+	return strings.Contains(cmd, " hook-") && strings.Contains(cmd, "ccc")
+}
+
 // RemoveCccHooks filters out ccc hooks from a hook array
 func RemoveCccHooks(hookArray []any) []any {
 	var result []any
 	for _, entry := range hookArray {
-		if !IsCccHook(entry) {
+		m, ok := entry.(map[string]any)
+		if !ok {
 			result = append(result, entry)
+			continue
 		}
+		if cmd, ok := m["command"].(string); ok && isCccHookCommand(cmd) {
+			continue
+		}
+		if nested, ok := m["hooks"].([]any); ok {
+			keptNested := make([]any, 0, len(nested))
+			for _, hook := range nested {
+				hookMap, ok := hook.(map[string]any)
+				if !ok {
+					keptNested = append(keptNested, hook)
+					continue
+				}
+				cmd, _ := hookMap["command"].(string)
+				if isCccHookCommand(cmd) {
+					continue
+				}
+				keptNested = append(keptNested, hook)
+			}
+			if len(keptNested) == 0 {
+				continue
+			}
+			entryCopy := make(map[string]any, len(m))
+			for key, value := range m {
+				entryCopy[key] = value
+			}
+			entryCopy["hooks"] = keptNested
+			result = append(result, entryCopy)
+			continue
+		}
+		result = append(result, entry)
 	}
 	return result
+}
+
+func cccHookPath() string {
+	if tmux.CCCPath != "" {
+		return tmux.CCCPath
+	}
+	return "ccc"
+}
+
+func cccHookCommandPrefix() string {
+	return shellQuoteIfNeeded(cccHookPath())
+}
+
+func shellQuoteIfNeeded(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(s, " \t\n\r'\"\\$&;()<>|*?[]{}!#") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // InstallHooksForProject installs ccc hooks to a project's .claude/settings.local.json
@@ -93,7 +151,7 @@ func VerifyHooksForProject(projectPath string) bool {
 			for _, entry := range hookEntries {
 				if entryMap, ok := entry.(map[string]any); ok {
 					if cmd, ok := entryMap["command"].(string); ok {
-						if strings.Contains(cmd, "ccc hook-") {
+						if isCccHookCommand(cmd) {
 							hasCccHooks = true
 							break
 						}
@@ -105,6 +163,15 @@ func VerifyHooksForProject(projectPath string) bool {
 
 	HookLog("verify-hooks: hasCccHooks=%v for %s", hasCccHooks, projectPath)
 	return hasCccHooks
+}
+
+func hasCccHookCommand(hookEntries []any) bool {
+	for _, entry := range hookEntries {
+		if IsCccHook(entry) {
+			return true
+		}
+	}
+	return false
 }
 
 // InstallHooksToPath installs ccc hooks to a settings.json file
@@ -130,7 +197,7 @@ func InstallHooksToPath(settingsPath string, isLocal bool) error {
 		hooks = make(map[string]any)
 	}
 
-	cccPath := tmux.CCCPath
+	cccPath := cccHookCommandPrefix()
 	cccHooks := map[string][]any{
 		"PreToolUse": {
 			map[string]any{
@@ -236,6 +303,334 @@ func InstallHooksToPath(settingsPath string, isLocal bool) error {
 	}
 
 	return nil
+}
+
+// InstallCodexHooksForProject installs ccc hooks to a project's .codex/hooks.json.
+func InstallCodexHooksForProject(projectPath string) error {
+	hooksPath := filepath.Join(projectPath, ".codex", "hooks.json")
+
+	if err := InstallCodexHooksToPath(hooksPath); err != nil {
+		return fmt.Errorf("failed to install Codex hooks to %s: %w", hooksPath, err)
+	}
+
+	HookLog("install-codex-hooks: installed to %s", hooksPath)
+	return nil
+}
+
+// VerifyCodexHooksForProject checks if ccc hooks are present in a project's .codex/hooks.json.
+func VerifyCodexHooksForProject(projectPath string) bool {
+	hooksPath := filepath.Join(projectPath, ".codex", "hooks.json")
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		HookLog("verify-codex-hooks: no hooks.json at %s", hooksPath)
+		return false
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		HookLog("verify-codex-hooks: failed to parse hooks.json: %v", err)
+		return false
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		HookLog("verify-codex-hooks: no hooks in hooks.json")
+		return false
+	}
+
+	requiredHooks := []string{"PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit"}
+	for _, hookType := range requiredHooks {
+		hookEntries, exists := hooks[hookType].([]any)
+		if !exists || !hasCccHookCommand(hookEntries) {
+			HookLog("verify-codex-hooks: missing %s for %s", hookType, projectPath)
+			return false
+		}
+	}
+
+	HookLog("verify-codex-hooks: hooks present for %s", projectPath)
+	return true
+}
+
+// InstallCodexHooksToPath installs ccc hooks to a Codex hooks.json file.
+func InstallCodexHooksToPath(hooksPath string) error {
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	var settings map[string]any
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		settings = make(map[string]any)
+	} else if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("failed to parse hooks: %w", err)
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		hooks = make(map[string]any)
+	}
+
+	allHookTypes := []string{"Stop", "PostToolUse", "PreToolUse", "UserPromptSubmit"}
+	for _, hookType := range allHookTypes {
+		if existing, ok := hooks[hookType].([]any); ok {
+			filtered := RemoveCccHooks(existing)
+			if len(filtered) == 0 {
+				delete(hooks, hookType)
+			} else {
+				hooks[hookType] = filtered
+			}
+		}
+	}
+
+	cccPath := cccHookCommandPrefix()
+	cccHooks := map[string][]any{
+		"PreToolUse": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-permission",
+						"timeout": 300000,
+					},
+				},
+			},
+		},
+		"PostToolUse": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-post-tool",
+					},
+				},
+			},
+		},
+		"Stop": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-stop",
+					},
+				},
+			},
+		},
+		"UserPromptSubmit": {
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cccPath + " hook-user-prompt",
+					},
+				},
+			},
+		},
+	}
+
+	for hookType, newHooks := range cccHooks {
+		var existingHooks []any
+		if existing, ok := hooks[hookType].([]any); ok {
+			existingHooks = existing
+		}
+		hooks[hookType] = append(newHooks, existingHooks...)
+	}
+
+	settings["hooks"] = hooks
+
+	newData, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal hooks: %w", err)
+	}
+
+	if err := os.WriteFile(hooksPath, newData, 0600); err != nil {
+		return fmt.Errorf("failed to write hooks: %w", err)
+	}
+
+	return nil
+}
+
+type codexHookTrustSpec struct {
+	EventName string
+	KeyLabel  string
+	Matcher   string
+	Command   string
+	Timeout   int
+}
+
+// TrustCodexHooksForProject pre-approves the exact Codex hooks CCC installs.
+// Codex keeps hook trust in config.toml, keyed by project hook file path and a
+// hash of the normalized hook identity.
+func TrustCodexHooksForProject(cfg *config.Config, providerName string, hooksPath string) error {
+	absHooksPath, err := filepath.Abs(hooksPath)
+	if err != nil {
+		return err
+	}
+	configPath := codexConfigTomlPath(cfg, providerName)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+
+	cccPath := cccHookCommandPrefix()
+	specs := []codexHookTrustSpec{
+		{EventName: "pre_tool_use", KeyLabel: "pre_tool_use", Matcher: "*", Command: cccPath + " hook-permission", Timeout: 300000},
+		{EventName: "post_tool_use", KeyLabel: "post_tool_use", Matcher: "*", Command: cccPath + " hook-post-tool", Timeout: 600},
+		{EventName: "stop", KeyLabel: "stop", Command: cccPath + " hook-stop", Timeout: 600},
+		{EventName: "user_prompt_submit", KeyLabel: "user_prompt_submit", Command: cccPath + " hook-user-prompt", Timeout: 600},
+	}
+	states := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		key := fmt.Sprintf("%s:%s:0:0", absHooksPath, spec.KeyLabel)
+		states[key] = codexCommandHookHash(spec)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	updated := upsertCodexHookTrustStates(string(data), states)
+	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
+		return err
+	}
+	HookLog("trust-codex-hooks: trusted %d hooks in %s", len(states), configPath)
+	return nil
+}
+
+func codexConfigTomlPath(cfg *config.Config, providerName string) string {
+	if cfg != nil && providerName != "" && cfg.Providers != nil {
+		if p := cfg.Providers[providerName]; p != nil && strings.EqualFold(p.Backend, "codex") && p.ConfigDir != "" {
+			return filepath.Join(config.ExpandPath(p.ConfigDir), "config.toml")
+		}
+	}
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		return filepath.Join(config.ExpandPath(codexHome), "config.toml")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "config.toml")
+}
+
+func codexCommandHookHash(spec codexHookTrustSpec) string {
+	hook := map[string]any{
+		"async":   false,
+		"command": spec.Command,
+		"timeout": spec.Timeout,
+		"type":    "command",
+	}
+	identity := map[string]any{
+		"event_name": spec.EventName,
+		"hooks":      []any{hook},
+	}
+	if spec.Matcher != "" {
+		identity["matcher"] = spec.Matcher
+	}
+	serialized, _ := json.Marshal(canonicalJSON(identity))
+	sum := sha256.Sum256(serialized)
+	return fmt.Sprintf("sha256:%x", sum)
+}
+
+func canonicalJSON(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		ordered := make([]any, 0, len(keys)*2)
+		for _, key := range keys {
+			ordered = append(ordered, key, canonicalJSON(v[key]))
+		}
+		return canonicalObject(ordered)
+	case []any:
+		items := make([]any, 0, len(v))
+		for _, item := range v {
+			items = append(items, canonicalJSON(item))
+		}
+		return items
+	default:
+		return v
+	}
+}
+
+type canonicalObject []any
+
+func (o canonicalObject) MarshalJSON() ([]byte, error) {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i := 0; i < len(o); i += 2 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		key, _ := json.Marshal(o[i])
+		val, err := json.Marshal(o[i+1])
+		if err != nil {
+			return nil, err
+		}
+		b.Write(key)
+		b.WriteByte(':')
+		b.Write(val)
+	}
+	b.WriteByte('}')
+	return []byte(b.String()), nil
+}
+
+func upsertCodexHookTrustStates(toml string, states map[string]string) string {
+	lines := strings.Split(toml, "\n")
+	var kept []string
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if key, ok := parseCodexHookStateHeader(line); ok {
+			if _, replace := states[key]; replace {
+				for i+1 < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i+1]), "[") {
+					i++
+				}
+				continue
+			}
+		}
+		kept = append(kept, lines[i])
+	}
+	for len(kept) > 0 && strings.TrimSpace(kept[len(kept)-1]) == "" {
+		kept = kept[:len(kept)-1]
+	}
+	if !containsTrimmedLine(kept, "[hooks.state]") {
+		if len(kept) > 0 {
+			kept = append(kept, "")
+		}
+		kept = append(kept, "[hooks.state]")
+	}
+	keys := make([]string, 0, len(states))
+	for key := range states {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		kept = append(kept, "", fmt.Sprintf("[hooks.state.%q]", key), fmt.Sprintf("trusted_hash = %q", states[key]))
+	}
+	return strings.Join(kept, "\n") + "\n"
+}
+
+func parseCodexHookStateHeader(line string) (string, bool) {
+	const prefix = "[hooks.state.\""
+	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, "\"]") {
+		return "", false
+	}
+	key := strings.TrimSuffix(strings.TrimPrefix(line, prefix), "\"]")
+	key = strings.ReplaceAll(key, "\\\\", "\\")
+	key = strings.ReplaceAll(key, "\\\"", "\"")
+	return key, true
+}
+
+func containsTrimmedLine(lines []string, want string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // CleanupGlobalHooks removes ccc hooks from global config files
@@ -471,5 +866,47 @@ func EnsureHooksForSession(cfg *EnsureHooksForSessionConfig) error {
 	}
 
 	HookLog("ensure-hooks: hooks installed successfully for %s", projectPath)
+	return nil
+}
+
+// EnsureCodexHooksForSession ensures ccc Codex hooks are installed in the session's project directory.
+func EnsureCodexHooksForSession(cfg *EnsureHooksForSessionConfig) error {
+	if cfg.SessionInfo == nil {
+		if cfg.Config == nil || cfg.Config.Sessions == nil {
+			return nil
+		}
+		cfg.SessionInfo = cfg.Config.Sessions[cfg.SessionName]
+		if cfg.SessionInfo == nil {
+			return nil
+		}
+	}
+
+	projectPath := cfg.GetSessionWorkDir(cfg.Config, cfg.SessionName, cfg.SessionInfo)
+	if projectPath == "" {
+		return fmt.Errorf("unable to determine project path for session '%s'", cfg.SessionName)
+	}
+	providerName := cfg.SessionInfo.ProviderName
+	if providerName == "" && cfg.Config != nil {
+		providerName = cfg.Config.ActiveProvider
+	}
+	hooksPath := filepath.Join(projectPath, ".codex", "hooks.json")
+
+	if VerifyCodexHooksForProject(projectPath) {
+		if err := TrustCodexHooksForProject(cfg.Config, providerName, hooksPath); err != nil {
+			return fmt.Errorf("failed to trust Codex hooks for project %s: %w", projectPath, err)
+		}
+		HookLog("ensure-codex-hooks: hooks already present for %s", projectPath)
+		return nil
+	}
+
+	HookLog("ensure-codex-hooks: installing hooks to %s", projectPath)
+	if err := InstallCodexHooksForProject(projectPath); err != nil {
+		return fmt.Errorf("failed to install Codex hooks for project %s: %w", projectPath, err)
+	}
+	if err := TrustCodexHooksForProject(cfg.Config, providerName, hooksPath); err != nil {
+		return fmt.Errorf("failed to trust Codex hooks for project %s: %w", projectPath, err)
+	}
+
+	HookLog("ensure-codex-hooks: hooks installed successfully for %s", projectPath)
 	return nil
 }

@@ -10,20 +10,20 @@ import (
 
 	"github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/ledger"
-	"github.com/tuannvm/ccc/pkg/telegram"
 	"github.com/tuannvm/ccc/pkg/session"
+	"github.com/tuannvm/ccc/pkg/telegram"
 )
 
 // HandlerCallbacks provides callbacks for root-level dependencies
 type HandlerCallbacks struct {
 	// Config management
-	LoadConfig     func() (*config.Config, error)
-	SaveConfig     func(cfg *config.Config) error
+	LoadConfig func() (*config.Config, error)
+	SaveConfig func(cfg *config.Config) error
 
 	// Session management
-	FindSession              func(cfg *config.Config, cwd, sessionID string) (string, int64)
-	PersistClaudeSessionID   func(cfg *config.Config, sessName, claudeSessionID, transcriptPath string)
-	GetSessionWorkDir        func(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo) string
+	FindSession            func(cfg *config.Config, cwd, sessionID string) (string, int64)
+	PersistClaudeSessionID func(cfg *config.Config, sessName, claudeSessionID, transcriptPath string)
+	GetSessionWorkDir      func(cfg *config.Config, sessionName string, sessionInfo *config.SessionInfo) string
 
 	// Tool state management
 	LoadToolState      func(sessionName string) *ToolState
@@ -33,28 +33,28 @@ type HandlerCallbacks struct {
 	FormatToolMessage  func(state *ToolState) string
 
 	// Thinking indicators
-	SetThinking    func(sessionName string)
-	ClearThinking  func(sessionName string)
+	SetThinking   func(sessionName string)
+	ClearThinking func(sessionName string)
 
 	// Telegram functions
-	TelegramActiveFlag   func(tmuxName string) string
-	SendMessage          func(cfg *config.Config, chatID int64, threadID int64, text string) error
-	SendMessageHTML      func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	SendMessageGetID     func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
-	EditMessageHTML      func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
+	TelegramActiveFlag      func(tmuxName string) string
+	SendMessage             func(cfg *config.Config, chatID int64, threadID int64, text string) error
+	SendMessageHTML         func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
+	SendMessageGetID        func(cfg *config.Config, chatID int64, threadID int64, text string) (int64, error)
+	EditMessageHTML         func(cfg *config.Config, chatID int64, msgID int64, threadID int64, text string) error
 	SendMessageWithKeyboard func(cfg *config.Config, chatID int64, threadID int64, text string, buttons [][]telegram.InlineKeyboardButton) error
 
 	// Ledger functions
-	IsDelivered      func(sessName, id, origin string) bool
-	AppendMessage    func(msg *ledger.MessageRecord)
-	UpdateDelivery   func(sessName, msgID, field string, value bool)
+	IsDelivered    func(sessName, id, origin string) bool
+	AppendMessage  func(msg *ledger.MessageRecord)
+	UpdateDelivery func(sessName, msgID, field string, value bool)
 
 	// OTP functions
-	IsOTPEnabled         func(cfg *config.Config) bool
-	HasValidOTPGrant    func(tmuxName string) bool
-	WriteOTPRequest     func(sessionID string, req *OTPPermissionRequest)
-	WriteOTPGrant       func(tmuxName string)
-	WaitForOTPResponse  func(sessionID, tmuxName string, timeout time.Duration) (bool, error)
+	IsOTPEnabled       func(cfg *config.Config) bool
+	HasValidOTPGrant   func(tmuxName string) bool
+	WriteOTPRequest    func(sessionID string, req *OTPPermissionRequest)
+	WriteOTPGrant      func(tmuxName string)
+	WaitForOTPResponse func(sessionID, tmuxName string, timeout time.Duration) (bool, error)
 
 	// Misc
 	TmuxSafeName                func(name string) string
@@ -123,23 +123,21 @@ func HandleStopHook(callbacks *HandlerCallbacks) error {
 	// Deliver unsent texts as separate messages (these come after all tools)
 	HookLog("stop-hook: delivering unsent texts")
 	deliverCfg := &DeliverUnsentTextsConfig{
-		Config:              cfg,
-		SessionName:         sessName,
-		TopicID:             topicID,
-		TranscriptPath:      hookData.TranscriptPath,
-		InsertIntoToolMsg:   false,
-		ClaudeSessionID:     hookData.SessionID,
-		LoadToolState:       callbacks.LoadToolState,
-		AddTextToToolState:  callbacks.AddTextToToolState,
-		SaveToolState:       callbacks.SaveToolState,
-		FormatToolMessage:   callbacks.FormatToolMessage,
-		EditMessageHTML:     callbacks.EditMessageHTML,
-		SendMessageHTML:     callbacks.SendMessageHTML,
-		SendMessageGetID:    callbacks.SendMessageGetID,
-		SendMessage:         callbacks.SendMessage,
-		IsDelivered:         callbacks.IsDelivered,
-		AppendMessage:       callbacks.AppendMessage,
-		ClearToolState:      callbacks.ClearToolState,
+		Config:             cfg,
+		SessionName:        sessName,
+		TopicID:            topicID,
+		TranscriptPath:     hookData.TranscriptPath,
+		InsertIntoToolMsg:  false,
+		ClaudeSessionID:    hookData.SessionID,
+		LoadToolState:      callbacks.LoadToolState,
+		AddTextToToolState: callbacks.AddTextToToolState,
+		SaveToolState:      callbacks.SaveToolState,
+		FormatToolMessage:  callbacks.FormatToolMessage,
+		EditMessageHTML:    callbacks.EditMessageHTML,
+		SendMessageGetID:   callbacks.SendMessageGetID,
+		IsDelivered:        callbacks.IsDelivered,
+		AppendMessage:      callbacks.AppendMessage,
+		ClearToolState:     callbacks.ClearToolState,
 		InferRoleFromTranscriptPath: func(path string) session.PaneRole {
 			role := callbacks.InferRoleFromTranscriptPath(path)
 			return session.PaneRole(role)
@@ -189,23 +187,21 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	// Deliver any unsent assistant text before showing tool calls
 	if topicID != 0 && hookData.TranscriptPath != "" {
 		deliverCfg := &DeliverUnsentTextsConfig{
-			Config:              cfg,
-			SessionName:         sessName,
-			TopicID:             topicID,
-			TranscriptPath:      hookData.TranscriptPath,
-			InsertIntoToolMsg:   true,
-			ClaudeSessionID:     hookData.SessionID,
-			LoadToolState:       callbacks.LoadToolState,
-			AddTextToToolState:  callbacks.AddTextToToolState,
-			SaveToolState:       callbacks.SaveToolState,
-			FormatToolMessage:   callbacks.FormatToolMessage,
-			EditMessageHTML:     callbacks.EditMessageHTML,
-			SendMessageHTML:     callbacks.SendMessageHTML,
-			SendMessageGetID:    callbacks.SendMessageGetID,
-			SendMessage:         callbacks.SendMessage,
-			IsDelivered:         callbacks.IsDelivered,
-			AppendMessage:       callbacks.AppendMessage,
-			ClearToolState:      callbacks.ClearToolState,
+			Config:             cfg,
+			SessionName:        sessName,
+			TopicID:            topicID,
+			TranscriptPath:     hookData.TranscriptPath,
+			InsertIntoToolMsg:  true,
+			ClaudeSessionID:    hookData.SessionID,
+			LoadToolState:      callbacks.LoadToolState,
+			AddTextToToolState: callbacks.AddTextToToolState,
+			SaveToolState:      callbacks.SaveToolState,
+			FormatToolMessage:  callbacks.FormatToolMessage,
+			EditMessageHTML:    callbacks.EditMessageHTML,
+			SendMessageGetID:   callbacks.SendMessageGetID,
+			IsDelivered:        callbacks.IsDelivered,
+			AppendMessage:      callbacks.AppendMessage,
+			ClearToolState:     callbacks.ClearToolState,
 			InferRoleFromTranscriptPath: func(path string) session.PaneRole {
 				role := callbacks.InferRoleFromTranscriptPath(path)
 				return session.PaneRole(role)
@@ -216,34 +212,45 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 	// Update tool call display
 	if hookData.ToolName != "" && hookData.ToolName != "AskUserQuestion" && topicID != 0 {
-		state := callbacks.LoadToolState(sessName)
-		state.Tools = append(state.Tools, ToolCall{
-			Name:  hookData.ToolName,
-			Input: callbacks.ToolInputSummary(hookData),
-			Time:  time.Now().UnixMilli(),
-		})
-		text := callbacks.FormatToolMessage(state)
-		if state.MsgID == 0 {
-			msgID, err := callbacks.SendMessageHTML(cfg, cfg.GroupID, topicID, text)
-			if err == nil && msgID > 0 {
-				state.MsgID = msgID
+		if err := WithToolStateLock(sessName, func() error {
+			state := callbacks.LoadToolState(sessName)
+			state.Tools = append(state.Tools, ToolCall{
+				Name:  hookData.ToolName,
+				Input: callbacks.ToolInputSummary(hookData),
+				Time:  time.Now().UnixMilli(),
+			})
+			text := callbacks.FormatToolMessage(state)
+			if state.MsgID == 0 {
+				msgID, err := callbacks.SendMessageHTML(cfg, cfg.GroupID, topicID, text)
+				if err != nil {
+					return err
+				}
+				if msgID > 0 {
+					state.MsgID = msgID
+				}
+			} else {
+				if err := callbacks.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text); err != nil {
+					return err
+				}
 			}
-		} else {
-			callbacks.EditMessageHTML(cfg, cfg.GroupID, state.MsgID, topicID, text)
-		}
-		callbacks.SaveToolState(sessName, state)
+			callbacks.SaveToolState(sessName, state)
 
-		// Record tool call in ledger
-		callbacks.AppendMessage(&ledger.MessageRecord{
-			ID:                fmt.Sprintf("tool:%s:%s:%d", hookData.SessionID, ledger.ContentHash(hookData.ToolName+callbacks.ToolInputSummary(hookData)), time.Now().UnixNano()),
-			Session:           sessName,
-			Type:              "tool_call",
-			Text:              hookData.ToolName + ": " + callbacks.ToolInputSummary(hookData),
-			Origin:            "claude",
-			TerminalDelivered: true,
-			TelegramDelivered: state.MsgID != 0,
-			TelegramMsgID:     state.MsgID,
-		})
+			// Record tool call in ledger only after the tool display state was updated.
+			callbacks.AppendMessage(&ledger.MessageRecord{
+				ID:                fmt.Sprintf("tool:%s:%s:%d", hookData.SessionID, ledger.ContentHash(hookData.ToolName+callbacks.ToolInputSummary(hookData)), time.Now().UnixNano()),
+				Session:           sessName,
+				Type:              "tool_call",
+				Text:              hookData.ToolName + ": " + callbacks.ToolInputSummary(hookData),
+				Origin:            "claude",
+				TerminalDelivered: true,
+				TelegramDelivered: state.MsgID != 0,
+				TelegramMsgID:     state.MsgID,
+			})
+			return nil
+		}); err != nil {
+			HookLog("pre-tool: failed to update tool state for session=%s tool=%s err=%v", sessName, hookData.ToolName, err)
+			return nil
+		}
 	}
 
 	// Handle AskUserQuestion - forward to Telegram with buttons
@@ -279,7 +286,7 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	// OTP permission check for all other tools
 	if !callbacks.IsOTPEnabled(cfg) {
 		// No OTP configured, auto-allow everything
-		OutputPermissionDecision("allow", "OTP not configured")
+		OutputPermissionDecisionForHook(hookData, "allow", "OTP not configured")
 		return nil
 	}
 
@@ -294,7 +301,7 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 	// Check for a valid OTP grant (approved within the last 5 minutes)
 	if callbacks.HasValidOTPGrant(tmuxName) {
-		OutputPermissionDecision("allow", "OTP grant still valid")
+		OutputPermissionDecisionForHook(hookData, "allow", "OTP grant still valid")
 		return nil
 	}
 
@@ -354,17 +361,17 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 	if err != nil {
 		HookLog("otp-request: timeout or error: %v", err)
 		callbacks.SendMessage(cfg, cfg.GroupID, topicID, "⏰ OTP timeout - permission denied")
-		OutputPermissionDecision("deny", "OTP approval timed out")
+		OutputPermissionDecisionForHook(hookData, "deny", "OTP approval timed out")
 		return nil
 	}
 
 	if approved {
 		HookLog("otp-request: approved for session=%s tool=%s", sessName, hookData.ToolName)
 		callbacks.WriteOTPGrant(tmuxName)
-		OutputPermissionDecision("allow", "Approved via OTP")
+		OutputPermissionDecisionForHook(hookData, "allow", "Approved via OTP")
 	} else {
 		HookLog("otp-request: denied for session=%s tool=%s", sessName, hookData.ToolName)
-		OutputPermissionDecision("deny", "Denied via OTP")
+		OutputPermissionDecisionForHook(hookData, "deny", "Denied via OTP")
 	}
 
 	return nil
@@ -372,15 +379,44 @@ func HandlePermissionHook(callbacks *HandlerCallbacks) error {
 
 // OutputPermissionDecision writes the PreToolUse hook response to stdout
 func OutputPermissionDecision(decision, reason string) {
-	response := map[string]any{
+	response := ClaudePermissionDecisionResponse(decision, reason)
+	if response == nil {
+		return
+	}
+	data, _ := json.Marshal(response)
+	fmt.Println(string(data))
+}
+
+// OutputPermissionDecisionForHook writes the permission response appropriate for
+// the agent that invoked the hook.
+func OutputPermissionDecisionForHook(hookData HookData, decision, reason string) {
+	response := PermissionDecisionResponseForHook(hookData, decision, reason)
+	if response == nil {
+		return
+	}
+	data, _ := json.Marshal(response)
+	fmt.Println(string(data))
+}
+
+func PermissionDecisionResponseForHook(hookData HookData, decision, reason string) map[string]any {
+	// Codex PreToolUse rejects permissionDecision:"allow"; an empty response lets
+	// the Codex runtime continue with its normal approval flow.
+	if hookData.InputFormat == "codex" && hookData.HookEventName == "PreToolUse" && decision == "allow" {
+		return nil
+	}
+	// This envelope is PreToolUse-specific. If Codex adds a separate
+	// PermissionRequest hook event, handle that event explicitly here.
+	return ClaudePermissionDecisionResponse(decision, reason)
+}
+
+func ClaudePermissionDecisionResponse(decision, reason string) map[string]any {
+	return map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName":            "PreToolUse",
 			"permissionDecision":       decision,
 			"permissionDecisionReason": reason,
 		},
 	}
-	data, _ := json.Marshal(response)
-	fmt.Println(string(data))
 }
 
 // HandleUserPromptHook handles the UserPromptSubmit hook event

@@ -226,24 +226,69 @@ func SendMessageWithKeyboard(cfg *config.Config, chatID int64, threadID int64, t
 }
 
 func AnswerCallbackQuery(cfg *config.Config, callbackID string) {
+	AnswerCallbackQueryWithText(cfg, callbackID, "", false)
+}
+
+func AnswerCallbackQueryWithText(cfg *config.Config, callbackID string, text string, showAlert bool) {
 	params := url.Values{
 		"callback_query_id": {callbackID},
+	}
+	if text != "" {
+		params.Set("text", text)
+		params.Set("cache_time", "1")
+	}
+	if showAlert {
+		params.Set("show_alert", "true")
 	}
 	TelegramAPI(cfg, "answerCallbackQuery", params)
 }
 
-func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int, newText string) {
+func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int64, newText string) error {
 	const maxLen = 4000
 	if len(newText) > maxLen {
 		newText = newText[:maxLen-3] + "..."
 	}
 
 	params := url.Values{
-		"chat_id":    {fmt.Sprintf("%d", chatID)},
-		"message_id": {fmt.Sprintf("%d", messageID)},
-		"text":       {newText},
+		"chat_id":      {fmt.Sprintf("%d", chatID)},
+		"message_id":   {fmt.Sprintf("%d", messageID)},
+		"text":         {newText},
+		"reply_markup": {"{\"inline_keyboard\":[]}"},
 	}
-	TelegramAPI(cfg, "editMessageText", params)
+	result, err := TelegramAPI(cfg, "editMessageText", params)
+	if err != nil {
+		return err
+	}
+	if !result.OK && !strings.Contains(result.Description, "message is not modified") {
+		return fmt.Errorf("telegram error: %s", result.Description)
+	}
+	return nil
+}
+
+func EditMessageWithKeyboard(cfg *config.Config, chatID int64, messageID int64, text string, buttons [][]InlineKeyboardButton) error {
+	const maxLen = 4000
+	if len(text) > maxLen {
+		text = text[:maxLen-3] + "..."
+	}
+
+	keyboard := map[string]any{
+		"inline_keyboard": buttons,
+	}
+	keyboardJSON, _ := json.Marshal(keyboard)
+	params := url.Values{
+		"chat_id":      {fmt.Sprintf("%d", chatID)},
+		"message_id":   {fmt.Sprintf("%d", messageID)},
+		"text":         {text},
+		"reply_markup": {string(keyboardJSON)},
+	}
+	result, err := TelegramAPI(cfg, "editMessageText", params)
+	if err != nil {
+		return err
+	}
+	if !result.OK && !strings.Contains(result.Description, "message is not modified") {
+		return fmt.Errorf("telegram error: %s", result.Description)
+	}
+	return nil
 }
 
 func SendTypingAction(cfg *config.Config, chatID int64, threadID int64) {
