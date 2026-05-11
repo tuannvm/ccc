@@ -78,7 +78,7 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 			undelivered := ledger.FindUndelivered(sessName, "terminal")
 			for _, ur := range undelivered {
 				if ur.Type == "user_prompt" && ur.Origin == "telegram" {
-					if err := hooks.SendFromTelegram(target, tmux.SafeName(sessName), ur.Text); err == nil {
+					if err := hooks.SendFromTelegramToBackend(target, tmux.SafeName(sessName), ur.Text, providerBackend(cfg, providerName)); err == nil {
 						ledger.UpdateDelivery(sessName, ur.ID, "terminal_delivered", true)
 					}
 					time.Sleep(500 * time.Millisecond)

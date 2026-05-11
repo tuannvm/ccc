@@ -96,13 +96,13 @@ debug:
 deploy: install
 	@echo "🧹 Stopping active ccc tmux runtime..."
 	@if command -v tmux >/dev/null 2>&1 && tmux has-session -t ccc 2>/dev/null; then \
-		tmux kill-session -t ccc; \
+		tmux kill-session -t ccc || true; \
 		echo "✅ ccc tmux session stopped"; \
 	else \
 		echo "ℹ️ No ccc tmux session running"; \
 	fi
 	@echo "🧹 Stopping stale ccc run processes..."
-	@pids=$$(pgrep -f "[/ ]ccc run" 2>/dev/null || true); \
+	@pids=$$(pgrep -u "$$(id -u)" -f "[/ ]ccc run" 2>/dev/null || true); \
 	if [ -n "$$pids" ]; then \
 		echo "$$pids" | xargs kill 2>/dev/null || true; \
 		echo "✅ stale ccc run processes stopped"; \

@@ -13,8 +13,11 @@ import (
 const builtinProviderName = "anthropic"
 
 func effectiveProviderName(cfg *configpkg.Config, info *configpkg.SessionInfo) string {
-	if info != nil && info.ProviderName != "" {
-		return info.ProviderName
+	if info != nil {
+		if info.ProviderName != "" {
+			return info.ProviderName
+		}
+		return builtinProviderName
 	}
 	if cfg != nil && cfg.ActiveProvider != "" {
 		return cfg.ActiveProvider
@@ -23,8 +26,11 @@ func effectiveProviderName(cfg *configpkg.Config, info *configpkg.SessionInfo) s
 }
 
 func providerSource(cfg *configpkg.Config, info *configpkg.SessionInfo) string {
-	if info != nil && info.ProviderName != "" {
-		return "session"
+	if info != nil {
+		if info.ProviderName != "" {
+			return "session"
+		}
+		return "builtin default"
 	}
 	if cfg != nil && cfg.ActiveProvider != "" {
 		return "active default"

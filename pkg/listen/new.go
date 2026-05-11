@@ -275,7 +275,7 @@ func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.Inl
 	return buttons
 }
 
-func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, messageID int, sessionName, agentName string) {
+func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, messageID int64, sessionName, agentName string) {
 	buttons := newProviderButtonsForAgent(cfg, sessionName, agentName)
 	if len(buttons) == 0 {
 		msg := fmt.Sprintf("❌ No %s provider/model is configured.", agentOptionLabel(cfg, agentName))

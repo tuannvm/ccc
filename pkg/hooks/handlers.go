@@ -399,9 +399,13 @@ func OutputPermissionDecisionForHook(hookData HookData, decision, reason string)
 }
 
 func PermissionDecisionResponseForHook(hookData HookData, decision, reason string) map[string]any {
+	// Codex PreToolUse rejects permissionDecision:"allow"; an empty response lets
+	// the Codex runtime continue with its normal approval flow.
 	if hookData.InputFormat == "codex" && hookData.HookEventName == "PreToolUse" && decision == "allow" {
 		return nil
 	}
+	// This envelope is PreToolUse-specific. If Codex adds a separate
+	// PermissionRequest hook event, handle that event explicitly here.
 	return ClaudePermissionDecisionResponse(decision, reason)
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/tuannvm/ccc/pkg/config"
+	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
 func TestInstallCodexHooksToPathMergesAndVerifies(t *testing.T) {
@@ -112,6 +113,50 @@ func TestCodexCommandHookHashMatchesCodexTrustIdentity(t *testing.T) {
 				t.Fatalf("codexCommandHookHash() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRemoveCccHooksPreservesMixedMatcherHooks(t *testing.T) {
+	entries := []any{
+		map[string]any{
+			"matcher": "*",
+			"hooks": []any{
+				map[string]any{"type": "command", "command": "echo keep"},
+				map[string]any{"type": "command", "command": "ccc hook-stop"},
+			},
+		},
+	}
+
+	got := RemoveCccHooks(entries)
+	if len(got) != 1 {
+		t.Fatalf("filtered entries len = %d, want 1", len(got))
+	}
+	nested := got[0].(map[string]any)["hooks"].([]any)
+	if len(nested) != 1 {
+		t.Fatalf("nested hooks len = %d, want 1", len(nested))
+	}
+	if cmd := nested[0].(map[string]any)["command"]; cmd != "echo keep" {
+		t.Fatalf("preserved command = %q, want echo keep", cmd)
+	}
+}
+
+func TestInstallCodexHooksQuotesCccPathWithSpaces(t *testing.T) {
+	oldCCCPath := tmux.CCCPath
+	tmux.CCCPath = "/tmp/ccc path/bin/ccc"
+	t.Cleanup(func() { tmux.CCCPath = oldCCCPath })
+
+	tmpDir := t.TempDir()
+	hooksPath := filepath.Join(tmpDir, ".codex", "hooks.json")
+	if err := InstallCodexHooksToPath(hooksPath); err != nil {
+		t.Fatalf("InstallCodexHooksToPath: %v", err)
+	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("read hooks: %v", err)
+	}
+	if !strings.Contains(string(data), "'/tmp/ccc path/bin/ccc' hook-permission") {
+		t.Fatalf("hook command did not quote path with spaces:\n%s", string(data))
 	}
 }
 

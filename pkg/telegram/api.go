@@ -243,7 +243,7 @@ func AnswerCallbackQueryWithText(cfg *config.Config, callbackID string, text str
 	TelegramAPI(cfg, "answerCallbackQuery", params)
 }
 
-func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int, newText string) error {
+func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int64, newText string) error {
 	const maxLen = 4000
 	if len(newText) > maxLen {
 		newText = newText[:maxLen-3] + "..."
@@ -265,7 +265,7 @@ func EditMessageRemoveKeyboard(cfg *config.Config, chatID int64, messageID int, 
 	return nil
 }
 
-func EditMessageWithKeyboard(cfg *config.Config, chatID int64, messageID int, text string, buttons [][]InlineKeyboardButton) error {
+func EditMessageWithKeyboard(cfg *config.Config, chatID int64, messageID int64, text string, buttons [][]InlineKeyboardButton) error {
 	const maxLen = 4000
 	if len(text) > maxLen {
 		text = text[:maxLen-3] + "..."

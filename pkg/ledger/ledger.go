@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
+	lockpkg "github.com/tuannvm/ccc/pkg/lock"
 )
 
 var ledgerMu sync.Mutex
@@ -22,18 +22,11 @@ func ledgerPath(session string) string {
 
 func withLedgerFileLock(session string, fn func() error) error {
 	lockPath := filepath.Join(config.CacheDir(), "ledger-"+session+".lock")
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	release, err := lockpkg.AcquireFileLock(lockPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer release()
 	return fn()
 }
 

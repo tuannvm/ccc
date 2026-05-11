@@ -103,11 +103,14 @@ func installHooksToCurrentDir() error {
 	providerName := ""
 	if sessionInfo != nil {
 		providerName = sessionInfo.ProviderName
-	}
-	if providerName == "" {
+	} else {
 		providerName = cfg.ActiveProvider
 	}
-	if !providerpkg.IsCodexBackend(providerpkg.BackendForName(cfg, providerName)) {
+	backend := providerpkg.BackendClaude
+	if sessionInfo == nil || providerName != "" {
+		backend = providerpkg.BackendForName(cfg, providerName)
+	}
+	if !providerpkg.IsCodexBackend(backend) {
 		return hooks.InstallHooksToCurrentDir()
 	}
 
@@ -117,9 +120,6 @@ func installHooksToCurrentDir() error {
 	effectiveInfo := &configpkg.SessionInfo{Path: cwd, ProviderName: providerName}
 	if sessionInfo != nil {
 		sessionCopy := *sessionInfo
-		if sessionCopy.ProviderName == "" {
-			sessionCopy.ProviderName = providerName
-		}
 		if sessionCopy.Path == "" {
 			sessionCopy.Path = cwd
 		}
@@ -150,11 +150,14 @@ func ensureHooksForSession(config *configpkg.Config, sessionName string, session
 	providerName := ""
 	if sessionInfo != nil {
 		providerName = sessionInfo.ProviderName
-	}
-	if providerName == "" && config != nil {
+	} else if config != nil {
 		providerName = config.ActiveProvider
 	}
-	if providerpkg.IsCodexBackend(providerpkg.BackendForName(config, providerName)) {
+	backend := providerpkg.BackendClaude
+	if sessionInfo == nil || providerName != "" {
+		backend = providerpkg.BackendForName(config, providerName)
+	}
+	if providerpkg.IsCodexBackend(backend) {
 		return hooks.EnsureCodexHooksForSession(cfg)
 	}
 	return hooks.EnsureHooksForSession(cfg)

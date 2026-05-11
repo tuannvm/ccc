@@ -17,13 +17,13 @@ import (
 func IsCccHook(entry any) bool {
 	if m, ok := entry.(map[string]any); ok {
 		if cmd, ok := m["command"].(string); ok {
-			return strings.Contains(cmd, "ccc hook")
+			return isCccHookCommand(cmd)
 		}
 		if hooks, ok := m["hooks"].([]any); ok {
 			for _, h := range hooks {
 				if hm, ok := h.(map[string]any); ok {
 					if cmd, ok := hm["command"].(string); ok {
-						if strings.Contains(cmd, "ccc hook") {
+						if isCccHookCommand(cmd) {
 							return true
 						}
 					}
@@ -34,13 +34,48 @@ func IsCccHook(entry any) bool {
 	return false
 }
 
+func isCccHookCommand(cmd string) bool {
+	return strings.Contains(cmd, " hook-") && strings.Contains(cmd, "ccc")
+}
+
 // RemoveCccHooks filters out ccc hooks from a hook array
 func RemoveCccHooks(hookArray []any) []any {
 	var result []any
 	for _, entry := range hookArray {
-		if !IsCccHook(entry) {
+		m, ok := entry.(map[string]any)
+		if !ok {
 			result = append(result, entry)
+			continue
 		}
+		if cmd, ok := m["command"].(string); ok && isCccHookCommand(cmd) {
+			continue
+		}
+		if nested, ok := m["hooks"].([]any); ok {
+			keptNested := make([]any, 0, len(nested))
+			for _, hook := range nested {
+				hookMap, ok := hook.(map[string]any)
+				if !ok {
+					keptNested = append(keptNested, hook)
+					continue
+				}
+				cmd, _ := hookMap["command"].(string)
+				if isCccHookCommand(cmd) {
+					continue
+				}
+				keptNested = append(keptNested, hook)
+			}
+			if len(keptNested) == 0 {
+				continue
+			}
+			entryCopy := make(map[string]any, len(m))
+			for key, value := range m {
+				entryCopy[key] = value
+			}
+			entryCopy["hooks"] = keptNested
+			result = append(result, entryCopy)
+			continue
+		}
+		result = append(result, entry)
 	}
 	return result
 }
@@ -50,6 +85,20 @@ func cccHookPath() string {
 		return tmux.CCCPath
 	}
 	return "ccc"
+}
+
+func cccHookCommandPrefix() string {
+	return shellQuoteIfNeeded(cccHookPath())
+}
+
+func shellQuoteIfNeeded(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(s, " \t\n\r'\"\\$&;()<>|*?[]{}!#") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // InstallHooksForProject installs ccc hooks to a project's .claude/settings.local.json
@@ -102,7 +151,7 @@ func VerifyHooksForProject(projectPath string) bool {
 			for _, entry := range hookEntries {
 				if entryMap, ok := entry.(map[string]any); ok {
 					if cmd, ok := entryMap["command"].(string); ok {
-						if strings.Contains(cmd, "ccc hook-") {
+						if isCccHookCommand(cmd) {
 							hasCccHooks = true
 							break
 						}
@@ -148,7 +197,7 @@ func InstallHooksToPath(settingsPath string, isLocal bool) error {
 		hooks = make(map[string]any)
 	}
 
-	cccPath := cccHookPath()
+	cccPath := cccHookCommandPrefix()
 	cccHooks := map[string][]any{
 		"PreToolUse": {
 			map[string]any{
@@ -334,7 +383,7 @@ func InstallCodexHooksToPath(hooksPath string) error {
 		}
 	}
 
-	cccPath := cccHookPath()
+	cccPath := cccHookCommandPrefix()
 	cccHooks := map[string][]any{
 		"PreToolUse": {
 			map[string]any{
@@ -426,7 +475,7 @@ func TrustCodexHooksForProject(cfg *config.Config, providerName string, hooksPat
 		return err
 	}
 
-	cccPath := cccHookPath()
+	cccPath := cccHookCommandPrefix()
 	specs := []codexHookTrustSpec{
 		{EventName: "pre_tool_use", KeyLabel: "pre_tool_use", Matcher: "*", Command: cccPath + " hook-permission", Timeout: 300000},
 		{EventName: "post_tool_use", KeyLabel: "post_tool_use", Matcher: "*", Command: cccPath + " hook-post-tool", Timeout: 600},

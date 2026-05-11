@@ -17,6 +17,10 @@ func TestEffectiveProviderName(t *testing.T) {
 		t.Fatalf("effectiveProviderName(session) = %q, want zai", got)
 	}
 
+	if got := effectiveProviderName(cfg, &configpkg.SessionInfo{}); got != "anthropic" {
+		t.Fatalf("effectiveProviderName(legacy session) = %q, want anthropic", got)
+	}
+
 	if got := effectiveProviderName(&configpkg.Config{}, nil); got != "anthropic" {
 		t.Fatalf("effectiveProviderName(default) = %q, want anthropic", got)
 	}
@@ -31,6 +35,9 @@ func TestProviderSource(t *testing.T) {
 	}
 	if got := providerSource(&configpkg.Config{ActiveProvider: "openai"}, &configpkg.SessionInfo{ProviderName: "zai"}); got != "session" {
 		t.Fatalf("providerSource(session) = %q, want session", got)
+	}
+	if got := providerSource(&configpkg.Config{ActiveProvider: "openai"}, &configpkg.SessionInfo{}); got != "builtin default" {
+		t.Fatalf("providerSource(legacy session) = %q, want builtin default", got)
 	}
 }
 

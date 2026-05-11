@@ -7,10 +7,10 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/tuannvm/ccc/pkg/config"
+	lockpkg "github.com/tuannvm/ccc/pkg/lock"
 )
 
 // HtmlEscape escapes special HTML characters
@@ -101,15 +101,11 @@ func ToolStatePath(sessionName string) string {
 // message. Hook invocations are separate processes and may arrive concurrently.
 func WithToolStateLock(sessionName string, fn func() error) error {
 	lockPath := config.CacheDir() + "/tools-" + sessionName + ".lock"
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	release, err := lockpkg.AcquireFileLock(lockPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer release()
 	return fn()
 }
 

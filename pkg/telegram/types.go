@@ -4,7 +4,7 @@ import "encoding/json"
 
 // TelegramMessage represents a Telegram message
 type TelegramMessage struct {
-	MessageID       int   `json:"message_id"`
+	MessageID       int64 `json:"message_id"`
 	MessageThreadID int64 `json:"message_thread_id,omitempty"` // Topic ID
 	Chat            struct {
 		ID   int64  `json:"id"`
