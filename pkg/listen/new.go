@@ -202,6 +202,28 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		Path:         workDir,
 		ProviderName: providerName,
 	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		if hadPrevious {
+			cfg.Sessions[sessionName] = previous
+		} else {
+			delete(cfg.Sessions, sessionName)
+		}
+		_ = telegram.DeleteForumTopic(cfg, topicID)
+		loggingpkg.ListenLog("[/new] Failed to create workdir for %s: %v", sessionName, err)
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to create workdir: %v", err))
+		return
+	}
+	if err := EnsureNewSessionHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		if hadPrevious {
+			cfg.Sessions[sessionName] = previous
+		} else {
+			delete(cfg.Sessions, sessionName)
+		}
+		_ = telegram.DeleteForumTopic(cfg, topicID)
+		loggingpkg.ListenLog("[/new] Failed to install/trust hooks for %s: %v", sessionName, err)
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
+		return
+	}
 	if err := configpkg.Save(cfg); err != nil {
 		if hadPrevious {
 			cfg.Sessions[sessionName] = previous
@@ -217,15 +239,6 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		loggingpkg.ListenLog("[/new] Failed to create workdir for %s: %v", sessionName, err)
-		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to create workdir: %v", err))
-		return
-	}
-
-	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-		loggingpkg.ListenLog("[/new] Failed to install hooks for %s: %v", sessionName, err)
-	}
 
 	providerMsg := activeDefaultProviderSummary(cfg)
 	if providerWasExplicit {

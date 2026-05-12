@@ -91,12 +91,15 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 			WorktreeName: worktreeName,
 			BaseSession:  baseSessionName,
 		}
+		if err := EnsureNewSessionHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
+			delete(cfg.Sessions, worktreeSessionName)
+			_ = telegram.DeleteForumTopic(cfg, topicID)
+			loggingpkg.ListenLog("[/worktree] Failed to install/trust hooks for %s: %v", worktreeSessionName, err)
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
+			return
+		}
 		configpkg.Save(cfg)
 		pinSessionHeader(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName])
-
-		if err := EnsureAgentHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
-			loggingpkg.ListenLog("[/worktree] Failed to install hooks for %s: %v", worktreeSessionName, err)
-		}
 
 		if err := tmux.SwitchSessionInWindow(worktreeSessionName, basePath, providerName, "", worktreeName, false, false); err != nil {
 			telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
@@ -171,12 +174,15 @@ func HandleWorktreeCommand(cfg *configpkg.Config, chatID, threadID int64, text s
 		WorktreeName: worktreeName,
 		BaseSession:  baseSessionName,
 	}
+	if err := EnsureNewSessionHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
+		delete(cfg.Sessions, worktreeSessionName)
+		_ = telegram.DeleteForumTopic(cfg, topicID)
+		loggingpkg.ListenLog("[/worktree] Failed to install/trust hooks for %s: %v", worktreeSessionName, err)
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
+		return
+	}
 	configpkg.Save(cfg)
 	pinSessionHeader(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName])
-
-	if err := EnsureAgentHooks(cfg, worktreeSessionName, cfg.Sessions[worktreeSessionName]); err != nil {
-		loggingpkg.ListenLog("[/worktree] Failed to install hooks for %s: %v", worktreeSessionName, err)
-	}
 
 	if err := tmux.SwitchSessionInWindow(worktreeSessionName, basePath, providerName, "", worktreeName, false, false); err != nil {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))

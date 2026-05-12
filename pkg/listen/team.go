@@ -147,15 +147,17 @@ func CreateTeamSession(cfg *configpkg.Config, chatID, threadID int64, teamName, 
 
 	sessInfo.TopicID = topicID
 	cfg.SetTeamSession(topicID, sessInfo)
+	if err := EnsureNewSessionHooks(cfg, teamName, sessInfo); err != nil {
+		telegram.DeleteForumTopic(cfg, topicID)
+		exec.Command(tmux.TmuxPath, "kill-window", "-t", "ccc-team:"+teamName).Run()
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
+		return
+	}
 	if err := configpkg.Save(cfg); err != nil {
 		telegram.DeleteForumTopic(cfg, topicID)
 		exec.Command(tmux.TmuxPath, "kill-window", "-t", "ccc-team:"+teamName).Run()
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to save config: %v", err))
 		return
-	}
-
-	if err := EnsureAgentHooks(cfg, teamName, sessInfo); err != nil {
-		loggingpkg.ListenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
 	}
 
 	startErr := runtime.StartClaude(sessInfo, workDir)

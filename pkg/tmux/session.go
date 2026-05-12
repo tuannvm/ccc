@@ -70,13 +70,30 @@ func EnsureSession() (string, error) {
 // EnsureProjectWindow ensures a window exists for the project within the ccc session
 // Returns the target string "ccc:TommyClaw" (session:window format)
 func EnsureProjectWindow(sessionName string) (string, error) {
+	return EnsureProjectWindowInDir(sessionName, "")
+}
+
+// EnsureProjectWindowInDir ensures a window exists for the project, creating
+// the parent ccc tmux session with this project as its first window when needed.
+func EnsureProjectWindowInDir(sessionName string, workDir string) (string, error) {
+	windowName := SafeName(sessionName)
+
+	if !SessionExists() {
+		args := []string{"new-session", "-d", "-s", SessionName, "-n", windowName}
+		if workDir != "" {
+			args = append(args, "-c", workDir)
+		}
+		if err := exec.Command(TmuxPath, args...).Run(); err != nil {
+			return "", err
+		}
+		exec.Command(TmuxPath, "set-option", "-t", SessionName, "mouse", "on").Run()
+		return SessionName + ":" + windowName, nil
+	}
+
 	sess, err := EnsureSession()
 	if err != nil {
 		return "", err
 	}
-
-	// Make the session name tmux-safe (dots are interpreted as separators)
-	windowName := SafeName(sessionName)
 
 	// Check if a window with this name already exists in the ccc session
 	cmd := exec.Command(TmuxPath, "list-windows", "-t", sess, "-F", "#{window_name}")
@@ -94,7 +111,11 @@ func EnsureProjectWindow(sessionName string) (string, error) {
 	// Window doesn't exist, create it
 	// Note: We use sess + ":" to target the session for window creation
 	// Without the colon, tmux interprets it as a window target which can cause conflicts
-	cmd = exec.Command(TmuxPath, "new-window", "-t", sess+":", "-n", windowName)
+	args := []string{"new-window", "-t", sess + ":", "-n", windowName}
+	if workDir != "" {
+		args = append(args, "-c", workDir)
+	}
+	cmd = exec.Command(TmuxPath, args...)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("failed to create window: %w", err)
 	}
@@ -105,10 +126,10 @@ func EnsureProjectWindow(sessionName string) (string, error) {
 // FindExistingWindow finds an existing window without creating it
 // Returns the target string "ccc:TommyClaw" if window exists, empty string otherwise
 func FindExistingWindow(sessionName string) (string, error) {
-	sess, err := EnsureSession()
-	if err != nil {
-		return "", err
+	if !SessionExists() {
+		return "", nil
 	}
+	sess := SessionName
 
 	// Make the session name tmux-safe (dots are interpreted as separators)
 	windowName := SafeName(sessionName)

@@ -1,7 +1,9 @@
 package tmux
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,82 @@ func TestSafeName(t *testing.T) {
 				t.Errorf("SafeName(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestFindExistingWindowDoesNotCreateBootstrapSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "tmux.log")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\n" +
+		"case \"$1\" in\n" +
+		"  list-sessions) exit 1 ;;\n" +
+		"  new-session|set-option) exit 0 ;;\n" +
+		"  *) exit 0 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+
+	oldTmuxPath := TmuxPath
+	TmuxPath = fakeTmux
+	t.Setenv("TMUX_LOG", logPath)
+	t.Cleanup(func() { TmuxPath = oldTmuxPath })
+
+	target, err := FindExistingWindow("demo")
+	if err != nil {
+		t.Fatalf("FindExistingWindow error = %v", err)
+	}
+	if target != "" {
+		t.Fatalf("FindExistingWindow target = %q, want empty", target)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read tmux log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("FindExistingWindow created a tmux session:\n%s", string(logData))
+	}
+}
+
+func TestEnsureProjectWindowInDirCreatesFirstWindowInProjectDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "tmux.log")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\n" +
+		"case \"$1\" in\n" +
+		"  list-sessions) exit 1 ;;\n" +
+		"  new-session|set-option) exit 0 ;;\n" +
+		"  *) exit 0 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+
+	oldTmuxPath := TmuxPath
+	TmuxPath = fakeTmux
+	t.Setenv("TMUX_LOG", logPath)
+	t.Cleanup(func() { TmuxPath = oldTmuxPath })
+
+	projectDir := filepath.Join(tmpDir, "project")
+	target, err := EnsureProjectWindowInDir("demo.project", projectDir)
+	if err != nil {
+		t.Fatalf("EnsureProjectWindowInDir error = %v", err)
+	}
+	if target != "ccc:demo__project" {
+		t.Fatalf("target = %q, want ccc:demo__project", target)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read tmux log: %v", err)
+	}
+	want := "new-session -d -s ccc -n demo__project -c " + projectDir
+	if !strings.Contains(string(logData), want) {
+		t.Fatalf("tmux log missing project-dir first window command %q:\n%s", want, string(logData))
 	}
 }
 

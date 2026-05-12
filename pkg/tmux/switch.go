@@ -26,8 +26,10 @@ func SwitchSessionInWindow(sessionName string, workDir string, providerName stri
 	}
 	createdWindow := existingTarget == ""
 
-	// Ensure the project window exists in the ccc session (e.g., "ccc:TommyClaw")
-	target, err := EnsureProjectWindow(sessionName)
+	// Ensure the project window exists in the ccc session (e.g., "ccc:TommyClaw").
+	// If this is the first ccc window, create it directly in the project path
+	// so tmux does not leave behind a default/root-level bootstrap window.
+	target, err := EnsureProjectWindowInDir(sessionName, workDir)
 	if err != nil {
 		return err
 	}

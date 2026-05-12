@@ -61,12 +61,12 @@ func StartLocalSession(cfg *configpkg.Config, sessionName, workDir, message stri
 		Path:         workDir,
 		ProviderName: providerName,
 	}
+	if err := EnsureNewSessionHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		delete(cfg.Sessions, sessionName)
+		return err
+	}
 	if err := configpkg.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-		fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
 	}
 
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
@@ -103,14 +103,15 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 		Path:         workDir,
 		ProviderName: providerName,
 	}
+	if err := EnsureNewSessionHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		delete(cfg.Sessions, sessionName)
+		_ = telegram.DeleteForumTopic(cfg, topicID)
+		return err
+	}
 	if err := configpkg.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
-
-	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-		fmt.Printf("Warning: failed to install hooks: %v\n", err)
-	}
 
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
@@ -163,14 +164,16 @@ func StartSession(continueSession bool) error {
 					Path:         cwd,
 					ProviderName: providerName,
 				}
-				configpkg.Save(config)
-				pinSessionHeader(config, name, config.Sessions[name])
+				if err := EnsureNewSessionHooks(config, name, config.Sessions[name]); err != nil {
+					delete(config.Sessions, name)
+					_ = telegram.DeleteForumTopic(config, topicID)
+					return err
+				} else {
+					configpkg.Save(config)
+					pinSessionHeader(config, name, config.Sessions[name])
 
-				if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
-					fmt.Printf("⚠️ Failed to install hooks: %v\n", err)
+					fmt.Printf("Created Telegram topic: %s\n%s\n", name, providerSummary(config, config.Sessions[name]))
 				}
-
-				fmt.Printf("Created Telegram topic: %s\n%s\n", name, providerSummary(config, config.Sessions[name]))
 			}
 		}
 	}
@@ -229,14 +232,15 @@ func StartDetached(name string, workDir string, prompt string) error {
 		Path:         workDir,
 		ProviderName: providerName,
 	}
+	if err := EnsureNewSessionHooks(config, name, config.Sessions[name]); err != nil {
+		delete(config.Sessions, name)
+		_ = telegram.DeleteForumTopic(config, topicID)
+		return err
+	}
 	if err := configpkg.Save(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 	pinSessionHeader(config, name, config.Sessions[name])
-
-	if err := EnsureAgentHooks(config, name, config.Sessions[name]); err != nil {
-		return fmt.Errorf("failed to install hooks: %w", err)
-	}
 
 	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
