@@ -176,6 +176,7 @@ func TestUpsertCodexHookTrustStatesReplacesExistingState(t *testing.T) {
 
 	for _, want := range []string{
 		"[hooks.state.\"/tmp/project/.codex/hooks.json:pre_tool_use:0:0\"]",
+		"enabled = true",
 		"trusted_hash = \"sha256:new\"",
 		"[hooks.state.\"/tmp/project/.codex/hooks.json:stop:0:0\"]",
 		"trusted_hash = \"sha256:stop\"",
@@ -188,6 +189,9 @@ func TestUpsertCodexHookTrustStatesReplacesExistingState(t *testing.T) {
 	}
 	if strings.Contains(got, "sha256:old") {
 		t.Fatalf("old trusted hash was not replaced:\n%s", got)
+	}
+	if strings.Count(got, "enabled = true") != 2 {
+		t.Fatalf("updated TOML should enable both trusted project hooks:\n%s", got)
 	}
 }
 

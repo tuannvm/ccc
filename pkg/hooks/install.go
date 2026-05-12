@@ -608,7 +608,7 @@ func upsertCodexHookTrustStates(toml string, states map[string]string) string {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		kept = append(kept, "", fmt.Sprintf("[hooks.state.%q]", key), fmt.Sprintf("trusted_hash = %q", states[key]))
+		kept = append(kept, "", fmt.Sprintf("[hooks.state.%q]", key), "enabled = true", fmt.Sprintf("trusted_hash = %q", states[key]))
 	}
 	return strings.Join(kept, "\n") + "\n"
 }

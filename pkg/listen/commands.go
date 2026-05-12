@@ -39,6 +39,16 @@ func EnsureAgentHooks(cfg *configpkg.Config, sessionName string, info *configpkg
 	return hooks.EnsureHooksForSession(ensureCfg)
 }
 
+// EnsureNewSessionHooks installs and whitelists hooks during session creation.
+// Codex refuses to run unreviewed project hooks, so a new Codex session should
+// not be started until its hook trust state has been written.
+func EnsureNewSessionHooks(cfg *configpkg.Config, sessionName string, info *configpkg.SessionInfo) error {
+	if err := EnsureAgentHooks(cfg, sessionName, info); err != nil {
+		return fmt.Errorf("failed to install/trust hooks for new session %q: %w", sessionName, err)
+	}
+	return nil
+}
+
 func parseProviderCommand(text string) (string, string) {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {

@@ -222,6 +222,20 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		Path:         workDir,
 		ProviderName: providerName,
 	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		delete(cfg.Sessions, sessionName)
+		_ = telegram.DeleteForumTopic(cfg, topicID)
+		loggingpkg.ListenLog("[callback:new] Failed to create workdir for %s: %v", sessionName, err)
+		editCallbackMessageRemoveKeyboard(cfg, cb, fmt.Sprintf("❌ Failed to create workdir: %v", err))
+		return
+	}
+	if err := EnsureNewSessionHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
+		delete(cfg.Sessions, sessionName)
+		_ = telegram.DeleteForumTopic(cfg, topicID)
+		loggingpkg.ListenLog("[callback:new] Failed to install/trust hooks for %s: %v", sessionName, err)
+		editCallbackMessageRemoveKeyboard(cfg, cb, fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
+		return
+	}
 	if err := configpkg.Save(cfg); err != nil {
 		delete(cfg.Sessions, sessionName) // rollback on failure
 		editCallbackMessageRemoveKeyboard(cfg, cb,
@@ -229,14 +243,6 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		return
 	}
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		loggingpkg.ListenLog("[callback:new] Failed to create workdir for %s: %v", sessionName, err)
-		editCallbackMessageRemoveKeyboard(cfg, cb, fmt.Sprintf("❌ Failed to create workdir: %v", err))
-		return
-	}
-	if err := EnsureAgentHooks(cfg, sessionName, cfg.Sessions[sessionName]); err != nil {
-		loggingpkg.ListenLog("[callback:new] Failed to install hooks for %s: %v", sessionName, err)
-	}
 
 	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, selectedProviderSummary(providerName), agentDisplayName(cfg, providerName))
 	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
@@ -268,6 +274,13 @@ func HandleProviderChange(cfg *configpkg.Config, cb *telegram.CallbackQuery, ses
 		sess.ProviderName = previousProvider
 		editCallbackMessageRemoveKeyboard(cfg, cb,
 			fmt.Sprintf("⚠️ Failed to save config: %v", err))
+		return
+	}
+	if err := EnsureNewSessionHooks(cfg, sessionName, sess); err != nil {
+		sess.ProviderName = previousProvider
+		_ = configpkg.Save(cfg)
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
 		return
 	}
 	pinSessionHeader(cfg, sessionName, sess)
@@ -328,16 +341,19 @@ func HandleTeamWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, t
 
 	sessInfo.TopicID = topicID
 	cfg.SetTeamSession(topicID, sessInfo)
+	if err := EnsureNewSessionHooks(cfg, teamName, sessInfo); err != nil {
+		telegram.DeleteForumTopic(cfg, topicID)
+		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Failed to install/trust hooks: %v", err))
+		return
+	}
 	if err := configpkg.Save(cfg); err != nil {
 		telegram.DeleteForumTopic(cfg, topicID)
 		exec.Command("tmux", "kill-window", "-t", "ccc-team:"+teamName).Run()
 		editCallbackMessageRemoveKeyboard(cfg, cb,
 			fmt.Sprintf("❌ Failed to save config: %v", err))
 		return
-	}
-
-	if err := EnsureAgentHooks(cfg, teamName, sessInfo); err != nil {
-		loggingpkg.ListenLog("[/team] Failed to install hooks for %s: %v", teamName, err)
 	}
 
 	if err := runtime.StartClaude(sessInfo, workDir); err != nil {
