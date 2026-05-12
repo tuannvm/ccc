@@ -18,6 +18,7 @@
 - 🏖️ Starting tasks while away from your desk
 - ⏰ Monitoring long-running tests and builds
 - 💡 Quick questions without opening your laptop
+- 🔄 Syncing an already-running Claude session to Telegram with the CCC skill
 
 ## Install
 
@@ -60,7 +61,30 @@ make install
 ccc setup YOUR_BOT_TOKEN
 ```
 
-This connects to Telegram, sets up topics, and installs hooks.
+This connects to Telegram, sets up topics, and installs the background listener.
+
+To add the CCC skill to a project, install it through the skills marketplace from that project directory:
+
+```bash
+npx skills add
+```
+
+In an existing Claude Code or Codex session, trigger the skill to run `ccc sync`; ccc will reuse the current project topic or create one, refresh hooks, and leave the current session running.
+
+**Native plugin install:**
+
+ccc ships plugin manifests for marketplace-style installs:
+
+- Claude Code: install the `ccc` plugin from this repo/marketplace; it exposes the CCC and CCC Send skills.
+- Codex: add the repo-local marketplace, then install/enable the `ccc` and `ccc-send` plugins from that marketplace.
+
+For users who intentionally want the skill available globally instead of project-scoped, run:
+
+```bash
+ccc skill
+```
+
+`ccc skill` writes global Claude Code and Codex skill files. Project-scoped installs should use the marketplace flow above.
 
 ### 3. Start Coding
 
@@ -97,6 +121,7 @@ That's it! 🎉
 - 🌳 **Git Worktrees** — Auto-generated sessions with color grouping
 - 📌 **Pinned Session Context** — Session, provider, and path stay visible in each topic
 - 🔄 **Seamless Handoff** — Start on phone, continue on PC
+- 🧩 **Skill Handoff** — Link an existing Claude session to Telegram without restarting it
 - ⚡ **Streaming Responses** — Real-time typing effect for AI messages
 - 📤 **File Transfer** — Send files to your phone
 - 🎤 **Voice Messages** — Auto-transcribed voice notes

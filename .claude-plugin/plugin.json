@@ -1,0 +1,9 @@
+{
+  "name": "ccc",
+  "version": "1.7.0",
+  "description": "Claude Code Companion skills for syncing an existing agent session to Telegram topics and sending files through CCC.",
+  "author": {
+    "name": "Tommy Nguyen",
+    "url": "https://github.com/tuannvm"
+  }
+}

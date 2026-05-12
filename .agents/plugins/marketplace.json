@@ -1,0 +1,42 @@
+{
+  "name": "ccc",
+  "interface": {
+    "displayName": "CCC"
+  },
+  "owner": {
+    "name": "Tommy Nguyen",
+    "url": "https://github.com/tuannvm"
+  },
+  "metadata": {
+    "description": "Repo-local Codex marketplace for CCC.",
+    "version": "1.7.0"
+  },
+  "plugins": [
+    {
+      "name": "ccc",
+      "description": "Sync an existing agent session to a Telegram topic and send files through CCC.",
+      "source": {
+        "source": "local",
+        "path": "./.agents/skills/ccc"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Coding"
+    },
+    {
+      "name": "ccc-send",
+      "description": "Send generated or built files to the user via Telegram using CCC.",
+      "source": {
+        "source": "local",
+        "path": "./.agents/skills/ccc-send"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Coding"
+    }
+  ]
+}

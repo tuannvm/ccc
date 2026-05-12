@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/lookup"
@@ -126,6 +127,109 @@ func StartTelegramSession(cfg *configpkg.Config, sessionName, workDir, message s
 	}
 
 	return tmux.AttachToSession(sessionName)
+}
+
+// SyncSessionInCurrentDir links the current working directory to CCC without
+// attaching tmux. This is intended for agent skills invoked inside an existing
+// Claude session: it creates or reuses the Telegram topic, installs hooks, and
+// leaves the current process in control.
+func SyncSessionInCurrentDir(cfg *configpkg.Config, message string) error {
+	if cfg == nil {
+		return fmt.Errorf("config unavailable. Run: ccc setup <bot_token>")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+	if cfg.Sessions == nil {
+		cfg.Sessions = make(map[string]*configpkg.SessionInfo)
+	}
+	runtimeContext := detectCurrentAgentContext(cfg)
+
+	sessionName, sessionInfo := lookup.FindSessionForPath(cfg, cwd)
+	created := false
+	createdTopic := false
+	providerChanged := false
+	if sessionName == "" || sessionInfo == nil {
+		sessionName = lookup.GenerateUniqueSessionName(cfg, cwd, filepath.Base(cwd))
+		sessionInfo = &configpkg.SessionInfo{
+			Path:         cwd,
+			ProviderName: runtimeContext.ProviderName,
+		}
+		if sessionInfo.ProviderName == "" {
+			sessionInfo.ProviderName = defaultProviderName(cfg)
+		}
+		if runtimeContext.SessionID != "" {
+			sessionInfo.ClaudeSessionID = runtimeContext.SessionID
+		}
+		cfg.Sessions[sessionName] = sessionInfo
+		created = true
+	}
+	if sessionInfo.Path == "" {
+		sessionInfo.Path = cwd
+	}
+	if runtimeContext.ProviderName != "" && sessionInfo.ProviderName != runtimeContext.ProviderName {
+		sessionInfo.ProviderName = runtimeContext.ProviderName
+		providerChanged = true
+	} else if sessionInfo.ProviderName == "" {
+		sessionInfo.ProviderName = defaultProviderName(cfg)
+	}
+	if runtimeContext.SessionID != "" {
+		sessionInfo.ClaudeSessionID = runtimeContext.SessionID
+	}
+
+	if cfg.GroupID != 0 && sessionInfo.TopicID == 0 {
+		topicID, err := telegram.CreateForumTopic(cfg, sessionName, effectiveProviderName(cfg, sessionInfo), "")
+		if err != nil {
+			if created {
+				delete(cfg.Sessions, sessionName)
+			}
+			return fmt.Errorf("failed to create topic: %w", err)
+		}
+		sessionInfo.TopicID = topicID
+		createdTopic = true
+	}
+
+	if err := EnsureNewSessionHooks(cfg, sessionName, sessionInfo); err != nil {
+		if created {
+			delete(cfg.Sessions, sessionName)
+		}
+		if createdTopic {
+			_ = telegram.DeleteForumTopic(cfg, sessionInfo.TopicID)
+		}
+		return err
+	}
+	if err := configpkg.Save(cfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+	if createdTopic || (providerChanged && sessionInfo.TopicID != 0) {
+		pinSessionHeader(cfg, sessionName, sessionInfo)
+	}
+
+	if cfg.GroupID != 0 && sessionInfo.TopicID != 0 {
+		status := "Synced CCC session"
+		if created {
+			status = "Created CCC session"
+		}
+		msg := fmt.Sprintf("%s\nsession: %s\n%s\npath: %s", status, sessionName, providerSummary(cfg, sessionInfo), cwd)
+		if strings.TrimSpace(message) != "" {
+			msg += "\n\n" + message
+		}
+		if err := telegram.SendMessage(cfg, cfg.GroupID, sessionInfo.TopicID, msg); err != nil {
+			fmt.Printf("Warning: failed to send Telegram sync message: %v\n", err)
+		}
+	}
+
+	verb := "Synced"
+	if created {
+		verb = "Created"
+	}
+	if sessionInfo.TopicID != 0 {
+		fmt.Printf("%s CCC session '%s' with Telegram topic %d\n%s\n", verb, sessionName, sessionInfo.TopicID, providerSummary(cfg, sessionInfo))
+	} else {
+		fmt.Printf("%s local CCC session '%s' (no Telegram group configured)\n%s\n", verb, sessionName, providerSummary(cfg, sessionInfo))
+	}
+	return nil
 }
 
 // StartSession creates/attaches to a tmux window with Telegram topic.
@@ -296,4 +400,14 @@ func StartSessionInCurrentDirAuto(message string,
 		return fmt.Errorf("failed to load config. Run: ccc setup <bot_token>")
 	}
 	return StartSessionInCurrentDir(config, message)
+}
+
+// SyncSessionInCurrentDirAuto loads config and syncs the current directory
+// without attaching to tmux.
+func SyncSessionInCurrentDirAuto(args []string) error {
+	config, err := configpkg.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config. Run: ccc setup <bot_token>")
+	}
+	return SyncSessionInCurrentDir(config, strings.Join(args, " "))
 }

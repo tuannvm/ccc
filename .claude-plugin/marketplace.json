@@ -1,0 +1,23 @@
+{
+  "name": "ccc",
+  "owner": {
+    "name": "Tommy Nguyen",
+    "url": "https://github.com/tuannvm"
+  },
+  "metadata": {
+    "description": "Claude Code Companion marketplace for Telegram session sync and file transfer skills.",
+    "version": "1.7.0"
+  },
+  "plugins": [
+    {
+      "name": "ccc",
+      "description": "Sync an existing Claude Code session to a Telegram topic and send files through CCC.",
+      "source": "./",
+      "strict": true,
+      "skills": [
+        "./.agents/skills/ccc",
+        "./.agents/skills/ccc-send"
+      ]
+    }
+  ]
+}

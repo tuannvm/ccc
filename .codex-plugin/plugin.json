@@ -1,0 +1,39 @@
+{
+  "name": "ccc",
+  "version": "1.7.0",
+  "description": "Claude Code Companion skills for syncing an existing agent session to Telegram topics and sending files through CCC.",
+  "author": {
+    "name": "Tommy Nguyen",
+    "url": "https://github.com/tuannvm"
+  },
+  "homepage": "https://github.com/tuannvm/ccc",
+  "repository": "https://github.com/tuannvm/ccc",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "claude-code",
+    "codex",
+    "tmux",
+    "remote-control",
+    "handoff"
+  ],
+  "skills": "./.agents/skills/",
+  "interface": {
+    "displayName": "CCC",
+    "shortDescription": "Sync agent sessions to Telegram topics",
+    "longDescription": "CCC links an already-running Claude or Codex-backed agent session to Telegram by creating or reusing a topic, installing hooks, and leaving the current session running.",
+    "developerName": "Tommy Nguyen",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/tuannvm/ccc",
+    "defaultPrompt": [
+      "Sync this agent session to Telegram with CCC."
+    ],
+    "brandColor": "#2AABEE",
+    "screenshots": []
+  }
+}

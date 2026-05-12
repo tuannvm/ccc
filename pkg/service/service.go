@@ -9,15 +9,11 @@ import (
 	"time"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
-	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
-// InstallAll installs both the Claude skill/hooks and the background service.
+// InstallAll installs the background listener service.
 func InstallAll() error {
-	if err := hooks.InstallSkill(); err != nil {
-		return fmt.Errorf("failed to install skill: %w", err)
-	}
 	if err := InstallService(); err != nil {
 		return fmt.Errorf("failed to install service: %w", err)
 	}

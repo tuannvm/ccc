@@ -1,0 +1,10 @@
+{
+  "name": "ccc",
+  "version": "1.7.0",
+  "description": "Sync, link, continue, hand off, or take over the current Claude Code or Codex-backed session from Telegram by running `ccc sync`.",
+  "author": {
+    "name": "Tommy Nguyen",
+    "url": "https://github.com/tuannvm"
+  },
+  "skills": "./"
+}

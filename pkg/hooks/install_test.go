@@ -11,6 +11,86 @@ import (
 	"github.com/tuannvm/ccc/pkg/tmux"
 )
 
+func TestInstallSkillIsProjectScoped(t *testing.T) {
+	homeDir := t.TempDir()
+	codexHome := filepath.Join(homeDir, ".codex-global")
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Chdir(projectDir)
+
+	if err := InstallSkill(); err != nil {
+		t.Fatalf("InstallSkill: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(projectDir, ".claude", "skills", "ccc.md"),
+		filepath.Join(projectDir, ".claude", "skills", "ccc-send.md"),
+		filepath.Join(projectDir, ".agents", "skills", "ccc", "SKILL.md"),
+		filepath.Join(projectDir, ".agents", "skills", "ccc-send", "SKILL.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected project skill at %s: %v", path, err)
+		}
+	}
+
+	for _, path := range []string{
+		filepath.Join(homeDir, ".claude", "skills", "ccc.md"),
+		filepath.Join(codexHome, "config.toml"),
+		filepath.Join(codexHome, "skills", "ccc", "SKILL.md"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("global path should not be touched: %s (err=%v)", path, err)
+		}
+	}
+
+	if err := UninstallSkill(); err != nil {
+		t.Fatalf("UninstallSkill: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(projectDir, ".claude", "skills", "ccc.md"),
+		filepath.Join(projectDir, ".agents", "skills", "ccc", "SKILL.md"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("project skill should be removed: %s (err=%v)", path, err)
+		}
+	}
+}
+
+func TestInstallGlobalSkillWritesOnlyGlobalSkillDirs(t *testing.T) {
+	homeDir := t.TempDir()
+	codexHome := filepath.Join(homeDir, ".codex-global")
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Chdir(projectDir)
+
+	if err := InstallGlobalSkill(); err != nil {
+		t.Fatalf("InstallGlobalSkill: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(homeDir, ".claude", "skills", "ccc.md"),
+		filepath.Join(homeDir, ".claude", "skills", "ccc-send.md"),
+		filepath.Join(codexHome, "skills", "ccc", "SKILL.md"),
+		filepath.Join(codexHome, "skills", "ccc-send", "SKILL.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected global skill at %s: %v", path, err)
+		}
+	}
+
+	for _, path := range []string{
+		filepath.Join(projectDir, ".claude", "skills", "ccc.md"),
+		filepath.Join(projectDir, ".agents", "skills", "ccc", "SKILL.md"),
+		filepath.Join(codexHome, "config.toml"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("path should not be touched: %s (err=%v)", path, err)
+		}
+	}
+}
+
 func TestInstallCodexHooksToPathMergesAndVerifies(t *testing.T) {
 	tmpDir := t.TempDir()
 	hooksPath := filepath.Join(tmpDir, ".codex", "hooks.json")
