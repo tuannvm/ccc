@@ -217,7 +217,11 @@ func PaneHasActiveCodexPrompt(paneTarget string) bool {
 	if err != nil {
 		return false
 	}
-	return hasActiveCodexPrompt(string(out))
+	content := string(out)
+	if hasActiveCodexPrompt(content) {
+		return true
+	}
+	return hasRecentCodexPromptGlyph(content) && targetHasCodexProcessContext(paneTarget)
 }
 
 func hasActiveCodexPrompt(content string) bool {
@@ -225,6 +229,10 @@ func hasActiveCodexPrompt(content string) bool {
 	if !strings.Contains(lowerContent, "codex") && !strings.Contains(lowerContent, "openai") {
 		return false
 	}
+	return hasRecentCodexPromptGlyph(content)
+}
+
+func hasRecentCodexPromptGlyph(content string) bool {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	nonEmptySeen := 0
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -239,6 +247,37 @@ func hasActiveCodexPrompt(content string) bool {
 		if nonEmptySeen >= 5 {
 			break
 		}
+	}
+	return false
+}
+
+func targetHasCodexProcessContext(target string) bool {
+	cmd := exec.Command(TmuxPath, "display-message", "-t", target, "-p", "#{pane_id}\t#{pane_current_command}")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "\t", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	paneID := parts[0]
+	paneCmd := strings.TrimSpace(parts[1])
+
+	shells := map[string]bool{
+		"sh": true, "bash": true, "zsh": true, "fish": true,
+		"dash": true, "nu": true, "elvish": true, "xonsh": true,
+		"tcsh": true, "csh": true, "ksh": true,
+	}
+
+	if paneCmd == "codex" {
+		return true
+	}
+	if paneCmd == "node" || paneCmd == "nodejs" {
+		return PaneIsCodexProcess(paneID)
+	}
+	if paneCmd == "ccc" || shells[paneCmd] {
+		return PaneHasCodexChild(paneID)
 	}
 	return false
 }

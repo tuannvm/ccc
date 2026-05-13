@@ -236,6 +236,11 @@ func TestHasActiveCodexPrompt(t *testing.T) {
 			content: "some unrelated tui\n› ",
 			want:    false,
 		},
+		{
+			name:    "prompt glyph after codex header scrolled away",
+			content: "assistant output\n\n› ",
+			want:    false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -244,6 +249,49 @@ func TestHasActiveCodexPrompt(t *testing.T) {
 				t.Fatalf("hasActiveCodexPrompt() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHasRecentCodexPromptGlyph(t *testing.T) {
+	if !hasRecentCodexPromptGlyph("assistant output\n\n› ") {
+		t.Fatal("hasRecentCodexPromptGlyph() = false, want true")
+	}
+	if hasRecentCodexPromptGlyph("assistant output\n› old prompt\nmore output\nmore output\nmore output\nmore output\nmore output") {
+		t.Fatal("hasRecentCodexPromptGlyph() = true for stale prompt, want false")
+	}
+}
+
+func TestTargetHasCodexProcessContextUsesTargetPane(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "tmux.log")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\n" +
+		"case \"$1\" in\n" +
+		"  display-message) printf '%%9\\t%s\\n' \"$TMUX_PANE_CMD\"; exit 0 ;;\n" +
+		"  list-panes) exit 2 ;;\n" +
+		"  *) exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+
+	oldTmuxPath := TmuxPath
+	TmuxPath = fakeTmux
+	t.Setenv("TMUX_LOG", logPath)
+	t.Setenv("TMUX_PANE_CMD", "codex")
+	t.Cleanup(func() { TmuxPath = oldTmuxPath })
+
+	if !targetHasCodexProcessContext("ccc:demo.1") {
+		t.Fatal("targetHasCodexProcessContext(codex) = false, want true")
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read tmux log: %v", err)
+	}
+	if strings.Contains(string(logData), "list-panes") {
+		t.Fatalf("targetHasCodexProcessContext used active pane list instead of target pane:\n%s", string(logData))
 	}
 }
 
