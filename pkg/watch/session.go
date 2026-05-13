@@ -30,5 +30,22 @@ func BuildInitialPrompt(ticket Ticket) string {
 	if ticket.AcceptanceCriteria != "" {
 		prompt += "\n\nAcceptance criteria:\n" + ticket.AcceptanceCriteria
 	}
+	prompt += "\n\nJira workflow:\n"
+	prompt += "- Use the Jira ticket as the source of truth while working. Read the ticket, comments, and linked context when needed.\n"
+	prompt += "- Add concise Jira comments for meaningful progress, blockers, and important decisions.\n"
+	prompt += "- When the implementation is complete and verified, move the Jira ticket to In Review.\n"
+	prompt += "- If you cannot finish, leave a Jira comment with the current state, blocker, and next step."
 	return prompt
+}
+
+func StartComment(ticket Ticket, entry StateEntry) string {
+	message := fmt.Sprintf("CCC started work.\n\nSession: %s\nRepo: %s", entry.SessionName, entry.RepoPath)
+	if entry.TopicID != 0 {
+		message += fmt.Sprintf("\nTopic ID: %d", entry.TopicID)
+	}
+	return message
+}
+
+func StartupFailureComment(ticket Ticket, entry StateEntry) string {
+	return fmt.Sprintf("CCC claimed this ticket but failed to start the session.\n\nSession: %s\nRepo: %s\nError: %s", entry.SessionName, entry.RepoPath, entry.LastError)
 }

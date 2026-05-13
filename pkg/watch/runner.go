@@ -105,6 +105,7 @@ func (r *Runner) RunCycle(ctx context.Context, opts RunOptions) (CycleResult, er
 			entry.SessionName = sessionName
 			entry.LastError = err.Error()
 			_ = r.StateStore.Save(ctx, state)
+			_ = r.Provider.Comment(ctx, full, StartupFailureComment(full, *entry))
 			return result, fmt.Errorf("start session for %s: %w", ref, err)
 		}
 		entry.SessionName = sessionName
@@ -114,6 +115,7 @@ func (r *Runner) RunCycle(ctx context.Context, opts RunOptions) (CycleResult, er
 		if err := r.StateStore.Save(ctx, state); err != nil {
 			return result, err
 		}
+		_ = r.Provider.Comment(ctx, full, StartComment(full, *entry))
 		result.Started = append(result.Started, *entry)
 	}
 	return result, nil

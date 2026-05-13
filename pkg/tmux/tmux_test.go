@@ -69,6 +69,15 @@ func TestFindExistingWindowDoesNotCreateBootstrapSession(t *testing.T) {
 	}
 }
 
+func TestSubmitKey(t *testing.T) {
+	if got := submitKey(true); got != "Enter" {
+		t.Fatalf("submitKey(true) = %q, want Enter", got)
+	}
+	if got := submitKey(false); got != "C-m" {
+		t.Fatalf("submitKey(false) = %q, want C-m", got)
+	}
+}
+
 func TestEnsureProjectWindowInDirCreatesFirstWindowInProjectDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "tmux.log")

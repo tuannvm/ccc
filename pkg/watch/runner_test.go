@@ -11,6 +11,7 @@ import (
 type fakeProvider struct {
 	candidates []Ticket
 	claimed    []string
+	comments   []string
 	fetchErr   error
 }
 
@@ -31,7 +32,10 @@ func (p *fakeProvider) FetchContext(_ context.Context, t Ticket) (Ticket, error)
 	}
 	return t, nil
 }
-func (p *fakeProvider) Comment(context.Context, Ticket, string) error { return nil }
+func (p *fakeProvider) Comment(_ context.Context, ticket Ticket, message string) error {
+	p.comments = append(p.comments, ticket.Ref()+"|"+message)
+	return nil
+}
 
 type memoryStateStore struct {
 	state *State
@@ -127,6 +131,12 @@ func TestRunnerClaimsAndStartsSession(t *testing.T) {
 	if !strings.HasPrefix(starter.started[0], "abc-2-repo-name|/tmp/repo|") {
 		t.Fatalf("unexpected session start: %s", starter.started[0])
 	}
+	if len(provider.comments) != 1 || !strings.Contains(provider.comments[0], "CCC started work") {
+		t.Fatalf("comments = %+v", provider.comments)
+	}
+	if !strings.Contains(starter.started[0], "move the Jira ticket to In Review") {
+		t.Fatalf("initial prompt missing Jira completion instruction: %s", starter.started[0])
+	}
 }
 
 func TestRunnerPreservesErrorStateWhenSessionStartupFails(t *testing.T) {
@@ -148,5 +158,8 @@ func TestRunnerPreservesErrorStateWhenSessionStartupFails(t *testing.T) {
 	}
 	if entry.LastError != "tmux failed" || entry.SessionName != "abc-3-repo" {
 		t.Fatalf("entry = %+v", entry)
+	}
+	if len(provider.comments) != 1 || !strings.Contains(provider.comments[0], "failed to start the session") {
+		t.Fatalf("comments = %+v", provider.comments)
 	}
 }
