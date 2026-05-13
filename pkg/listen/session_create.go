@@ -315,9 +315,20 @@ func StartDetachedFromArgs(args []string) error {
 
 // StartDetached creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach).
 func StartDetached(name string, workDir string, prompt string) error {
+	_, err := StartDetachedWithResult(name, workDir, prompt)
+	return err
+}
+
+// DetachedSessionResult describes a detached session created by StartDetachedWithResult.
+type DetachedSessionResult struct {
+	TopicID int64
+}
+
+// StartDetachedWithResult creates a Telegram topic, tmux window with Claude, and sends a prompt (no attach).
+func StartDetachedWithResult(name string, workDir string, prompt string) (*DetachedSessionResult, error) {
 	config, err := configpkg.Load()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	if config.Sessions == nil {
@@ -328,7 +339,7 @@ func StartDetached(name string, workDir string, prompt string) error {
 
 	topicID, err := telegram.CreateForumTopic(config, name, providerName, "")
 	if err != nil {
-		return fmt.Errorf("failed to create topic: %w", err)
+		return nil, fmt.Errorf("failed to create topic: %w", err)
 	}
 
 	config.Sessions[name] = &configpkg.SessionInfo{
@@ -339,32 +350,32 @@ func StartDetached(name string, workDir string, prompt string) error {
 	if err := EnsureNewSessionHooks(config, name, config.Sessions[name]); err != nil {
 		delete(config.Sessions, name)
 		_ = telegram.DeleteForumTopic(config, topicID)
-		return err
+		return nil, err
 	}
 	if err := configpkg.Save(config); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
+		return nil, fmt.Errorf("failed to save config: %w", err)
 	}
 	pinSessionHeader(config, name, config.Sessions[name])
 
 	if err := tmux.SwitchSessionInWindow(name, workDir, providerName, "", "", false, true); err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
+		return nil, fmt.Errorf("failed to start session: %w", err)
 	}
 
 	target, err := tmux.GetWindowTarget(name)
 	if err != nil {
-		return fmt.Errorf("failed to get ccc window: %w", err)
+		return nil, fmt.Errorf("failed to get ccc window: %w", err)
 	}
 
 	if err := tmux.WaitForAgentBackend(target, providerBackend(config, providerName), 30*1e9); err != nil { // 30s
-		return fmt.Errorf("agent did not start in time: %w", err)
+		return nil, fmt.Errorf("agent did not start in time: %w", err)
 	}
 
 	if err := tmux.SendKeysForBackend(target, prompt, providerBackend(config, providerName)); err != nil {
-		return fmt.Errorf("failed to send prompt: %w", err)
+		return nil, fmt.Errorf("failed to send prompt: %w", err)
 	}
 
 	fmt.Printf("Session '%s' started in ccc window with topic %d\n%s\n", name, topicID, providerSummary(config, config.Sessions[name]))
-	return nil
+	return &DetachedSessionResult{TopicID: topicID}, nil
 }
 
 // StartSessionInCurrentDir starts a session for the current working directory.
