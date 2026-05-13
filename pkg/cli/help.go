@@ -22,10 +22,12 @@ COMMANDS:
     status all              List Telegram-backed sessions and local bridges
     status attach <session> Attach/resume a known CCC session by name
     status restart          Continue/restart the current directory session
+    sync [message]          Link this running agent to a Telegram topic without attaching tmux
     provider [name]         View or change current session provider
     setgroup                Configure Telegram group for topics (if skipped during setup)
     listen                  Start the Telegram bot listener manually
-    install                 Install skill and background service
+    install                 Install the background listener service
+    skill                   Install CCC skills globally for Claude Code and Codex
     install-hooks           Install hooks in current project directory
     uninstall               Remove CCC skill
     cleanup-hooks           Clean up old global hooks from pre-1.2 installations

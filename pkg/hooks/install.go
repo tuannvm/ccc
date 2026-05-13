@@ -736,70 +736,165 @@ func UninstallHooksFromPath(settingsPath string) error {
 	return nil
 }
 
-// InstallSkill installs the ccc-send skill to ~/.claude/skills/
+// InstallSkill installs the ccc skills into the current project only.
+//
+// Deprecated: project installs should use the skills marketplace, for example
+// `npx skills add`, so the agent runtime owns project-scoped placement.
 func InstallSkill() error {
-	home, _ := os.UserHomeDir()
-	skillDir := filepath.Join(home, ".claude", "skills")
-	skillPath := filepath.Join(skillDir, "ccc-send.md")
-
-	if err := os.MkdirAll(skillDir, 0755); err != nil {
-		return fmt.Errorf("failed to create skills directory: %w", err)
+	projectDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to determine current project directory: %w", err)
 	}
-
-	skillContent := `# CCC Send - File Transfer Skill
-
-## Description
-Send files to the user via Telegram using the ccc send command.
-
-## Usage
-When the user asks you to send them a file, or when you have generated/built a file that the user needs (like an APK, binary, or any other file), use this command:
-
-` + "```bash" + `
-ccc send <file_path>
-` + "```" + `
-
-## How it works
-- **Small files (< 50MB)**: Sent directly via Telegram
-- **Large files (≥ 50MB)**: Streamed via relay server with a one-time download link
-
-## Examples
-
-### Send a built APK
-` + "```bash" + `
-ccc send ./build/app.apk
-` + "```" + `
-
-### Send a generated file
-` + "```bash" + `
-ccc send ./output/report.pdf
-` + "```" + `
-
-### Send from subdirectory
-` + "```bash" + `
-ccc send ~/Downloads/large-file.zip
-` + "```" + `
-
-## Important Notes
-- The command detects the current session from your working directory
-- For large files, the command will wait up to 10 minutes for the user to download
-- Each download link is one-time use only
-- Use this proactively when you've created files the user need!
-`
-
-	if err := os.WriteFile(skillPath, []byte(skillContent), 0644); err != nil {
-		return fmt.Errorf("failed to write skill file: %w", err)
+	if err := installProjectSkillToDir(projectDir); err != nil {
+		return err
 	}
-
-	fmt.Println("✅ CCC send skill installed!")
+	fmt.Printf("✅ CCC skills installed to %s\n", projectDir)
 	return nil
 }
 
-// UninstallSkill removes the ccc-send skill
-func UninstallSkill() error {
-	home, _ := os.UserHomeDir()
-	skillPath := filepath.Join(home, ".claude", "skills", "ccc-send.md")
-	os.Remove(skillPath)
+// InstallGlobalSkill installs the ccc skills into the user's global agent skill directories.
+func InstallGlobalSkill() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to determine home directory: %w", err)
+	}
+
+	claudeSkillDir := filepath.Join(homeDir, ".claude", "skills")
+	if err := installClaudeSkillToDir(claudeSkillDir); err != nil {
+		return err
+	}
+
+	codexHome := os.Getenv("CODEX_HOME")
+	if codexHome == "" {
+		codexHome = filepath.Join(homeDir, ".codex")
+	}
+	codexSkillRoot := filepath.Join(codexHome, "skills")
+	if err := installAgentSkillToRoot(codexSkillRoot, "ccc", codexCccSkillContent()); err != nil {
+		return err
+	}
+	if err := installAgentSkillToRoot(codexSkillRoot, "ccc-send", codexSendSkillContent()); err != nil {
+		return err
+	}
+
+	fmt.Printf("✅ CCC global skills installed to %s and %s\n", claudeSkillDir, codexSkillRoot)
 	return nil
+}
+
+func installProjectSkillToDir(projectDir string) error {
+	if err := installClaudeSkillToDir(filepath.Join(projectDir, ".claude", "skills")); err != nil {
+		return err
+	}
+	if err := installAgentSkillToRoot(filepath.Join(projectDir, ".agents", "skills"), "ccc", codexCccSkillContent()); err != nil {
+		return err
+	}
+	if err := installAgentSkillToRoot(filepath.Join(projectDir, ".agents", "skills"), "ccc-send", codexSendSkillContent()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func installClaudeSkillToDir(claudeSkillDir string) error {
+	sendSkillPath := filepath.Join(claudeSkillDir, "ccc-send.md")
+	cccSkillPath := filepath.Join(claudeSkillDir, "ccc.md")
+
+	if err := os.MkdirAll(claudeSkillDir, 0755); err != nil {
+		return fmt.Errorf("failed to create Claude skills directory: %w", err)
+	}
+
+	skillContent := cccSendSkillBody()
+	if err := os.WriteFile(sendSkillPath, []byte(skillContent), 0644); err != nil {
+		return fmt.Errorf("failed to write send skill file: %w", err)
+	}
+
+	cccSkillContent := cccSkillBody()
+	if err := os.WriteFile(cccSkillPath, []byte(cccSkillContent), 0644); err != nil {
+		return fmt.Errorf("failed to write ccc skill file: %w", err)
+	}
+	return nil
+}
+
+// UninstallSkill removes the ccc skills
+func UninstallSkill() error {
+	projectDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to determine current project directory: %w", err)
+	}
+	os.Remove(filepath.Join(projectDir, ".claude", "skills", "ccc-send.md"))
+	os.Remove(filepath.Join(projectDir, ".claude", "skills", "ccc.md"))
+	for _, name := range []string{"ccc", "ccc-send"} {
+		os.RemoveAll(filepath.Join(projectDir, ".agents", "skills", name))
+	}
+	return nil
+}
+
+func installProjectAgentSkill(projectDir, name, content string) error {
+	return installAgentSkillToRoot(filepath.Join(projectDir, ".agents", "skills"), name, content)
+}
+
+func installAgentSkillToRoot(rootDir, name, content string) error {
+	dir := filepath.Join(rootDir, name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create agent skill directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write agent skill %s: %w", name, err)
+	}
+	return nil
+}
+
+func codexCccSkillContent() string {
+	return "---\nname: ccc\ndescription: Sync, link, continue, hand off, or take over the current Claude Code or Codex-backed session from Telegram by running ccc sync.\nallowed-tools: Bash\n---\n\n" + cccSkillBody()
+}
+
+func codexSendSkillContent() string {
+	return "---\nname: ccc-send\ndescription: Send generated or built files to the user via Telegram using ccc send.\nallowed-tools: Bash\n---\n\n" + cccSendSkillBody()
+}
+
+func cccSendSkillBody() string {
+	return "# CCC Send - File Transfer Skill\n\n" +
+		"## Description\n" +
+		"Send files to the user via Telegram using the ccc send command.\n\n" +
+		"## Usage\n" +
+		"When the user asks you to send them a file, or when you have generated/built a file that the user needs, run:\n\n" +
+		"~~~bash\nccc send <file_path>\n~~~\n\n" +
+		"## How it works\n" +
+		"- Small files under 50MB are sent directly via Telegram.\n" +
+		"- Large files are streamed via relay server with a one-time download link.\n\n" +
+		"## Examples\n\n" +
+		"~~~bash\nccc send ./build/app.apk\nccc send ./output/report.pdf\nccc send ~/Downloads/large-file.zip\n~~~\n\n" +
+		"## Important Notes\n" +
+		"- The command detects the current session from your working directory.\n" +
+		"- For large files, the command will wait up to 10 minutes for the user to download.\n" +
+		"- Each download link is one-time use only.\n" +
+		"- Use this proactively when you have created files the user needs.\n"
+}
+
+func cccSkillBody() string {
+	return "# CCC - Telegram Session Sync\n\n" +
+		"## Description\n" +
+		"Use CCC when the user asks to sync, link, continue, or take over the current Claude Code or Codex-backed session from Telegram. CCC creates or reuses the Telegram topic for the current project, installs the project hooks, and keeps the current agent session running.\n\n" +
+		"## Usage\n" +
+		"When this skill is triggered from Codex, run:\n\n" +
+		"~~~bash\nCCC_AGENT_PROVIDER=codex ccc sync\n~~~\n\n" +
+		"When this skill is triggered from Claude Code, run:\n\n" +
+		"~~~bash\nCCC_AGENT_PROVIDER=anthropic ccc sync\n~~~\n\n" +
+		"If you know the exact current provider name, use it instead of the defaults above. If the runtime exposes a session or thread id, pass it as CCC_AGENT_SESSION_ID. For example:\n\n" +
+		"~~~bash\nCCC_AGENT_PROVIDER=codex CCC_AGENT_SESSION_ID=$CODEX_THREAD_ID ccc sync\n~~~\n\n" +
+		"If the runtime is unknown, run:\n\n" +
+		"~~~bash\nccc sync\n~~~\n\n" +
+		"If the user gave a short handoff note that should appear in Telegram, include it:\n\n" +
+		"~~~bash\nCCC_AGENT_PROVIDER=codex ccc sync \"Continuing this session from Telegram.\"\n~~~\n\n" +
+		"## How it works\n" +
+		"- If the current directory already maps to a CCC session, CCC reuses that Telegram topic.\n" +
+		"- If no session maps to the current directory, CCC creates a new Telegram topic using the normal provider/session flow.\n" +
+		"- CCC_AGENT_PROVIDER tells CCC whether this running session is Codex or Claude so Telegram resumes the same agent backend instead of using the configured default.\n" +
+		"- CCC_AGENT_SESSION_ID lets CCC store an exact resume target when the runtime exposes one. Codex may not expose this to shell commands; in that case CCC uses Codex resume-last behavior for that backend.\n" +
+		"- CCC installs or refreshes project-local hooks so later prompts, tool updates, permission requests, and completion messages are routed to the topic.\n" +
+		"- CCC does not attach tmux or restart the agent; the current character keeps control after the sync command returns.\n\n" +
+		"## Important Notes\n" +
+		"- Run the command from the project directory the current agent session is working in.\n" +
+		"- Do not run plain ccc for this skill; that command attaches tmux and is only for starting CCC at the beginning of a terminal session.\n" +
+		"- After ccc sync succeeds, continue the user request normally.\n"
 }
 
 // InstallHooksToCurrentDir installs ccc hooks to the current directory's .claude/settings.local.json

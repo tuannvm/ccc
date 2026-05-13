@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/tuannvm/ccc/pkg/auth"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
-	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/service"
 	"github.com/tuannvm/ccc/pkg/telegram"
 )
@@ -142,15 +141,8 @@ step2:
 	fmt.Println("⏭️  Skipped (you can run 'ccc setgroup' later)")
 
 step3:
-	// Step 4: Install Claude hook and skill
-	if err := hooks.InstallSkill(); err != nil {
-		fmt.Printf("⚠️  Skill installation failed: %v\n", err)
-	} else {
-		fmt.Println()
-	}
-
-	// Step 5: Install service
-	fmt.Println("Step 5/6: Installing background service...")
+	// Step 4: Install service
+	fmt.Println("Step 4/5: Installing background service...")
 	if err := service.InstallService(); err != nil {
 		fmt.Printf("⚠️  Service installation failed: %v\n", err)
 		fmt.Println("   You can start manually with: ccc listen")
@@ -158,8 +150,8 @@ step3:
 		fmt.Println()
 	}
 
-	// Step 6: Apply permission mode
-	fmt.Println("Step 6/6: Configuring permission mode...")
+	// Step 5: Apply permission mode
+	fmt.Println("Step 5/5: Configuring permission mode...")
 	if permMode == "otp" {
 		msg, err := auth.SetupOTP(config)
 		if err != nil {
@@ -185,6 +177,8 @@ step3:
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  ccc           Start Claude Code in current directory")
+	fmt.Println("  ccc skill     Install CCC skills globally")
+	fmt.Println("  npx skills add  Install CCC skills into a project from marketplace")
 	fmt.Println("  ccc status restart  Continue/restart current session")
 	fmt.Println()
 	if config.GroupID != 0 {

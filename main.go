@@ -72,6 +72,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "sync":
+		if err := listenpkg.SyncSessionInCurrentDirAuto(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "provider":
 		if err := listenpkg.RunProviderFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -131,6 +137,12 @@ func main() {
 
 	case "install":
 		if err := service.InstallAll(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "skill":
+		if err := hooks.InstallGlobalSkill(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

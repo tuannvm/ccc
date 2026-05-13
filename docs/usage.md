@@ -21,6 +21,7 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 | `ccc config [key] [value]` | View/set configuration |
 | `ccc listen` | Start Telegram listener (service mode) |
 | `ccc install-hooks` | Install hooks in current project |
+| `ccc skill` | Install CCC skills globally for Claude Code and Codex |
 | `ccc cleanup-hooks` | Remove hooks from current project |
 | `ccc run` | Run selected backend directly (used by tmux) |
 
@@ -81,6 +82,27 @@ ccc
 ```
 
 You're now attached to the same session and can continue working.
+
+### 5. Sync an Existing Claude Session
+
+Install the CCC skill into a project through the skills marketplace:
+
+```bash
+npx skills add
+```
+
+If you are already in a Claude Code or Codex session, trigger the skill from that project directory. The skill runs:
+
+```bash
+ccc sync
+```
+
+This creates or reuses the Telegram topic for the current directory, refreshes project hooks, posts a sync message to the topic when Telegram is configured, and returns without attaching tmux or restarting Claude.
+
+You can install the skills in two ways:
+
+- Native project install: run `npx skills add` from the project and add the `ccc` skill from the marketplace. The marketplace skill files live under `.agents/skills/`.
+- Global install: run `ccc skill` only when you intentionally want CCC available globally for Claude Code and Codex.
 
 ## Session Management
 

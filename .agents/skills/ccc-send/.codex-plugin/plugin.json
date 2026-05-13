@@ -1,0 +1,10 @@
+{
+  "name": "ccc-send",
+  "version": "1.7.0",
+  "description": "Send generated or built files to the user via Telegram using `ccc send`.",
+  "author": {
+    "name": "Tommy Nguyen",
+    "url": "https://github.com/tuannvm"
+  },
+  "skills": "./"
+}
