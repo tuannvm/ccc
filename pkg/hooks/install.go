@@ -455,11 +455,11 @@ func InstallCodexHooksToPath(hooksPath string) error {
 }
 
 type codexHookTrustSpec struct {
-	EventName string
-	KeyLabel  string
-	Matcher   string
-	Command   string
-	Timeout   int
+	EventName        string
+	InstalledMatcher string
+	EffectiveMatcher string
+	Command          string
+	Timeout          int
 }
 
 // TrustCodexHooksForProject pre-approves the exact Codex hooks CCC installs.
@@ -557,32 +557,30 @@ func installedCodexHookTrustSpec(eventName, matcher string, hook map[string]any)
 
 	specs := map[string]codexHookTrustSpec{
 		"pre_tool_use": {
-			EventName: "pre_tool_use",
-			KeyLabel:  "pre_tool_use",
-			Matcher:   "*",
-			Command:   cccPath + " hook-permission",
-			Timeout:   300000,
+			EventName:        "pre_tool_use",
+			InstalledMatcher: "*",
+			EffectiveMatcher: "*",
+			Command:          cccPath + " hook-permission",
+			Timeout:          300000,
 		},
 		"post_tool_use": {
-			EventName: "post_tool_use",
-			KeyLabel:  "post_tool_use",
-			Matcher:   "*",
-			Command:   cccPath + " hook-post-tool",
-			Timeout:   600,
+			EventName:        "post_tool_use",
+			InstalledMatcher: "*",
+			EffectiveMatcher: "*",
+			Command:          cccPath + " hook-post-tool",
+			Timeout:          600,
 		},
 		"stop": {
-			EventName: "stop",
-			KeyLabel:  "stop",
-			Matcher:   "*",
-			Command:   cccPath + " hook-stop",
-			Timeout:   600,
+			EventName:        "stop",
+			InstalledMatcher: "*",
+			Command:          cccPath + " hook-stop",
+			Timeout:          600,
 		},
 		"user_prompt_submit": {
-			EventName: "user_prompt_submit",
-			KeyLabel:  "user_prompt_submit",
-			Matcher:   "*",
-			Command:   cccPath + " hook-user-prompt",
-			Timeout:   600,
+			EventName:        "user_prompt_submit",
+			InstalledMatcher: "*",
+			Command:          cccPath + " hook-user-prompt",
+			Timeout:          600,
 		},
 	}
 
@@ -590,7 +588,7 @@ func installedCodexHookTrustSpec(eventName, matcher string, hook map[string]any)
 	if !ok {
 		return codexHookTrustSpec{}, false
 	}
-	if matcher != spec.Matcher || command != spec.Command || timeout != spec.Timeout {
+	if matcher != spec.InstalledMatcher || command != spec.Command || timeout != spec.Timeout {
 		return codexHookTrustSpec{}, false
 	}
 	return spec, true
@@ -649,8 +647,8 @@ func codexCommandHookHash(spec codexHookTrustSpec) string {
 		"event_name": spec.EventName,
 		"hooks":      []any{hook},
 	}
-	if spec.Matcher != "" {
-		identity["matcher"] = spec.Matcher
+	if spec.EffectiveMatcher != "" {
+		identity["matcher"] = spec.EffectiveMatcher
 	}
 	serialized, _ := json.Marshal(canonicalJSON(identity))
 	sum := sha256.Sum256(serialized)
@@ -733,7 +731,7 @@ func upsertCodexHookTrustStates(toml string, states map[string]string) string {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		kept = append(kept, "", fmt.Sprintf("[hooks.state.%q]", key), "enabled = true", fmt.Sprintf("trusted_hash = %q", states[key]))
+		kept = append(kept, "", fmt.Sprintf("[hooks.state.%q]", key), fmt.Sprintf("trusted_hash = %q", states[key]))
 	}
 	return strings.Join(kept, "\n") + "\n"
 }
