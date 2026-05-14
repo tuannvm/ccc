@@ -150,20 +150,20 @@ func TestCodexCommandHookHashMatchesCodexTrustIdentity(t *testing.T) {
 		{
 			name: "pre tool use",
 			spec: codexHookTrustSpec{
-				EventName: "pre_tool_use",
-				Matcher:   "*",
-				Command:   "/Users/tuannvm/bin/ccc hook-permission",
-				Timeout:   300000,
+				EventName:        "pre_tool_use",
+				EffectiveMatcher: "*",
+				Command:          "/Users/tuannvm/bin/ccc hook-permission",
+				Timeout:          300000,
 			},
 			want: "sha256:31a226e3617d1ce95213a671c98d062d882f281945ca93c175bf823ec7d1b6db",
 		},
 		{
 			name: "post tool use",
 			spec: codexHookTrustSpec{
-				EventName: "post_tool_use",
-				Matcher:   "*",
-				Command:   "/Users/tuannvm/bin/ccc hook-post-tool",
-				Timeout:   600,
+				EventName:        "post_tool_use",
+				EffectiveMatcher: "*",
+				Command:          "/Users/tuannvm/bin/ccc hook-post-tool",
+				Timeout:          600,
 			},
 			want: "sha256:bf989ca96c9121d6af05f052c835dfd8ad814c1a510c842b4fd9aa25a47a631c",
 		},
@@ -256,7 +256,6 @@ func TestUpsertCodexHookTrustStatesReplacesExistingState(t *testing.T) {
 
 	for _, want := range []string{
 		"[hooks.state.\"/tmp/project/.codex/hooks.json:pre_tool_use:0:0\"]",
-		"enabled = true",
 		"trusted_hash = \"sha256:new\"",
 		"[hooks.state.\"/tmp/project/.codex/hooks.json:stop:0:0\"]",
 		"trusted_hash = \"sha256:stop\"",
@@ -270,8 +269,8 @@ func TestUpsertCodexHookTrustStatesReplacesExistingState(t *testing.T) {
 	if strings.Contains(got, "sha256:old") {
 		t.Fatalf("old trusted hash was not replaced:\n%s", got)
 	}
-	if strings.Count(got, "enabled = true") != 2 {
-		t.Fatalf("updated TOML should enable both trusted project hooks:\n%s", got)
+	if strings.Contains(got, "enabled = true") {
+		t.Fatalf("updated TOML should not force-enable trusted project hooks:\n%s", got)
 	}
 }
 
