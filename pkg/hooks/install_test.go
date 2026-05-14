@@ -275,6 +275,87 @@ func TestUpsertCodexHookTrustStatesReplacesExistingState(t *testing.T) {
 	}
 }
 
+func TestCodexHookTrustStatesFromFileOnlyTrustsInstalledCccHooks(t *testing.T) {
+	tmpDir := t.TempDir()
+	hooksPath := filepath.Join(tmpDir, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	content := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "echo keep"}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "ccc hook-permission", "timeout": 300000}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "ccc hook-stop"}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "ccc hook-stop"}
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {"type": "command", "command": "ccc hook-stop"}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "ccc hook-stop", "timeout": 42}
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(hooksPath, []byte(content), 0600); err != nil {
+		t.Fatalf("write hooks: %v", err)
+	}
+
+	states, err := codexHookTrustStatesFromFile(hooksPath)
+	if err != nil {
+		t.Fatalf("codexHookTrustStatesFromFile: %v", err)
+	}
+
+	preKey := hooksPath + ":pre_tool_use:1:0"
+	if _, ok := states[preKey]; !ok {
+		t.Fatalf("missing trust state for actual PreToolUse position %q: %#v", preKey, states)
+	}
+	if _, ok := states[hooksPath+":pre_tool_use:0:0"]; ok {
+		t.Fatalf("trusted non-ccc PreToolUse position: %#v", states)
+	}
+	if _, ok := states[hooksPath+":pre_tool_use:2:0"]; ok {
+		t.Fatalf("trusted ccc command under the wrong event: %#v", states)
+	}
+	if got := states[hooksPath+":stop:0:0"]; got == "" {
+		t.Fatalf("missing stop trust state: %#v", states)
+	}
+	if _, ok := states[hooksPath+":stop:1:0"]; ok {
+		t.Fatalf("trusted ccc hook with unexpected matcher: %#v", states)
+	}
+	if _, ok := states[hooksPath+":stop:2:0"]; ok {
+		t.Fatalf("trusted ccc hook with unexpected timeout: %#v", states)
+	}
+}
+
 func TestEnsureCodexHooksUsesActiveProviderConfigDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")

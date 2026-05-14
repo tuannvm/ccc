@@ -475,17 +475,12 @@ func TrustCodexHooksForProject(cfg *config.Config, providerName string, hooksPat
 		return err
 	}
 
-	cccPath := cccHookCommandPrefix()
-	specs := []codexHookTrustSpec{
-		{EventName: "pre_tool_use", KeyLabel: "pre_tool_use", Matcher: "*", Command: cccPath + " hook-permission", Timeout: 300000},
-		{EventName: "post_tool_use", KeyLabel: "post_tool_use", Matcher: "*", Command: cccPath + " hook-post-tool", Timeout: 600},
-		{EventName: "stop", KeyLabel: "stop", Command: cccPath + " hook-stop", Timeout: 600},
-		{EventName: "user_prompt_submit", KeyLabel: "user_prompt_submit", Command: cccPath + " hook-user-prompt", Timeout: 600},
+	states, err := codexHookTrustStatesFromFile(absHooksPath)
+	if err != nil {
+		return err
 	}
-	states := make(map[string]string, len(specs))
-	for _, spec := range specs {
-		key := fmt.Sprintf("%s:%s:0:0", absHooksPath, spec.KeyLabel)
-		states[key] = codexCommandHookHash(spec)
+	if len(states) == 0 {
+		return fmt.Errorf("no ccc Codex hooks found in %s", absHooksPath)
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -498,6 +493,136 @@ func TrustCodexHooksForProject(cfg *config.Config, providerName string, hooksPat
 	}
 	HookLog("trust-codex-hooks: trusted %d hooks in %s", len(states), configPath)
 	return nil
+}
+
+func codexHookTrustStatesFromFile(hooksPath string) (map[string]string, error) {
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("failed to parse hooks: %w", err)
+	}
+	hooksMap, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+
+	states := make(map[string]string)
+	for hookType, entriesRaw := range hooksMap {
+		eventName := codexEventNameForHookType(hookType)
+		if eventName == "" {
+			continue
+		}
+		entries, ok := entriesRaw.([]any)
+		if !ok {
+			continue
+		}
+		for entryIndex, entryRaw := range entries {
+			entry, ok := entryRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			matcher, _ := entry["matcher"].(string)
+			nested, ok := entry["hooks"].([]any)
+			if !ok {
+				continue
+			}
+			for hookIndex, hookRaw := range nested {
+				hook, ok := hookRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				spec, ok := installedCodexHookTrustSpec(eventName, matcher, hook)
+				if !ok {
+					continue
+				}
+				key := fmt.Sprintf("%s:%s:%d:%d", hooksPath, eventName, entryIndex, hookIndex)
+				states[key] = codexCommandHookHash(spec)
+			}
+		}
+	}
+	return states, nil
+}
+
+func installedCodexHookTrustSpec(eventName, matcher string, hook map[string]any) (codexHookTrustSpec, bool) {
+	if hookType, _ := hook["type"].(string); hookType != "command" {
+		return codexHookTrustSpec{}, false
+	}
+	command, _ := hook["command"].(string)
+	timeout := codexHookTimeout(hook)
+	cccPath := cccHookCommandPrefix()
+
+	specs := map[string]codexHookTrustSpec{
+		"pre_tool_use": {
+			EventName: "pre_tool_use",
+			KeyLabel:  "pre_tool_use",
+			Matcher:   "*",
+			Command:   cccPath + " hook-permission",
+			Timeout:   300000,
+		},
+		"post_tool_use": {
+			EventName: "post_tool_use",
+			KeyLabel:  "post_tool_use",
+			Matcher:   "*",
+			Command:   cccPath + " hook-post-tool",
+			Timeout:   600,
+		},
+		"stop": {
+			EventName: "stop",
+			KeyLabel:  "stop",
+			Matcher:   "*",
+			Command:   cccPath + " hook-stop",
+			Timeout:   600,
+		},
+		"user_prompt_submit": {
+			EventName: "user_prompt_submit",
+			KeyLabel:  "user_prompt_submit",
+			Matcher:   "*",
+			Command:   cccPath + " hook-user-prompt",
+			Timeout:   600,
+		},
+	}
+
+	spec, ok := specs[eventName]
+	if !ok {
+		return codexHookTrustSpec{}, false
+	}
+	if matcher != spec.Matcher || command != spec.Command || timeout != spec.Timeout {
+		return codexHookTrustSpec{}, false
+	}
+	return spec, true
+}
+
+func codexEventNameForHookType(hookType string) string {
+	switch hookType {
+	case "PreToolUse":
+		return "pre_tool_use"
+	case "PostToolUse":
+		return "post_tool_use"
+	case "Stop":
+		return "stop"
+	case "UserPromptSubmit":
+		return "user_prompt_submit"
+	default:
+		return ""
+	}
+}
+
+func codexHookTimeout(hook map[string]any) int {
+	switch timeout := hook["timeout"].(type) {
+	case float64:
+		return int(timeout)
+	case int:
+		return timeout
+	case json.Number:
+		if v, err := timeout.Int64(); err == nil {
+			return int(v)
+		}
+	}
+	return 600
 }
 
 func codexConfigTomlPath(cfg *config.Config, providerName string) string {
