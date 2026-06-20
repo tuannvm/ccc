@@ -11,7 +11,7 @@ import (
 func TestNewProviderButtonsForAgent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := &configpkg.Config{
-		ActiveProvider: "openai",
+		ActiveProvider: "codex",
 		Providers: map[string]*configpkg.ProviderConfig{
 			"codex-anthropic": {Backend: "codex", SonnetModel: "claude-opus-4-7", BaseURL: "http://127.0.0.1:8317/v1", ConfigDir: "~/.codex-anthropic"},
 			"openai":          {SonnetModel: "gpt-5.5"},
@@ -19,27 +19,12 @@ func TestNewProviderButtonsForAgent(t *testing.T) {
 		},
 	}
 
-	claudeButtons := newProviderButtonsForAgent(cfg, "demo", "claude")
-	if len(claudeButtons) != 3 {
-		t.Fatalf("claude buttons len = %d, want 3", len(claudeButtons))
-	}
-	var claudeLabels []string
-	for _, row := range claudeButtons {
-		claudeLabels = append(claudeLabels, row[0].Text)
-		if strings.Contains(row[0].CallbackData, ":codex") {
-			t.Fatalf("claude provider choices included codex callback: %s", row[0].CallbackData)
-		}
-	}
-	if !containsLabel(claudeLabels, "openai · gpt-5.5 ⭐") {
-		t.Fatalf("claude labels missing active model: %v", claudeLabels)
-	}
-
 	codexButtons := newProviderButtonsForAgent(cfg, "demo", "codex")
 	if len(codexButtons) != 2 {
 		t.Fatalf("codex buttons len = %d, want 2", len(codexButtons))
 	}
-	if got := codexButtons[0][0].Text; got != "Codex default" {
-		t.Fatalf("codex button label = %q, want Codex default", got)
+	if got := codexButtons[0][0].Text; got != "Codex default ⭐" {
+		t.Fatalf("codex button label = %q, want Codex default ⭐", got)
 	}
 	if got := codexButtons[1][0].Text; got != "codex-anthropic · claude-opus-4-7" {
 		t.Fatalf("codex-anthropic button label = %q", got)
@@ -57,21 +42,58 @@ func TestNewProviderButtonsForAgent(t *testing.T) {
 	}
 }
 
-func TestNewAgentButtonsUseCompactCallbacks(t *testing.T) {
+func TestNewProviderButtonsDefaultToCodexWhenNoActiveProvider(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := &configpkg.Config{}
-	buttons := newAgentButtons(cfg, strings.Repeat("long-session-name-", 8))
-	if len(buttons) != 2 {
-		t.Fatalf("agent buttons len = %d, want 2", len(buttons))
+	buttons := newProviderButtonsForAgent(cfg, strings.Repeat("long-session-name-", 8), "codex")
+	if len(buttons) == 0 {
+		t.Fatal("codex provider buttons are empty")
 	}
-	for _, row := range buttons {
-		if len(row) != 1 {
-			t.Fatalf("agent row has %d buttons, want 1", len(row))
-		}
-		callback := row[0].CallbackData
-		if !strings.HasPrefix(callback, "new:") || len(callback) > 64 {
-			t.Fatalf("agent callback = %q, want compact callback", callback)
-		}
+	if got := buttons[0][0].Text; got != "Codex default ⭐" {
+		t.Fatalf("default codex label = %q, want Codex default ⭐", got)
+	}
+}
+
+func TestNewProviderButtonsDefaultToCodexWhenActiveProviderIsClaude(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &configpkg.Config{
+		ActiveProvider: "anthropic",
+		Providers: map[string]*configpkg.ProviderConfig{
+			"codex-anthropic": {Backend: "codex", SonnetModel: "claude-opus-4-7"},
+			"openai":          {SonnetModel: "gpt-5.5"},
+		},
+	}
+
+	buttons := newProviderButtonsForAgent(cfg, "demo", "codex")
+	if len(buttons) != 2 {
+		t.Fatalf("codex buttons len = %d, want 2", len(buttons))
+	}
+	if got := buttons[0][0].Text; got != "Codex default ⭐" {
+		t.Fatalf("default codex label = %q, want Codex default ⭐", got)
+	}
+	if got := buttons[1][0].Text; strings.Contains(got, "⭐") {
+		t.Fatalf("configured codex label = %q, want no star", got)
+	}
+}
+
+func TestNewProviderButtonsPreferActiveCodexProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &configpkg.Config{
+		ActiveProvider: "codex-anthropic",
+		Providers: map[string]*configpkg.ProviderConfig{
+			"codex-anthropic": {Backend: "codex", SonnetModel: "claude-opus-4-7"},
+		},
+	}
+
+	buttons := newProviderButtonsForAgent(cfg, "demo", "codex")
+	if len(buttons) != 2 {
+		t.Fatalf("codex buttons len = %d, want 2", len(buttons))
+	}
+	if got := buttons[0][0].Text; strings.Contains(got, "⭐") {
+		t.Fatalf("builtin codex label = %q, want no star", got)
+	}
+	if got := buttons[1][0].Text; got != "codex-anthropic · claude-opus-4-7 ⭐" {
+		t.Fatalf("active configured codex label = %q, want codex-anthropic · claude-opus-4-7 ⭐", got)
 	}
 }
 
@@ -134,13 +156,4 @@ func TestSaveNewSessionCallbackConcurrent(t *testing.T) {
 	if len(seen) != count {
 		t.Fatalf("saved %d tokens, want %d", len(seen), count)
 	}
-}
-
-func containsLabel(labels []string, want string) bool {
-	for _, label := range labels {
-		if label == want {
-			return true
-		}
-	}
-	return false
 }

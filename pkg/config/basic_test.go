@@ -39,10 +39,11 @@ func TestConfigSaveLoad(t *testing.T) {
 		ChatID:   12345,
 		GroupID:  -67890,
 		Sessions: map[string]*SessionInfo{
-			"project1":   {TopicID: 100, Path: "/home/user/project1"},
+			"project1":   {TopicID: 100, Path: "/home/user/project1", CodexThreadID: "thread-1"},
 			"money/shop": {TopicID: 200, Path: "/home/user/money/shop"},
 		},
 		Away:           true,
+		CodexRelay:     CodexRelayConfig{Enabled: true, Transport: "stdio"},
 		ActiveProvider: "openai",
 		Providers: map[string]*ProviderConfig{
 			"openai": {AuthToken: "sk-test", BaseURL: "https://example.com"},
@@ -87,6 +88,12 @@ func TestConfigSaveLoad(t *testing.T) {
 	}
 	if len(loaded.Sessions) != len(config.Sessions) {
 		t.Errorf("Sessions length = %d, want %d", len(loaded.Sessions), len(config.Sessions))
+	}
+	if !loaded.CodexRelay.Enabled || loaded.CodexRelay.Transport != "stdio" {
+		t.Errorf("CodexRelay = %+v, want enabled stdio", loaded.CodexRelay)
+	}
+	if loaded.Sessions["project1"].CodexThreadID != "thread-1" {
+		t.Errorf("CodexThreadID = %q, want thread-1", loaded.Sessions["project1"].CodexThreadID)
 	}
 }
 

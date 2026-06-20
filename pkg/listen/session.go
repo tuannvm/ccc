@@ -34,6 +34,20 @@ func HandleSessionMessage(cfg *configpkg.Config, text string, chatID, threadID i
 		needsSwitch := currentSession != tmux.SafeName(sessName)
 		sessionInfo := cfg.Sessions[sessName]
 		providerName := effectiveProviderName(cfg, sessionInfo)
+		if useCodexRelay(cfg, providerName) {
+			ledgerID := fmt.Sprintf("tg:%d", updateID)
+			ledger.AppendMessage(&ledger.MessageRecord{
+				ID:                ledgerID,
+				Session:           sessName,
+				Type:              "user_prompt",
+				Text:              text,
+				Origin:            "telegram",
+				TerminalDelivered: true,
+				TelegramDelivered: true,
+			})
+			relayCodexSessionMessage(cfg, sessName, sessionInfo, text, chatID, threadID)
+			return
+		}
 
 		if needsSwitch {
 			workDir := lookup.GetSessionWorkDir(cfg, sessName, sessionInfo)

@@ -5,12 +5,14 @@ All notable changes to ccc (Claude Code Companion) will be documented in this fi
 ## [Unreleased]
 
 ### Added
+- **Codex app-server relay opt-in**: Codex backend sessions can now send Telegram prompts through `codex app-server` and stream assistant deltas back without relying on Codex hooks or tmux key injection
+- **One-step Codex session creation**: Telegram `/new <name>` now skips the agent picker and opens the Codex model picker directly; Claude-backed providers are no longer offered during Telegram session creation
 - **Minimal Telegram command surface**: Daily bot menu now focuses on `/new`, `/provider`, `/worktree`, and `/status`; lower-frequency operations live under `/status` while legacy aliases remain supported
 - **Pinned session headers**: New session topics pin a compact header showing `session`, `provider`, and `path`, with worktree topics using the full worktree path
 
 ### Changed
 - **Provider visibility**: Session start, restart, resume, worktree, and provider flows now show the selected provider and whether it came from the session, active default, or builtin default
-- **Git URL session creation**: `/new <git-url>` now clones or reuses the repository, then follows the same provider picker flow as `/new <name>`
+- **Git URL session creation**: `/new <git-url>` now clones or reuses the repository, then follows the same Codex model picker flow as `/new <name>`
 - **Idiomatic Go package structure**: Restructured from monolithic root package (~4600 lines) to idiomatic `pkg/` layout
   - All business logic extracted to focused packages: `pkg/config/`, `pkg/hooks/`, `pkg/tmux/`, `pkg/telegram/`, `pkg/listen/`, `pkg/lookup/`, `pkg/provider/`, `pkg/ledger/`, `pkg/lock/`, `pkg/auth/`, `pkg/exec/`, `pkg/routing/`, `pkg/session/`, `pkg/setup/`, `pkg/team/`, etc.
   - Root package reduced to 2 files (273 lines): `main.go` (CLI dispatch) + `hook_handlers.go` (DI composition root)

@@ -191,6 +191,7 @@ func applyCoreConfig(config *Config, core coreConfig) {
 	config.ProjectsDir = core.ProjectsDir
 	config.TranscriptionLang = core.TranscriptionLang
 	config.RelayURL = core.RelayURL
+	config.CodexRelay = core.CodexRelay
 	config.Away = core.Away
 	config.OAuthToken = core.OAuthToken
 	config.OTPSecret = core.OTPSecret

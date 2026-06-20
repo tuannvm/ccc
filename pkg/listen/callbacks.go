@@ -35,11 +35,10 @@ func HandleCallbackQuery(cfg *configpkg.Config, cb *telegram.CallbackQuery) {
 
 	switch parts[0] {
 	case "new-agent":
-		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose provider/model", false)
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose model", false)
 		if len(parts) == 3 && cb.Message != nil {
 			sessionName := parts[1]
-			agentName := parts[2]
-			sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, sessionName, agentName)
+			sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, sessionName, "codex")
 		}
 		return
 
@@ -116,24 +115,14 @@ func handleNewSessionCallbackToken(cfg *configpkg.Config, cb *telegram.CallbackQ
 
 	switch callback.Action {
 	case "agent":
-		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose provider/model", false)
-		sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, callback.SessionName, callback.AgentName)
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose model", false)
+		sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, callback.SessionName, "codex")
 	case "provider":
 		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Creating session", false)
 		HandleNewWithProvider(cfg, cb, callback.SessionName, callback.ProviderName)
 	case "back":
-		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose agent", false)
-		buttons := newAgentButtons(cfg, callback.SessionName)
-		msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", callback.SessionName)
-		if len(buttons) == 0 {
-			if err := telegram.EditMessageRemoveKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, "No agent providers are configured. Send /new again."); err != nil {
-				loggingpkg.ListenLog("[callback:new] failed to remove back selection keyboard: %v", err)
-			}
-			return
-		}
-		if err := telegram.EditMessageWithKeyboard(cfg, cb.Message.Chat.ID, cb.Message.MessageID, msg, buttons); err != nil {
-			loggingpkg.ListenLog("[callback:new] failed to edit back selection keyboard: %v", err)
-		}
+		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Choose model", false)
+		sendNewProviderSelection(cfg, cb.Message.Chat.ID, cb.Message.MessageThreadID, cb.Message.MessageID, callback.SessionName, "codex")
 	default:
 		telegram.AnswerCallbackQueryWithText(cfg, cb.ID, "Unsupported selection. Send /new again.", true)
 	}
@@ -197,6 +186,21 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 		return
 	}
 	ensureNewSessionsMap(cfg)
+	if providerName == "" {
+		providerName = "codex"
+	}
+
+	provider := providerpkg.GetProvider(cfg, providerName)
+	if provider == nil {
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Provider '%s' not found. Choose a Codex model/provider and try again.", providerName))
+		return
+	}
+	if !providerpkg.IsCodexBackend(provider.Backend()) {
+		editCallbackMessageRemoveKeyboard(cfg, cb,
+			fmt.Sprintf("❌ Telegram session creation currently supports Codex only. Choose a Codex model/provider instead of '%s'.", providerName))
+		return
+	}
 
 	existing, exists := cfg.Sessions[sessionName]
 	if exists && existing != nil && existing.TopicID != 0 {
@@ -245,7 +249,9 @@ func HandleNewWithProvider(cfg *configpkg.Config, cb *telegram.CallbackQuery, se
 	pinSessionHeader(cfg, sessionName, cfg.Sessions[sessionName])
 
 	resultMsg := fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, selectedProviderSummary(providerName), agentDisplayName(cfg, providerName))
-	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+	if useCodexRelay(cfg, providerName) {
+		resultMsg = fmt.Sprintf("%s ready via Codex relay\n%s\n\nSend messages here to interact with %s.", sessionName, selectedProviderSummary(providerName), agentDisplayName(cfg, providerName))
+	} else if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		resultMsg = fmt.Sprintf("❌ Failed to start session: %v", err)
 	}
 
