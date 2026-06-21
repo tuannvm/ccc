@@ -27,6 +27,9 @@ func EnsureHooks(cfg *configpkg.Config, sessionName string, info *configpkg.Sess
 
 // EnsureAgentHooks installs the project-local hook file for the session's selected agent.
 func EnsureAgentHooks(cfg *configpkg.Config, sessionName string, info *configpkg.SessionInfo) error {
+	if useCodexRelay(cfg, effectiveProviderName(cfg, info)) {
+		return nil
+	}
 	ensureCfg := &hooks.EnsureHooksForSessionConfig{
 		Config:            cfg,
 		SessionName:       sessionName,
@@ -80,6 +83,10 @@ func HandleContinueCommand(cfg *configpkg.Config, chatID, threadID int64) {
 	worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 
 	providerName := effectiveProviderName(cfg, sessionInfo)
+	if useCodexRelay(cfg, providerName) {
+		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("%s ready via Codex relay\n%s", sessName, providerSummary(cfg, sessionInfo)))
+		return
+	}
 	if err := tmux.SwitchSessionInWindow(sessName, workDir, providerName, resumeSessionID, worktreeName, true, false); err != nil {
 		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 	} else {
@@ -234,6 +241,9 @@ func HandleCleanupCommand(cfg *configpkg.Config, chatID, threadID int64) {
 
 // HandleStopCommand handles the /stop command - interrupt current Claude execution
 func HandleStopCommand(cfg *configpkg.Config, chatID, threadID int64, isGroup bool) {
+	if fresh, err := configpkg.Load(); err == nil && fresh != nil {
+		cfg = fresh
+	}
 	if !isGroup {
 		telegram.SendMessage(cfg, chatID, threadID, "ℹ️ /stop only works in group topics. Switch to a session topic to use this command.")
 		return
@@ -246,6 +256,10 @@ func HandleStopCommand(cfg *configpkg.Config, chatID, threadID int64, isGroup bo
 	sessName := lookup.GetSessionByTopic(cfg, threadID)
 	if sessName == "" {
 		telegram.SendMessage(cfg, chatID, threadID, "❌ No session mapped to this topic.")
+		return
+	}
+	sessionInfo := cfg.Sessions[sessName]
+	if interruptCodexRelaySession(cfg, sessionInfo, chatID, threadID) {
 		return
 	}
 

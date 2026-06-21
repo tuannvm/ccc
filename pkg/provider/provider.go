@@ -123,6 +123,68 @@ func (p CodexProvider) EnvVars(*config.Config) []string {
 
 func (CodexProvider) IsBuiltin() bool { return true }
 
+// CodexAppServerConfigArgs returns app-server -c overrides equivalent to the
+// Codex CLI provider mapping used by the tmux backend.
+func CodexAppServerConfigArgs(p Provider) []string {
+	configMap, model, _ := CodexAppServerThreadConfig(p)
+	var args []string
+	for _, key := range []string{
+		"model_provider",
+		"model_providers.cliproxyapi.name",
+		"model_providers.cliproxyapi.base_url",
+		"model_providers.cliproxyapi.wire_api",
+		"model_providers.cliproxyapi.experimental_bearer_token",
+		"model_context_window",
+		"model_reasoning_effort",
+		"web_search",
+	} {
+		if value, ok := configMap[key]; ok {
+			args = append(args, "-c", fmt.Sprintf("%s=%s", key, tomlLiteral(value)))
+		}
+	}
+	if model != "" {
+		args = append(args, "-c", fmt.Sprintf(`model="%s"`, model))
+	}
+	return args
+}
+
+func CodexAppServerThreadConfig(p Provider) (map[string]any, string, string) {
+	if p == nil || p.Name() == BackendCodex {
+		return nil, "", ""
+	}
+	configMap := make(map[string]any)
+	modelProvider := ""
+	if p.BaseURL() != "" {
+		modelProvider = "cliproxyapi"
+		configMap["model_provider"] = "cliproxyapi"
+		configMap["model_providers.cliproxyapi.name"] = "CLIProxyAPI"
+		configMap["model_providers.cliproxyapi.base_url"] = p.BaseURL()
+		configMap["model_providers.cliproxyapi.wire_api"] = "responses"
+		configMap["model_providers.cliproxyapi.experimental_bearer_token"] = "sk-dummy"
+		configMap["model_context_window"] = 200000
+		configMap["model_reasoning_effort"] = "medium"
+		configMap["web_search"] = "disabled"
+	}
+	models := p.Models()
+	model := models.Sonnet
+	if model == "" {
+		model = models.Opus
+	}
+	if model == "" {
+		model = models.Haiku
+	}
+	return configMap, model, modelProvider
+}
+
+func tomlLiteral(value any) string {
+	switch v := value.(type) {
+	case string:
+		return fmt.Sprintf("%q", v)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
 // IsCodexProviderName reports whether a provider name selects the Codex CLI backend.
 func IsCodexProviderName(name string) bool {
 	return strings.EqualFold(name, BackendCodex) || strings.EqualFold(name, "codex-anthropic")

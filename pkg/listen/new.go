@@ -58,6 +58,10 @@ func HandleNewCommand(cfg *configpkg.Config, chatID, threadID int64, text string
 		}
 
 		providerName := effectiveProviderName(cfg, sessionInfo)
+		if useCodexRelay(cfg, providerName) {
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("%s ready via Codex relay\n%s", sessionName, providerSummary(cfg, sessionInfo)))
+			return
+		}
 		if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, false); err != nil {
 			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to switch session: %v", err))
 		} else {
@@ -114,6 +118,10 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 				telegram.SendMessage(cfg, chatID, threadID, msg)
 				return
 			}
+			if !providerpkg.IsCodexBackend(provider.Backend()) {
+				telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Telegram session creation currently supports Codex only. Choose a Codex model/provider instead of '%s'.", providerName))
+				return
+			}
 		}
 
 		existing, exists := cfg.Sessions[sessionName]
@@ -166,6 +174,10 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 			telegram.SendMessage(cfg, chatID, threadID, msg)
 			return
 		}
+		if !providerpkg.IsCodexBackend(provider.Backend()) {
+			telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Telegram session creation currently supports Codex only. Choose a Codex model/provider instead of '%s'.", providerName))
+			return
+		}
 	}
 
 	if providerName == "" {
@@ -175,7 +187,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 			return
 		}
 
-		sendNewAgentSelection(cfg, chatID, threadID, sessionName)
+		sendNewProviderSelection(cfg, chatID, threadID, 0, sessionName, "codex")
 		return
 	}
 
@@ -185,7 +197,7 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 		return
 	}
 	if providerName == "" {
-		providerName = defaultProviderName(cfg)
+		providerName = "codex"
 	}
 	topicID, err := telegram.CreateForumTopic(cfg, sessionName, providerName, "")
 	if err != nil {
@@ -244,53 +256,19 @@ func HandleNewWithArg(cfg *configpkg.Config, chatID, threadID int64, arg string)
 	if providerWasExplicit {
 		providerMsg = explicitProviderSummary(providerName)
 	}
-	if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
+	if useCodexRelay(cfg, providerName) {
+		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s ready via Codex relay\n%s\n\nSend messages here to interact with %s.", sessionName, providerMsg, agentDisplayName(cfg, providerName)))
+	} else if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, "", "", false, false); err != nil {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("❌ Failed to start session: %v", err))
 	} else {
 		telegram.SendMessage(cfg, cfg.GroupID, topicID, fmt.Sprintf("%s started\n%s\n\nSend messages here to interact with %s.", sessionName, providerMsg, agentDisplayName(cfg, providerName)))
 	}
 }
 
-func sendNewAgentSelection(cfg *configpkg.Config, chatID, threadID int64, sessionName string) {
-	buttons := newAgentButtons(cfg, sessionName)
-	if len(buttons) == 0 {
-		telegram.SendMessage(cfg, chatID, threadID, "❌ No agent providers are configured, or Telegram selection controls could not be created. Try /new again.")
-		return
-	}
-	msg := fmt.Sprintf("Create session\nsession: %s\n\nStep 1/2: choose the agent:", sessionName)
-	if err := telegram.SendMessageWithKeyboard(cfg, chatID, threadID, msg, buttons); err != nil {
-		loggingpkg.ListenLog("[/new] failed to send agent selection for %s: %v", sessionName, err)
-		telegram.SendMessage(cfg, chatID, threadID, fmt.Sprintf("❌ Failed to show agent choices: %v", err))
-	}
-}
-
-func newAgentButtons(cfg *configpkg.Config, sessionName string) [][]telegram.InlineKeyboardButton {
-	choices := []struct {
-		Agent string
-		Label string
-	}{
-		{Agent: "claude", Label: "Claude CLI"},
-		{Agent: "codex", Label: "Codex CLI"},
-	}
-	var buttons [][]telegram.InlineKeyboardButton
-	for _, choice := range choices {
-		if len(providerNamesForAgent(cfg, choice.Agent)) == 0 {
-			continue
-		}
-		callbackData := newSessionCallbackData(newSessionCallback{
-			Action:      "agent",
-			SessionName: sessionName,
-			AgentName:   choice.Agent,
-		})
-		if callbackData == "" {
-			continue
-		}
-		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: choice.Label, CallbackData: callbackData}})
-	}
-	return buttons
-}
-
 func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, messageID int64, sessionName, agentName string) {
+	if agentName == "" || agentName == "claude" {
+		agentName = "codex"
+	}
 	buttons := newProviderButtonsForAgent(cfg, sessionName, agentName)
 	if len(buttons) == 0 {
 		msg := fmt.Sprintf("❌ No %s provider/model is configured.", agentOptionLabel(cfg, agentName))
@@ -304,12 +282,7 @@ func sendNewProviderSelection(cfg *configpkg.Config, chatID, threadID int64, mes
 		return
 	}
 
-	backCallback := newSessionCallbackData(newSessionCallback{Action: "back", SessionName: sessionName})
-	if backCallback != "" {
-		buttons = append(buttons, []telegram.InlineKeyboardButton{{Text: "← Back", CallbackData: backCallback}})
-	}
-
-	msg := fmt.Sprintf("Create session\nsession: %s\nagent: %s\n\nStep 2/2: choose provider/model:", sessionName, agentOptionLabel(cfg, agentName))
+	msg := fmt.Sprintf("Create Codex session\nsession: %s\n\nChoose model:", sessionName)
 	if messageID != 0 {
 		if err := telegram.EditMessageWithKeyboard(cfg, chatID, messageID, msg, buttons); err != nil {
 			loggingpkg.ListenLog("[/new] failed to edit provider selection for %s: %v", sessionName, err)
@@ -330,9 +303,10 @@ func ensureNewSessionsMap(cfg *configpkg.Config) {
 
 func newProviderButtonsForAgent(cfg *configpkg.Config, sessionName, agentName string) [][]telegram.InlineKeyboardButton {
 	var buttons [][]telegram.InlineKeyboardButton
+	selectedName := selectedNewProviderNameForAgent(cfg, agentName)
 	for _, name := range providerNamesForAgent(cfg, agentName) {
 		label := providerModelOptionLabel(cfg, name)
-		if cfg != nil && (cfg.ActiveProvider == name || (cfg.ActiveProvider == "" && name == builtinProviderName)) {
+		if name == selectedName {
 			label += " ⭐"
 		}
 		callbackData := newSessionCallbackData(newSessionCallback{
@@ -349,6 +323,23 @@ func newProviderButtonsForAgent(cfg *configpkg.Config, sessionName, agentName st
 		})
 	}
 	return buttons
+}
+
+func selectedNewProviderNameForAgent(cfg *configpkg.Config, agentName string) string {
+	if agentName != "codex" {
+		if cfg != nil && cfg.ActiveProvider != "" {
+			return cfg.ActiveProvider
+		}
+		return builtinProviderName
+	}
+	if cfg == nil || cfg.ActiveProvider == "" {
+		return "codex"
+	}
+	provider := providerpkg.GetProvider(cfg, cfg.ActiveProvider)
+	if provider != nil && providerpkg.IsCodexBackend(provider.Backend()) {
+		return provider.Name()
+	}
+	return "codex"
 }
 
 func providerNamesForAgent(cfg *configpkg.Config, agentName string) []string {

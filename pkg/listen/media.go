@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannvm/ccc/pkg/codexapp"
 	configpkg "github.com/tuannvm/ccc/pkg/config"
 	"github.com/tuannvm/ccc/pkg/hooks"
 	"github.com/tuannvm/ccc/pkg/ledger"
@@ -51,6 +52,11 @@ func HandleVoiceMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 			workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 			worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 			providerName := effectiveProviderName(cfg, sessionInfo)
+			if useCodexRelay(cfg, providerName) {
+				ledger.UpdateDelivery(sessionName, voiceLedgerID, "terminal_delivered", true)
+				relayCodexSessionMessage(cfg, sessionName, sessionInfo, voiceText, chatID, threadID)
+				return
+			}
 			if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, true); err == nil {
 				target, _ := tmux.GetWindowTarget(sessionName)
 				if err := hooks.SendFromTelegramToBackend(target, tmux.SafeName(sessionName), voiceText, providerBackend(cfg, providerName)); err == nil {
@@ -97,6 +103,18 @@ func HandlePhotoMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, cha
 		})
 		workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 		worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
+		if useCodexRelay(cfg, providerName) {
+			relayPrompt := caption
+			if relayPrompt == "" {
+				relayPrompt = "Please inspect this image."
+			}
+			ledger.UpdateDelivery(sessionName, photoLedgerID, "terminal_delivered", true)
+			relayCodexSessionInput(cfg, sessionName, sessionInfo, relayPrompt, []codexapp.UserInput{
+				codexapp.TextInput(relayPrompt),
+				codexapp.LocalImageInput(imgPath),
+			}, chatID, threadID)
+			return
+		}
 		if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, true); err == nil {
 			target, _ := tmux.GetWindowTarget(sessionName)
 			if err := hooks.SendFromTelegramToBackendWithDelay(target, tmux.SafeName(sessionName), prompt, providerBackend(cfg, providerName), 2*time.Second); err == nil {
@@ -152,6 +170,11 @@ func HandleDocumentMessage(cfg *configpkg.Config, msg telegram.TelegramMessage, 
 		workDir := lookup.GetSessionWorkDir(cfg, sessionName, sessionInfo)
 		worktreeName, resumeSessionID, _ := lookup.GetSessionContext(sessionInfo)
 		providerName := effectiveProviderName(cfg, sessionInfo)
+		if useCodexRelay(cfg, providerName) {
+			ledger.UpdateDelivery(sessionName, docLedgerID, "terminal_delivered", true)
+			relayCodexSessionMessage(cfg, sessionName, sessionInfo, caption, chatID, threadID)
+			return
+		}
 		if err := tmux.SwitchSessionInWindow(sessionName, workDir, providerName, resumeSessionID, worktreeName, true, true); err == nil {
 			target, _ := tmux.GetWindowTarget(sessionName)
 			if err := hooks.SendFromTelegramToBackend(target, tmux.SafeName(sessionName), caption, providerBackend(cfg, providerName)); err == nil {

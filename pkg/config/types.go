@@ -14,6 +14,8 @@ type SessionInfo struct {
 	Path              string `json:"path"`
 	SessionName       string `json:"session_name,omitempty"` // User-provided session name (for team sessions)
 	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
+	CodexThreadID     string `json:"codex_thread_id,omitempty"`
+	CodexTurnID       string `json:"codex_turn_id,omitempty"`
 	WindowID          string `json:"window_id,omitempty"`            // tmux window ID (@N)
 	ProviderName      string `json:"provider_name,omitempty"`        // Provider to use for this session
 	PinnedHeaderMsgID int64  `json:"pinned_header_msg_id,omitempty"` // Telegram message ID for the pinned session header
@@ -142,10 +144,11 @@ type Config struct {
 	TeamSessions map[int64]*SessionInfo `json:"team_sessions,omitempty"` // topic ID -> session info (multi-pane team sessions)
 
 	// ========== User Preferences ==========
-	ProjectsDir       string `json:"projects_dir,omitempty"`       // Base directory for new projects (default: ~)
-	TranscriptionLang string `json:"transcription_lang,omitempty"` // Language code for whisper (e.g. "es", "en")
-	RelayURL          string `json:"relay_url,omitempty"`          // Relay server URL for large file transfers
-	Away              bool   `json:"away"`
+	ProjectsDir       string           `json:"projects_dir,omitempty"`       // Base directory for new projects (default: ~)
+	TranscriptionLang string           `json:"transcription_lang,omitempty"` // Language code for whisper (e.g. "es", "en")
+	RelayURL          string           `json:"relay_url,omitempty"`          // Relay server URL for large file transfers
+	CodexRelay        CodexRelayConfig `json:"codex_relay,omitempty"`
+	Away              bool             `json:"away"`
 
 	// ========== Authentication ==========
 	OAuthToken string `json:"oauth_token,omitempty"`
@@ -155,6 +158,12 @@ type Config struct {
 	ActiveProvider string                     `json:"active_provider,omitempty"` // Which provider to use from providers map
 	Providers      map[string]*ProviderConfig `json:"providers,omitempty"`       // Named provider configurations
 	Provider       *ProviderConfig            `json:"provider,omitempty"`        // Deprecated: Use providers + active_provider
+}
+
+// CodexRelayConfig controls the experimental Codex app-server relay path.
+type CodexRelayConfig struct {
+	Enabled   bool   `json:"enabled,omitempty"`
+	Transport string `json:"transport,omitempty"`
 }
 
 type coreConfig struct {
@@ -167,6 +176,7 @@ type coreConfig struct {
 	ProjectsDir       string            `json:"projects_dir,omitempty"`
 	TranscriptionLang string            `json:"transcription_lang,omitempty"`
 	RelayURL          string            `json:"relay_url,omitempty"`
+	CodexRelay        CodexRelayConfig  `json:"codex_relay,omitempty"`
 	Away              bool              `json:"away"`
 	OAuthToken        string            `json:"oauth_token,omitempty"`
 	OTPSecret         string            `json:"otp_secret,omitempty"`
@@ -194,6 +204,7 @@ func (c *Config) CoreConfig() coreConfig {
 		ProjectsDir:       c.ProjectsDir,
 		TranscriptionLang: c.TranscriptionLang,
 		RelayURL:          c.RelayURL,
+		CodexRelay:        c.CodexRelay,
 		Away:              c.Away,
 		OAuthToken:        c.OAuthToken,
 		OTPSecret:         c.OTPSecret,

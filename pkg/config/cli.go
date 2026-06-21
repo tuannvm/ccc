@@ -37,6 +37,7 @@ func HandleConfigCommand(args []string, isOTPEnabled func(*Config) bool) {
 		fmt.Println("  ccc config projects-dir ~/Projects")
 		fmt.Println("  ccc config oauth-token <token>")
 		fmt.Println("  ccc config transcription-lang es")
+		fmt.Println("  ccc config codex-relay true")
 		os.Exit(0)
 	}
 
@@ -63,6 +64,16 @@ func HandleConfigCommand(args []string, isOTPEnabled func(*Config) bool) {
 				fmt.Println(cfg.TranscriptionLang)
 			} else {
 				fmt.Println("not set (auto-detect)")
+			}
+		case "codex-relay":
+			if cfg.CodexRelay.Enabled {
+				transport := cfg.CodexRelay.Transport
+				if transport == "" {
+					transport = "stdio"
+				}
+				fmt.Printf("enabled (%s)\n", transport)
+			} else {
+				fmt.Println("disabled")
 			}
 		case "otp":
 			if isOTPEnabled(cfg) {
@@ -107,6 +118,22 @@ func HandleConfigCommand(args []string, isOTPEnabled func(*Config) bool) {
 			os.Exit(1)
 		}
 		fmt.Printf("✅ Transcription language set to: %s\n", value)
+	case "codex-relay":
+		switch value {
+		case "true", "on", "enabled", "1":
+			cfg.CodexRelay.Enabled = true
+			cfg.CodexRelay.Transport = "stdio"
+		case "false", "off", "disabled", "0":
+			cfg.CodexRelay.Enabled = false
+		default:
+			fmt.Fprintf(os.Stderr, "codex-relay must be true or false\n")
+			os.Exit(1)
+		}
+		if err := Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ codex_relay enabled: %v\n", cfg.CodexRelay.Enabled)
 	case "otp":
 		fmt.Fprintf(os.Stderr, "Permission mode can only be changed via: ccc setup <bot_token>\n")
 		os.Exit(1)

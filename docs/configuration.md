@@ -78,6 +78,8 @@ The main configuration file is stored at:
 | `otp_secret` | string | - | TOTP secret for permission approval |
 | `active_provider` | string | (empty) | Default provider for new sessions (empty = builtin) |
 | `enable_streaming` | bool | `false` | Enable real-time streaming for AI responses (typing effect) |
+| `codex_relay.enabled` | bool | `false` | Use Codex app-server relay for Codex backend sessions instead of hooks/tmux delivery |
+| `codex_relay.transport` | string | `stdio` | Codex app-server transport used by the relay |
 | `providers` | map | `{}` | Named provider configurations |
 
 ## Session Configuration
@@ -171,7 +173,17 @@ This is the default option and requires no additional configuration.
 ccc provider codex
 ```
 
-The Codex backend requires a Codex CLI version with `--no-alt-screen` and `resume` support, with the `codex` binary on `PATH` or in a common install location. It is available in the same provider picker as configured Claude-compatible providers. `codex` is reserved for the built-in backend and cannot be used as a configured provider name. Claude Code worktree sessions are not supported by the Codex backend.
+The Codex backend requires a Codex CLI version with `--no-alt-screen` and `resume` support, with the `codex` binary on `PATH` or in a common install location. Telegram `/new` shows Codex-backed model/provider choices by default; Claude-backed providers are not offered during Telegram session creation. `codex` is reserved for the built-in backend and cannot be used as a configured provider name. Claude Code worktree sessions are not supported by the Codex backend.
+
+### Codex App-Server Relay
+
+Codex sessions can opt in to the experimental app-server relay:
+
+    ccc config codex-relay true
+
+When enabled, Codex-backed Telegram sessions use `codex app-server --listen stdio://` for message delivery instead of project hooks and tmux key injection. CCC starts a local app-server process for the relay client, sends Telegram prompts with `turn/start`, stores the returned `codex_thread_id`, and forwards assistant message deltas back to the Telegram topic. Claude Code sessions and Codex sessions with the relay disabled keep the existing hook/tmux behavior.
+
+Current scope: assistant response streaming and `/stop` interruption are supported. App-server approval and user-input requests are not yet routed to Telegram.
 
 ### Configured Provider
 

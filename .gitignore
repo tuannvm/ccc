@@ -22,4 +22,6 @@ ccc-linux
 trash/
 .claude/
 .claude/harness/
+.agents/codex-harness/
 .entire/
+.agents/codex-harness/

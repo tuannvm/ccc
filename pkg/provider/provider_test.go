@@ -2,6 +2,7 @@ package provider
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	configpkg "github.com/tuannvm/ccc/pkg/config"
@@ -61,6 +62,27 @@ func TestProviderResolution(t *testing.T) {
 	}
 	if !slices.Contains(names, "custom-provider") {
 		t.Error("'custom-provider' not in provider names")
+	}
+}
+
+func TestCodexAppServerConfigArgsUsesProviderOverrides(t *testing.T) {
+	p := ConfiguredProvider{
+		ProviderName: "codex-anthropic",
+		Config: &configpkg.ProviderConfig{
+			Backend:     BackendCodex,
+			BaseURL:     "https://example.test/v1",
+			SonnetModel: "model-sonnet",
+		},
+	}
+	args := strings.Join(CodexAppServerConfigArgs(p), "\n")
+	for _, want := range []string{
+		`model_provider="cliproxyapi"`,
+		`model_providers.cliproxyapi.base_url="https://example.test/v1"`,
+		`model="model-sonnet"`,
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("CodexAppServerConfigArgs missing %q in:\n%s", want, args)
+		}
 	}
 }
 

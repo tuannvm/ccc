@@ -113,13 +113,13 @@ You can install the skills in two ways:
 /new myproject
 ```
 
-If no provider is specified, ccc shows an inline provider picker before creating the topic.
+ccc now opens a Codex model picker immediately before creating the topic. The agent choice step is skipped so new Telegram sessions start faster.
 
-**Session with specific provider:**
+**Session with specific Codex provider:**
 ```
 /new myproject@provider-name
 ```
-Replace `provider-name` with your configured provider.
+Replace `provider-name` with `codex` or a configured provider whose backend is `codex`. Telegram session creation currently rejects Claude-backed providers.
 
 Use `codex` to start the session with OpenAI Codex CLI:
 
@@ -132,7 +132,7 @@ Use `codex` to start the session with OpenAI Codex CLI:
 /new https://github.com/tuannvm/gemini-mcp-server
 ```
 
-ccc clones or reuses the repository, derives the session name from the repo, and then shows the same provider picker used by named sessions.
+ccc clones or reuses the repository, derives the session name from the repo, and then shows the same Codex model picker used by named sessions.
 
 **Session with custom path:**
 ```
@@ -195,15 +195,15 @@ Select provider:
 
 This shows inline buttons for quick provider selection. To change directly, send `/provider provider-name` in the session topic.
 
-### Creating a Session with Specific Provider
+### Creating a Session with Specific Codex Provider
 
 ```
 /new myproject@provider-name
 ```
 
-Replace `provider-name` with your configured provider. Use the `/providers` command to see available providers.
+Replace `provider-name` with `codex` or a configured provider whose backend is `codex`. Use `/new myproject` for the inline Codex model picker.
 
-If a session is created without an explicit provider, the provider source is shown as `active default` or `builtin default` so the selected provider is visible.
+If a session is created without an explicit provider, the selected Codex model/provider is stored on the session and shown in the pinned topic header.
 
 ### Pinned Session Header
 
@@ -231,6 +231,13 @@ To change the default provider for new sessions, edit `~/.config/ccc/config.prov
 ```
 
 `codex` is built in and can be used as either a session provider or active default without adding a provider config.
+
+To use Codex app-server relay delivery instead of Codex hooks:
+
+    ccc config codex-relay true
+    /new myproject@codex
+
+With the relay enabled, the Telegram topic starts lazily: the first message in the topic starts or resumes the Codex app-server thread and streams the assistant response back to Telegram.
 
 ## Worktree Sessions
 
@@ -537,10 +544,9 @@ ccc
 
 ### Provider Selection
 
-- Use the builtin provider for standard Claude access
-- Use custom providers for specialized models or alternative APIs
-- Set `active_provider` in config for your default
-- All providers are treated equally - no hardcoded preferences
+- Telegram `/new` defaults to Codex and shows only Codex-backed model/provider choices
+- Use `/provider` inside an existing topic when you intentionally need to inspect or change that session's provider
+- Configure additional Codex-backed providers when you want extra model choices in the `/new` picker
 
 ### Hook Management
 
