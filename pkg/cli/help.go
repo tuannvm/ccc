@@ -34,6 +34,8 @@ COMMANDS:
     send <file>             Send file to current session's Telegram topic
     relay [port]            Start relay server for large files (default: 8080)
     run                     Run selected backend directly (used by tmux sessions)
+    poll                    Run one Jira watcher polling pass
+    watch jira              Poll Jira and start CCC sessions for claimed tickets
 
 TELEGRAM COMMANDS:
     /new <name>             Start or restart a session

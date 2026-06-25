@@ -334,6 +334,16 @@ ccc provider                 # List providers for the current session
 ccc provider <provider-name> # Change provider when current directory maps to a session
 ```
 
+## Jira Watcher Configuration
+
+The Jira watcher has its own config file:
+
+```text
+~/.config/ccc/jira.json
+```
+
+The watcher can also run from environment variables only. For field definitions, environment variables, examples, and runtime behavior, see [Jira Ticket Watcher](jira-watcher.md).
+
 ## Environment Variables
 
 ccc respects the following environment variables:
@@ -341,6 +351,7 @@ ccc respects the following environment variables:
 | Variable | Description |
 |----------|-------------|
 | `CCC_CONFIG` | Override config file path |
+| `CCC_JIRA_*` | Configure the Jira watcher; see [Jira Ticket Watcher](jira-watcher.md) |
 | `HOME` | User home directory |
 | `PATH` | Used to find claude and codex binaries |
 

@@ -20,6 +20,8 @@ This document provides comprehensive usage instructions for ccc (Claude Code Com
 | `ccc doctor` | Check dependencies and configuration |
 | `ccc config [key] [value]` | View/set configuration |
 | `ccc listen` | Start Telegram listener (service mode) |
+| `ccc watch jira` | Poll Jira continuously and start sessions for claimed tickets |
+| `ccc poll` | Run one Jira watcher polling pass |
 | `ccc install-hooks` | Install hooks in current project |
 | `ccc skill` | Install CCC skills globally for Claude Code and Codex |
 | `ccc cleanup-hooks` | Remove hooks from current project |
@@ -387,6 +389,20 @@ systemctl --user restart ccc
 - Better user experience for long responses
 
 See [API_9_5_FEATURES.md](../API_9_5_FEATURES.md) for technical details.
+
+### Jira Ticket Watcher
+
+The Jira watcher polls a configured Jira query, claims eligible tickets, resolves the repository from a Jira field, and starts a detached CCC session with a ticket-specific prompt.
+
+Common commands:
+
+```bash
+ccc watch jira --once --dry-run
+ccc poll
+ccc watch jira
+```
+
+For watcher configuration, runtime behavior, and technical design, see [Jira Ticket Watcher](jira-watcher.md).
 
 ## Shell Commands
 

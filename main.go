@@ -16,6 +16,7 @@ import (
 	setuppkg "github.com/tuannvm/ccc/pkg/setup"
 	teampkg "github.com/tuannvm/ccc/pkg/team"
 	"github.com/tuannvm/ccc/pkg/tmux"
+	watchpkg "github.com/tuannvm/ccc/pkg/watch"
 )
 
 const version = "1.7.0"
@@ -174,6 +175,18 @@ func main() {
 
 	case "team":
 		if err := teampkg.RunFromArgs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "watch":
+		if err := watchpkg.RunFromArgs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "poll":
+		if err := watchpkg.RunPollFromArgs(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

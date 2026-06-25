@@ -58,6 +58,7 @@ LEGEND:
 | **Hook System** | `pkg/hooks/` (handlers.go, transcript.go) | Installs Claude Code hooks, reads transcripts, sends notifications |
 | **Provider Abstraction** | `pkg/provider/` (provider.go) | Provider-agnostic interface for AI providers |
 | **Message Ledger** | `pkg/ledger/` (ledger.go) | Tracks message delivery state between terminal and Telegram |
+| **Ticket Watcher** | `pkg/watch/` (runner.go, jira.go, session.go) | Polls Jira, claims tickets, resolves repos, and starts detached sessions |
 
 ## Message Flow
 
@@ -561,6 +562,10 @@ Rejected │
     └── ccc                       # Binary
 ```
 
+## Jira Watcher Design
+
+The Jira watcher is a queue-driven entrypoint into the same session system used by Telegram. For its dedicated component map, flow, state semantics, and usage, see [Jira Ticket Watcher](jira-watcher.md).
+
 ## Concurrency Model
 
 ### Single Listener Instance
@@ -814,4 +819,3 @@ ccc team stop demo-team
 # Delete entire team session
 ccc team delete demo-team
 ```
-

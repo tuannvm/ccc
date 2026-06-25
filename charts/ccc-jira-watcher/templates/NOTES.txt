@@ -1,0 +1,9 @@
+CCC Jira watcher has been installed.
+
+Check the watcher logs:
+  kubectl logs deploy/{{ include "ccc-jira-watcher.fullname" . }} -f
+
+The chart seeds CCC config from a Secret into a writable PVC at:
+  {{ .Values.config.mountPath }}
+
+For production, prefer existing Secrets for ccc config and Jira credentials.

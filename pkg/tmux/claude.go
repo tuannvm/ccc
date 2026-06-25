@@ -323,7 +323,7 @@ func sendKeysWithDelay(target string, text string, delay time.Duration, claudeSu
 	// Send Enter to execute the prompt
 	// Claude Code 2.1.84+ requires double Enter to submit
 	time.Sleep(50 * time.Millisecond)
-	if err := exec.Command(TmuxPath, "send-keys", "-t", target, "Enter").Run(); err != nil {
+	if err := exec.Command(TmuxPath, "send-keys", "-t", target, submitKey(claudeSubmit)).Run(); err != nil {
 		return err
 	}
 	if !claudeSubmit {
@@ -335,6 +335,13 @@ func sendKeysWithDelay(target string, text string, delay time.Duration, claudeSu
 	}
 
 	return nil
+}
+
+func submitKey(claudeSubmit bool) string {
+	if claudeSubmit {
+		return "Enter"
+	}
+	return "C-m"
 }
 
 // waitForTextInPane polls the tmux pane buffer until the expected text appears

@@ -34,7 +34,7 @@ RUN CGO_ENABLED=0 \
 # Final stage - minimal runtime image
 FROM alpine:latest
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache bash ca-certificates git openssh-client tmux tzdata
 
 WORKDIR /app
 

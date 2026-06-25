@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ccc-jira-watcher.fullname" . }}
+  labels:
+    {{- include "ccc-jira-watcher.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ccc-jira-watcher.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ccc-jira-watcher.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ccc-jira-watcher.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: seed-config
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p {{ .Values.config.mountPath | quote }} {{ .Values.projects.mountPath | quote }}
+              for file in config.core.json config.providers.json jira.json; do
+                if [ -f {{ .Values.config.seedMountPath }}/$file ]; then
+                  cp {{ .Values.config.seedMountPath }}/$file {{ .Values.config.mountPath }}/$file
+                fi
+              done
+              if [ -f {{ .Values.config.seedMountPath }}/config.sessions.json ] && [ ! -f {{ .Values.config.mountPath }}/config.sessions.json ]; then
+                cp {{ .Values.config.seedMountPath }}/config.sessions.json {{ .Values.config.mountPath }}/config.sessions.json
+              fi
+              chmod 600 {{ .Values.config.mountPath }}/*.json
+          volumeMounts:
+            - name: data
+              mountPath: /home/ccc
+            - name: config-seed
+              mountPath: {{ .Values.config.seedMountPath }}
+              readOnly: true
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      containers:
+        - name: watcher
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - watch
+            - jira
+          env:
+            - name: HOME
+              value: /home/ccc
+            {{- if or .Values.jira.configFromEnv .Values.jira.configFromValues }}
+            - name: CCC_JIRA_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-jira" (include "ccc-jira-watcher.fullname" .)) .Values.jira.existingSecret }}
+                  key: {{ .Values.jira.authTokenKey }}
+            {{- if or .Values.jira.authEmail .Values.jira.existingSecret (eq .Values.jira.authMethod "basic") }}
+            - name: CCC_JIRA_AUTH_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-jira" (include "ccc-jira-watcher.fullname" .)) .Values.jira.existingSecret }}
+                  key: {{ .Values.jira.authEmailKey }}
+                  optional: true
+            {{- end }}
+            {{- end }}
+            {{- if .Values.jira.configFromEnv }}
+            - name: CCC_JIRA_BASE_URL
+              value: {{ .Values.jira.baseUrl | quote }}
+            - name: CCC_JIRA_AUTH_METHOD
+              value: {{ .Values.jira.authMethod | quote }}
+            - name: CCC_JIRA_JQL
+              value: {{ .Values.jira.jql | quote }}
+            - name: CCC_JIRA_CLAIM_TRANSITION
+              value: {{ .Values.jira.claimTransition | quote }}
+            - name: CCC_JIRA_CLAIM_STATUS
+              value: {{ .Values.jira.claimStatus | quote }}
+            - name: CCC_JIRA_REPO_FIELD
+              value: {{ .Values.jira.repoField | quote }}
+            - name: CCC_JIRA_REPO_FALLBACK
+              value: {{ .Values.jira.repoFallback | quote }}
+            - name: CCC_JIRA_ACCEPTANCE_CRITERIA_FIELD
+              value: {{ .Values.jira.acceptanceCriteriaField | quote }}
+            - name: CCC_JIRA_POLL_INTERVAL
+              value: {{ .Values.jira.pollInterval | quote }}
+            - name: CCC_JIRA_MAX_TICKETS_PER_CYCLE
+              value: {{ .Values.jira.maxTicketsPerCycle | quote }}
+            {{- end }}
+            {{- if and .Values.jira.configFromValues (not .Values.jira.configFromEnv) (ne .Values.jira.repoFallback "") }}
+            - name: CCC_JIRA_REPO_FALLBACK
+              value: {{ .Values.jira.repoFallback | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/ccc
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (include "ccc-jira-watcher.fullname" .) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: config-seed
+          secret:
+            secretName: {{ default (printf "%s-config" (include "ccc-jira-watcher.fullname" .)) .Values.config.existingSecret }}
+      {{- with .Values.extraVolumes }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
