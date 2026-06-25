@@ -110,6 +110,10 @@ config.core.json, config.providers.json, and jira.json are refreshed from the
 Secret; config.sessions.json is only seeded when missing so active session state
 is not overwritten.
 
+When `jira.configFromValues` is enabled without `jira.configFromEnv`, the chart still exports
+`CCC_JIRA_REPO_FALLBACK` when `jira.repoFallback` is set, because the rendered `jira.json`
+references that value through `repo_fallback_env_var`.
+
 ## Persistence
 
 By default the chart creates one PVC mounted at /home/ccc. It stores:
@@ -118,3 +122,15 @@ By default the chart creates one PVC mounted at /home/ccc. It stores:
 - /home/ccc/Projects: cloned or resolved repositories.
 
 Use persistence.existingClaim to attach an existing PVC.
+
+## Operations
+
+Use a narrow JQL query and `maxTicketsPerCycle: 1` until you have validated the full claim, clone, session-start, and Jira-comment path.
+
+The watcher state file is stored at:
+
+~~~text
+/home/ccc/.config/ccc/watch-state.json
+~~~
+
+If a ticket was started intentionally, leave the entry in place so later polls do not create duplicate sessions. If a ticket should run from scratch again, edit that state file and restart the pod.

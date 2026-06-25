@@ -334,6 +334,74 @@ ccc provider                 # List providers for the current session
 ccc provider <provider-name> # Change provider when current directory maps to a session
 ```
 
+## Jira Watcher Configuration
+
+The Jira watcher has its own config file:
+
+```text
+~/.config/ccc/jira.json
+```
+
+The watcher can also run from environment variables only. Environment variables override file values, which is useful for Kubernetes and other secret-managed runtimes.
+
+### jira.json Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `base_url` | string | Jira base URL, for example `https://example.atlassian.net` |
+| `auth_method` | string | `bearer` or `basic`; defaults to `basic` when an email is configured, otherwise `bearer` |
+| `auth_env_var` | string | Environment variable containing the Jira API token |
+| `auth_email_env_var` | string | Environment variable containing the Jira email for basic auth |
+| `env_file` | string | Optional env file path; defaults to `~/.config/ccc/.env` |
+| `jql` | string | Jira query used to find candidate tickets |
+| `claim_transition` | string | Jira transition ID or transition name to claim a ticket |
+| `claim_status` | string | Destination status name to claim a ticket, for example `In Progress` |
+| `repo_field` | string | Jira field containing a repo path, repo name, or Git URL |
+| `repo_fallback_env_var` | string | Optional environment variable used when the repo field is empty |
+| `acceptance_criteria_field` | string | Optional Jira field copied into the session prompt |
+| `poll_interval` | duration | Continuous polling interval, for example `30s` or `1m`; default is `1m` |
+| `max_tickets_per_cycle` | integer | Maximum tickets to start per polling cycle; default is `1` |
+
+Either `claim_transition` or `claim_status` is required. `repo_field` is required. `repo_fallback_env_var` is used only when that configured Jira field is empty on a ticket.
+
+### Environment Variables
+
+| Variable | Maps to |
+|----------|---------|
+| `CCC_JIRA_BASE_URL` | `base_url` |
+| `CCC_JIRA_AUTH_TOKEN` | Direct Jira token value |
+| `CCC_JIRA_AUTH_ENV_VAR` | `auth_env_var` |
+| `CCC_JIRA_AUTH_EMAIL` | Direct Jira email value |
+| `CCC_JIRA_AUTH_EMAIL_ENV_VAR` | `auth_email_env_var` |
+| `CCC_JIRA_AUTH_METHOD` | `auth_method` |
+| `CCC_JIRA_ENV_FILE` | `env_file` |
+| `CCC_JIRA_JQL` | `jql` |
+| `CCC_JIRA_CLAIM_TRANSITION` | `claim_transition` |
+| `CCC_JIRA_CLAIM_STATUS` | `claim_status` |
+| `CCC_JIRA_REPO_FIELD` | `repo_field` |
+| `CCC_JIRA_REPO_FALLBACK` | Direct repo fallback value |
+| `CCC_JIRA_REPO_FALLBACK_ENV_VAR` | `repo_fallback_env_var` |
+| `CCC_JIRA_ACCEPTANCE_CRITERIA_FIELD` | `acceptance_criteria_field` |
+| `CCC_JIRA_POLL_INTERVAL` | `poll_interval` |
+| `CCC_JIRA_MAX_TICKETS_PER_CYCLE` | `max_tickets_per_cycle` |
+
+### Example
+
+```json
+{
+  "base_url": "https://example.atlassian.net",
+  "auth_method": "basic",
+  "auth_env_var": "CCC_JIRA_AUTH_TOKEN",
+  "auth_email_env_var": "CCC_JIRA_AUTH_EMAIL",
+  "jql": "project = ABC AND status = \"Ready for Dev\" ORDER BY priority DESC",
+  "claim_status": "In Progress",
+  "repo_field": "customfield_10001",
+  "acceptance_criteria_field": "customfield_10002",
+  "poll_interval": "1m",
+  "max_tickets_per_cycle": 1
+}
+```
+
 ## Environment Variables
 
 ccc respects the following environment variables:
@@ -341,6 +409,7 @@ ccc respects the following environment variables:
 | Variable | Description |
 |----------|-------------|
 | `CCC_CONFIG` | Override config file path |
+| `CCC_JIRA_*` | Configure the Jira watcher; see Jira Watcher Configuration |
 | `HOME` | User home directory |
 | `PATH` | Used to find claude and codex binaries |
 
