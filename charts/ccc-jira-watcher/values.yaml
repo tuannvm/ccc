@@ -1,0 +1,98 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/tuannvm/ccc
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  existingClaim: ""
+
+projects:
+  mountPath: /home/ccc/Projects
+
+config:
+  mountPath: /home/ccc/.config/ccc
+  seedMountPath: /etc/ccc-config
+  existingSecret: ""
+
+ccc:
+  core:
+    botToken: ""
+    chatId: 0
+    groupId: 0
+    multiUserMode: false
+    projectsDir: /home/ccc/Projects
+    enableStreaming: false
+    relayUrl: ""
+    away: false
+    oauthToken: ""
+    otpSecret: ""
+  providers:
+    activeProvider: ""
+    providers: {}
+    provider: null
+  sessions:
+    sessions: {}
+    teamSessions: {}
+
+jira:
+  configFromEnv: true
+  configFromValues: false
+  baseUrl: ""
+  authMethod: bearer
+  authToken: ""
+  authEmail: ""
+  existingSecret: ""
+  authTokenKey: jira-auth-token
+  authEmailKey: jira-auth-email
+  jql: ""
+  claimTransition: ""
+  claimStatus: In Progress
+  repoField: ""
+  repoFallback: ""
+  acceptanceCriteriaField: ""
+  pollInterval: 1m
+  maxTicketsPerCycle: 1
+
+extraEnv: []
+extraEnvFrom: []
+extraVolumes: []
+extraVolumeMounts: []

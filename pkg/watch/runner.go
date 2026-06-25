@@ -64,7 +64,9 @@ func (r *Runner) RunCycle(ctx context.Context, opts RunOptions) (CycleResult, er
 	for _, candidate := range candidates {
 		ref := candidate.Ref()
 		key := StateKey(r.Provider.Name(), ref)
-		if _, exists := state.Tickets[key]; exists {
+		existingEntry, exists := state.Tickets[key]
+		retryStartup := exists && existingEntry != nil && existingEntry.LastError != "" && existingEntry.StartedAt.IsZero()
+		if exists && !retryStartup {
 			result.Skipped = append(result.Skipped, SkippedTicket{Ticket: candidate, Reason: "already in local watcher state"})
 			continue
 		}
@@ -85,15 +87,25 @@ func (r *Runner) RunCycle(ctx context.Context, opts RunOptions) (CycleResult, er
 		if err != nil {
 			return result, fmt.Errorf("resolve repo for %s: %w", ref, err)
 		}
-		if err := r.Provider.Claim(ctx, full); err != nil {
-			return result, fmt.Errorf("claim %s: %w", ref, err)
+		if !retryStartup {
+			if err := r.Provider.Claim(ctx, full); err != nil {
+				return result, fmt.Errorf("claim %s: %w", ref, err)
+			}
 		}
 		now := r.now()
-		entry := &StateEntry{
-			Provider:  r.Provider.Name(),
-			TicketKey: ref,
-			RepoPath:  repo.Path,
-			ClaimedAt: now,
+		entry := existingEntry
+		if entry == nil {
+			entry = &StateEntry{
+				Provider:  r.Provider.Name(),
+				TicketKey: ref,
+				ClaimedAt: now,
+			}
+		}
+		entry.Provider = r.Provider.Name()
+		entry.TicketKey = ref
+		entry.RepoPath = repo.Path
+		if entry.ClaimedAt.IsZero() {
+			entry.ClaimedAt = now
 		}
 		state.Tickets[key] = entry
 		if err := r.StateStore.Save(ctx, state); err != nil {

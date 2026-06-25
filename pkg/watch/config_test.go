@@ -109,3 +109,50 @@ func TestLoadJiraConfigReadsRepoFallbackFromEnvFile(t *testing.T) {
 		t.Fatalf("cfg token=%q fallback=%q", cfg.AuthToken, cfg.RepoFallback)
 	}
 }
+
+func TestLoadJiraConfigFromEnvOnly(t *testing.T) {
+	t.Setenv("CCC_JIRA_BASE_URL", "https://jira.example.com")
+	t.Setenv("CCC_JIRA_AUTH_TOKEN", "token-123")
+	t.Setenv("CCC_JIRA_JQL", "project = ABC")
+	t.Setenv("CCC_JIRA_CLAIM_STATUS", "In Progress")
+	t.Setenv("CCC_JIRA_REPO_FIELD", "customfield_10001")
+	t.Setenv("CCC_JIRA_REPO_FALLBACK", "/tmp/repo")
+	t.Setenv("CCC_JIRA_MAX_TICKETS_PER_CYCLE", "3")
+
+	cfg, err := LoadJiraConfig(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != "https://jira.example.com" || cfg.AuthToken != "token-123" {
+		t.Fatalf("cfg base=%q token=%q", cfg.BaseURL, cfg.AuthToken)
+	}
+	if cfg.AuthMethod != "bearer" {
+		t.Fatalf("AuthMethod = %q, want bearer", cfg.AuthMethod)
+	}
+	if cfg.RepoFallback != "/tmp/repo" || cfg.MaxTicketsPerCycle != 3 {
+		t.Fatalf("fallback=%q max=%d", cfg.RepoFallback, cfg.MaxTicketsPerCycle)
+	}
+}
+
+func TestLoadJiraConfigEnvOverridesFile(t *testing.T) {
+	t.Setenv("CCC_JIRA_JQL", "project = OVERRIDE")
+	t.Setenv("CCC_TEST_JIRA_TOKEN", "token-123")
+	path := filepath.Join(t.TempDir(), "jira.json")
+	data := `{
+		"base_url":"https://jira.example.com",
+		"auth_env_var":"CCC_TEST_JIRA_TOKEN",
+		"jql":"project = ABC",
+		"claim_status":"In Progress",
+		"repo_field":"customfield_10001"
+	}`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadJiraConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JQL != "project = OVERRIDE" {
+		t.Fatalf("JQL = %q", cfg.JQL)
+	}
+}

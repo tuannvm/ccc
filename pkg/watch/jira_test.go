@@ -168,6 +168,65 @@ func TestJiraProviderUsesRepoFallbackWhenFieldIsEmpty(t *testing.T) {
 	}
 }
 
+func TestJiraProviderExtractsAtlassianDocumentText(t *testing.T) {
+	raw := map[string]any{
+		"type": "doc",
+		"content": []any{
+			map[string]any{
+				"type": "paragraph",
+				"content": []any{
+					map[string]any{"type": "text", "text": "First line"},
+					map[string]any{"type": "text", "text": " continues"},
+				},
+			},
+			map[string]any{
+				"type": "bulletList",
+				"content": []any{
+					map[string]any{
+						"type": "listItem",
+						"content": []any{
+							map[string]any{
+								"type": "paragraph",
+								"content": []any{
+									map[string]any{"type": "text", "text": "Second line"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := valueAsString(raw)
+	if !strings.Contains(got, "First line continues") {
+		t.Fatalf("missing paragraph text: %q", got)
+	}
+	if !strings.Contains(got, "Second line") {
+		t.Fatalf("missing nested list text: %q", got)
+	}
+}
+
+func TestJiraProviderPreservesAtlassianDocumentHardBreaks(t *testing.T) {
+	raw := map[string]any{
+		"type": "doc",
+		"content": []any{
+			map[string]any{
+				"type": "paragraph",
+				"content": []any{
+					map[string]any{"type": "text", "text": "First"},
+					map[string]any{"type": "hardBreak"},
+					map[string]any{"type": "text", "text": "Second"},
+				},
+			},
+		},
+	}
+
+	if got := valueAsString(raw); got != "First\nSecond" {
+		t.Fatalf("valueAsString = %q, want hard break preserved", got)
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, v any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

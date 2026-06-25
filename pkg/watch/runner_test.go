@@ -163,3 +163,40 @@ func TestRunnerPreservesErrorStateWhenSessionStartupFails(t *testing.T) {
 		t.Fatalf("comments = %+v", provider.comments)
 	}
 }
+
+func TestRunnerRetriesStartupFailureState(t *testing.T) {
+	store := &memoryStateStore{state: &State{Tickets: map[string]*StateEntry{
+		StateKey("fake", "ABC-4"): {
+			Provider:    "fake",
+			TicketKey:   "ABC-4",
+			RepoPath:    "/tmp/old",
+			SessionName: "abc-4-repo",
+			LastError:   "tmux failed",
+			ClaimedAt:   time.Unix(100, 0).UTC(),
+		},
+	}}}
+	provider := &fakeProvider{candidates: []Ticket{{Key: "ABC-4", Title: "Retry", RepoRef: "/repo"}}}
+	starter := &fakeStarter{}
+	runner := &Runner{
+		Provider:       provider,
+		StateStore:     store,
+		RepoResolver:   fakeResolver{path: "/tmp/repo", name: "repo"},
+		SessionStarter: starter,
+		Now:            func() time.Time { return time.Unix(200, 0).UTC() },
+	}
+
+	result, err := runner.RunCycle(context.Background(), RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.claimed) != 0 {
+		t.Fatalf("retried startup failure should not reclaim ticket: %+v", provider.claimed)
+	}
+	if len(result.Started) != 1 {
+		t.Fatalf("started = %d, want 1", len(result.Started))
+	}
+	entry := store.state.Tickets[StateKey("fake", "ABC-4")]
+	if entry == nil || entry.LastError != "" || entry.RepoPath != "/tmp/repo" || entry.StartedAt.IsZero() {
+		t.Fatalf("entry = %+v", entry)
+	}
+}

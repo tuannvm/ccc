@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,16 +45,20 @@ func LoadJiraConfig(path string) (*JiraConfig, error) {
 	if path == "" {
 		path = DefaultJiraConfigPath()
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("jira watcher config not found at %s; create it with base_url, auth_env_var, jql, repo_field, and claim_transition or claim_status", path)
-		}
-		return nil, fmt.Errorf("read jira watcher config: %w", err)
-	}
 	var cfg JiraConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if data, err := os.ReadFile(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if !hasJiraEnvConfig() {
+				return nil, fmt.Errorf("jira watcher config not found at %s; create it with base_url, auth_env_var, jql, repo_field, and claim_transition or claim_status", path)
+			}
+		} else {
+			return nil, fmt.Errorf("read jira watcher config: %w", err)
+		}
+	} else if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse jira watcher config %s: %w", path, err)
+	}
+	if err := applyJiraEnvOverrides(&cfg); err != nil {
+		return nil, err
 	}
 	if cfg.MaxTicketsPerCycle == 0 {
 		cfg.MaxTicketsPerCycle = 1
@@ -69,29 +74,82 @@ func LoadJiraConfig(path string) (*JiraConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	token := lookupEnvValue(cfg.AuthEnvVar, fileEnv)
+	token := cfg.AuthToken
+	if strings.TrimSpace(token) == "" {
+		token = lookupEnvValue(cfg.AuthEnvVar, fileEnv)
+	}
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("jira auth env var %s is not set", cfg.AuthEnvVar)
 	}
 	cfg.AuthToken = token
-	if cfg.AuthEmailEnvVar != "" {
-		email := strings.TrimSpace(lookupEnvValue(cfg.AuthEmailEnvVar, fileEnv))
+	if cfg.AuthEmailEnvVar != "" || cfg.AuthEmail != "" {
+		email := strings.TrimSpace(cfg.AuthEmail)
+		if email == "" {
+			email = strings.TrimSpace(lookupEnvValue(cfg.AuthEmailEnvVar, fileEnv))
+		}
 		if email == "" {
 			return nil, fmt.Errorf("jira auth email env var %s is not set", cfg.AuthEmailEnvVar)
 		}
 		cfg.AuthEmail = email
 	}
-	if cfg.RepoFallbackEnvVar != "" {
+	if cfg.RepoFallbackEnvVar != "" && cfg.RepoFallback == "" {
 		cfg.RepoFallback = strings.TrimSpace(lookupEnvValue(cfg.RepoFallbackEnvVar, fileEnv))
 	}
 	if cfg.AuthMethod == "" {
-		if cfg.AuthEmailEnvVar != "" {
+		if cfg.AuthEmailEnvVar != "" || cfg.AuthEmail != "" {
 			cfg.AuthMethod = "basic"
 		} else {
 			cfg.AuthMethod = "bearer"
 		}
 	}
 	return &cfg, nil
+}
+
+func hasJiraEnvConfig() bool {
+	for _, name := range []string{
+		"CCC_JIRA_BASE_URL",
+		"CCC_JIRA_AUTH_TOKEN",
+		"CCC_JIRA_AUTH_ENV_VAR",
+		"CCC_JIRA_JQL",
+		"CCC_JIRA_REPO_FIELD",
+	} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func applyJiraEnvOverrides(cfg *JiraConfig) error {
+	setStringFromEnv(&cfg.BaseURL, "CCC_JIRA_BASE_URL")
+	setStringFromEnv(&cfg.AuthToken, "CCC_JIRA_AUTH_TOKEN")
+	setStringFromEnv(&cfg.AuthEnvVar, "CCC_JIRA_AUTH_ENV_VAR")
+	setStringFromEnv(&cfg.AuthEmail, "CCC_JIRA_AUTH_EMAIL")
+	setStringFromEnv(&cfg.AuthEmailEnvVar, "CCC_JIRA_AUTH_EMAIL_ENV_VAR")
+	setStringFromEnv(&cfg.AuthMethod, "CCC_JIRA_AUTH_METHOD")
+	setStringFromEnv(&cfg.EnvFile, "CCC_JIRA_ENV_FILE")
+	setStringFromEnv(&cfg.PollInterval, "CCC_JIRA_POLL_INTERVAL")
+	setStringFromEnv(&cfg.JQL, "CCC_JIRA_JQL")
+	setStringFromEnv(&cfg.ClaimTransition, "CCC_JIRA_CLAIM_TRANSITION")
+	setStringFromEnv(&cfg.ClaimStatus, "CCC_JIRA_CLAIM_STATUS")
+	setStringFromEnv(&cfg.RepoField, "CCC_JIRA_REPO_FIELD")
+	setStringFromEnv(&cfg.RepoFallback, "CCC_JIRA_REPO_FALLBACK")
+	setStringFromEnv(&cfg.RepoFallbackEnvVar, "CCC_JIRA_REPO_FALLBACK_ENV_VAR")
+	setStringFromEnv(&cfg.AcceptanceCriteriaField, "CCC_JIRA_ACCEPTANCE_CRITERIA_FIELD")
+	if value := strings.TrimSpace(os.Getenv("CCC_JIRA_MAX_TICKETS_PER_CYCLE")); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid CCC_JIRA_MAX_TICKETS_PER_CYCLE %q: %w", value, err)
+		}
+		cfg.MaxTicketsPerCycle = n
+	}
+	return nil
+}
+
+func setStringFromEnv(dest *string, name string) {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		*dest = value
+	}
 }
 
 func lookupEnvValue(name string, fileEnv map[string]string) string {
@@ -156,13 +214,13 @@ func (c JiraConfig) validate() error {
 	if strings.TrimSpace(c.BaseURL) == "" {
 		missing = append(missing, "base_url")
 	}
-	if strings.TrimSpace(c.AuthEnvVar) == "" {
+	if strings.TrimSpace(c.AuthEnvVar) == "" && strings.TrimSpace(c.AuthToken) == "" {
 		missing = append(missing, "auth_env_var")
 	}
 	if c.AuthMethod != "" && c.AuthMethod != "bearer" && c.AuthMethod != "basic" {
 		return fmt.Errorf("jira watcher config auth_method must be either bearer or basic")
 	}
-	if c.AuthMethod == "basic" && strings.TrimSpace(c.AuthEmailEnvVar) == "" {
+	if c.AuthMethod == "basic" && strings.TrimSpace(c.AuthEmailEnvVar) == "" && strings.TrimSpace(c.AuthEmail) == "" {
 		missing = append(missing, "auth_email_env_var")
 	}
 	if strings.TrimSpace(c.JQL) == "" {

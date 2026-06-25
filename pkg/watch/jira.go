@@ -257,10 +257,63 @@ func valueAsString(v any) string {
 				return s
 			}
 		}
+		if s := strings.TrimSpace(adfText(x)); s != "" {
+			return s
+		}
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Sprint(v)
 	}
 	return string(data)
+}
+
+func adfText(node any) string {
+	switch x := node.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []any:
+		return strings.Join(adfParts(x), "\n")
+	case map[string]any:
+		if text, ok := x["text"].(string); ok {
+			return text
+		}
+		if x["type"] == "hardBreak" {
+			return "\n"
+		}
+		content, ok := x["content"].([]any)
+		if !ok {
+			return ""
+		}
+		switch x["type"] {
+		case "paragraph", "heading", "listItem":
+			return strings.TrimSpace(strings.Join(adfInlineParts(content), ""))
+		default:
+			return strings.Join(adfParts(content), "\n")
+		}
+	default:
+		return ""
+	}
+}
+
+func adfParts(nodes []any) []string {
+	parts := make([]string, 0, len(nodes))
+	for _, item := range nodes {
+		if s := strings.TrimSpace(adfText(item)); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return parts
+}
+
+func adfInlineParts(nodes []any) []string {
+	parts := make([]string, 0, len(nodes))
+	for _, item := range nodes {
+		if s := adfText(item); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return parts
 }
