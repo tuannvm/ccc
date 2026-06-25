@@ -8,6 +8,7 @@ All documentation lives in this git repository. This is the single source of tru
 |----------|---------|--------------|
 | [multi-bot-design.md](multi-bot-design.md) | Complete architecture with internal event bus | 2026-03-20 16:00 |
 | [tmux-architecture.md](tmux-architecture.md) | Tmux 3-pane layout + CCC hooks | 2026-03-20 16:00 |
+| [jira-watcher.md](jira-watcher.md) | Jira ticket watcher technical design and usage | 2026-06-25 |
 | [inter-pane-hooks-implementation.md](inter-pane-hooks-implementation.md) | PostResponse/SessionStart hooks action items | 2026-03-20 16:00 |
 | [final-architecture-review.md](final-architecture-review.md) | Bot visibility issue + fix | 2026-03-20 16:00 |
 | [approach-comparison.md](approach-comparison.md) | Single-bot vs three-bot analysis | 2026-03-20 14:13 |

@@ -392,62 +392,17 @@ See [API_9_5_FEATURES.md](../API_9_5_FEATURES.md) for technical details.
 
 ### Jira Ticket Watcher
 
-The Jira watcher polls a configured Jira query, claims eligible tickets, resolves the repository from a Jira field, and starts a detached CCC session with a ticket-specific prompt. It is useful when you want Jira to become the queue for autonomous Codex or Claude work.
+The Jira watcher polls a configured Jira query, claims eligible tickets, resolves the repository from a Jira field, and starts a detached CCC session with a ticket-specific prompt.
 
-Run one dry check before enabling automation:
+Common commands:
 
 ```bash
 ccc watch jira --once --dry-run
-```
-
-Run one real polling pass:
-
-```bash
 ccc poll
-```
-
-Run continuously:
-
-```bash
 ccc watch jira
 ```
 
-The watcher reads `~/.config/ccc/jira.json` by default. It also accepts `CCC_JIRA_*` environment variables, which is the preferred mode for container and Kubernetes deployments.
-
-Minimal `jira.json`:
-
-```json
-{
-  "base_url": "https://example.atlassian.net",
-  "auth_method": "basic",
-  "auth_env_var": "CCC_JIRA_AUTH_TOKEN",
-  "auth_email_env_var": "CCC_JIRA_AUTH_EMAIL",
-  "jql": "project = ABC AND status = \"Ready for Dev\" ORDER BY priority DESC",
-  "claim_status": "In Progress",
-  "repo_field": "customfield_10001",
-  "acceptance_criteria_field": "customfield_10002",
-  "poll_interval": "1m",
-  "max_tickets_per_cycle": 1
-}
-```
-
-Required setup:
-
-1. Put the Jira API token in the configured token environment variable.
-2. For basic auth, put the Jira account email in the configured email environment variable.
-3. Make the Jira repo field contain either a local repo path, a repo name under `projects_dir`, or a Git URL.
-4. Configure either `claim_transition` or `claim_status` so CCC can claim the ticket before starting work.
-5. Choose a default provider, for example `codex`, in CCC provider configuration.
-
-Watcher behavior:
-
-- `--dry-run` lists eligible tickets without claiming tickets or starting sessions.
-- `ccc poll` is equivalent to one `ccc watch jira --once` pass.
-- Each started ticket is stored in `~/.config/ccc/watch-state.json` to avoid duplicate sessions.
-- If a ticket is claimed but session startup fails, the error is stored and the watcher retries startup on the next matching poll without claiming the ticket again.
-- On successful startup, CCC posts a short Jira comment with the session name, repo path, and Telegram topic ID when available.
-
-The generated session prompt includes the Jira key, title, URL, description, acceptance criteria, and instructions to keep Jira updated and move the ticket to In Review when the work is complete.
+For watcher configuration, runtime behavior, and technical design, see [Jira Ticket Watcher](jira-watcher.md).
 
 ## Shell Commands
 

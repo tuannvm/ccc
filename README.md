@@ -141,6 +141,7 @@ That's it! 🎉
 |-------|-------------|
 | [**Usage Guide**](docs/usage.md) | Commands, sessions, patterns |
 | [**Configuration**](docs/configuration.md) | Providers, settings, environment |
+| [**Jira Watcher**](docs/jira-watcher.md) | Technical design and usage for ticket-driven CCC sessions |
 | [**Kubernetes**](docs/kubernetes.md) | Helm chart deployment for the Jira watcher |
 | [**Architecture**](docs/architecture.md) | System design, data flow |
 | [**Troubleshooting**](docs/troubleshooting.md) | Common issues & solutions |

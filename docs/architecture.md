@@ -564,62 +564,7 @@ Rejected │
 
 ## Jira Watcher Design
 
-The Jira watcher is a queue-driven entrypoint into the same session system used by Telegram. It does not run a separate agent runtime. Instead, it turns a Jira ticket into a detached CCC session with a generated initial prompt.
-
-### Components
-
-| Component | File | Responsibility |
-|-----------|------|----------------|
-| Watch CLI | `pkg/watch/cli.go` | Implements `ccc watch jira` and `ccc poll` |
-| Runner | `pkg/watch/runner.go` | Coordinates polling, duplicate suppression, claim, repo resolution, session startup, and comments |
-| Jira Provider | `pkg/watch/jira.go` | Calls Jira REST APIs, normalizes issues into tickets, claims tickets, and posts comments |
-| Jira Config | `pkg/watch/jira_config.go` | Loads `jira.json`, env overrides, token/email values, and poll settings |
-| Repo Resolver | `pkg/watch/repo.go` | Resolves a Jira repo field into a local repo path, cloning Git URLs when needed |
-| Session Starter | `pkg/watch/session.go` | Builds the Jira prompt and starts a detached CCC session |
-| State Store | `pkg/watch/state.go` | Stores claimed and started ticket state in `watch-state.json` |
-
-### Flow
-
-```
-Jira JQL
-  |
-  v
-Poll candidates
-  |
-  v
-Skip tickets already in successful local watcher state
-  |
-  v
-Fetch full ticket context
-  |
-  v
-Resolve repo field to path or clone target
-  |
-  v
-Claim ticket through transition ID, transition name, or target status
-  |
-  v
-Persist claimed state
-  |
-  v
-Start detached CCC session with generated prompt
-  |
-  v
-Persist topic/session state and post Jira start comment
-```
-
-### Duplicate and Retry Semantics
-
-The watcher uses `~/.config/ccc/watch-state.json` as local idempotency state. A ticket key is namespaced by provider, for example `jira:ABC-123`.
-
-- Tickets with successful started state are skipped on later polls.
-- Dry runs do not read or write watcher state.
-- If ticket claim succeeds but session startup fails, the entry stores `last_error` and no `started_at`.
-- Startup-failed entries are retried on later polls without claiming the Jira ticket again.
-
-### Runtime Boundaries
-
-The watcher owns queue intake and session creation only. The agent inside the CCC session owns implementation, validation, Jira progress comments, and ticket handoff.
+The Jira watcher is a queue-driven entrypoint into the same session system used by Telegram. For its dedicated component map, flow, state semantics, and usage, see [Jira Ticket Watcher](jira-watcher.md).
 
 ## Concurrency Model
 
